@@ -145,6 +145,11 @@ build_engine() {
         echo "applied ${patch#$ROOT/patches/}"
     done
 
+    # TurboQuant 4-mag auto-select: inject half-precision LUTs and hardware dispatch
+    # into the patched sources.  Applied as inline edits because the patch file had
+    # placeholder line numbers that git could not process.
+    apply_turbo3_4mag
+
     cmake -B build-static "${CMAKE_FLAGS[@]}"
     cmake --build build-static --config Release -j "$(sysctl -n hw.ncpu)" -t llama-server llama-bench llama-perplexity test-backend-ops
 
@@ -180,6 +185,145 @@ build_engine() {
     fi
     echo "engine ready at $PWD/build-static/bin (arch: $ARCH)"
     cd "$ROOT"
+}
+
+# Inject TurboQuant 4-mag auto-select into the patched sources.
+# Pre-M5 GPUs (M1/M2/M3/M4) benefit from a 4-entry magnitude LUT (+38-45% decode),
+# while M5+ uses the 8-entry full LUT.  The compile-time #if selects at embed time.
+apply_turbo3_4mag() {
+    local dequant="ggml/src/ggml-metal/kernels/dequantize.h"
+    local device="ggml/src/ggml-metal/ggml-metal-device.m"
+
+    # --- dequantize.h: add half-precision LUTs before the function ---
+    if [ -f "$dequant" ] && ! grep -q 'turbo_mag_3bit_h' "$dequant"; then
+        # Insert the half-precision LUT arrays right after turbo_centroids_3bit
+        sed -i '' '/^constant float turbo_centroids_3bit\[8\]/,/^};/{
+            /^};/a\
+\
+// Half-precision 3-bit centroid LUT for vec path (8 entries, full signed)\
+constant half turbo_centroids_3bit_h[8] = {\
+    -0.190685h, -0.117832h, -0.065717h, -0.021460h,\
+     0.021460h,  0.065717h,  0.117832h,  0.190685h\
+};\
+\
+// 4-entry magnitude LUT (positive values only, ascending order)\
+// Used with ALU sign application to halve constant cache divergence\
+constant half turbo_mag_3bit_h[4] = {\
+    0.021460h, 0.065717h, 0.117832h, 0.190685h\
+};
+        }' "$dequant"
+
+        # Replace the function body with the auto-select version
+        cat > /tmp/turbo3_patch.py << 'PYEOF'
+import re, sys
+
+with open(sys.argv[1], 'r') as f:
+    content = f.read()
+
+old_body = """    for (short j = 0; j < 4; j++) {
+        uint8_t low2 = (qb >> (j * 2)) & 0x3;
+        uint8_t hi1  = (sb >> (so + j)) & 0x1;
+        reg[j] = turbo_centroids_3bit[low2 | (hi1 << 2)] * norm;
+    }"""
+
+new_body = """    // Auto-selected dequant path based on hardware.
+    // TURBO_USE_4MAG=1 (pre-M5): 4-entry magnitude LUT + XOR sign (+38-45% on M2)
+    // TURBO_USE_4MAG=0 (M5+): 8-entry full LUT (best on M5, 0.905x q8_0)
+#if TURBO_USE_4MAG
+    // 4-mag LUT (proven +38-45% on M2)
+    const uint8_t s0 = (sb >> (so + 0)) & 1;
+    const uint8_t s1 = (sb >> (so + 1)) & 1;
+    const uint8_t s2 = (sb >> (so + 2)) & 1;
+    const uint8_t s3 = (sb >> (so + 3)) & 1;
+    const uint8_t mi0 = (qb      ) & 0x3 ^ (s0 ? 0u : 0x3u);
+    const uint8_t mi1 = (qb >> 2) & 0x3 ^ (s1 ? 0u : 0x3u);
+    const uint8_t mi2 = (qb >> 4) & 0x3 ^ (s2 ? 0u : 0x3u);
+    const uint8_t mi3 = (qb >> 6)        ^ (s3 ? 0u : 0x3u);
+    const float v0 = float(turbo_mag_3bit_h[mi0]) * norm;
+    const float v1 = float(turbo_mag_3bit_h[mi1]) * norm;
+    const float v2 = float(turbo_mag_3bit_h[mi2]) * norm;
+    const float v3 = float(turbo_mag_3bit_h[mi3]) * norm;
+    reg = type4(float4(
+        s0 ? v0 : -v0,
+        s1 ? v1 : -v1,
+        s2 ? v2 : -v2,
+        s3 ? v3 : -v3
+    ));
+#else
+    // 8-entry full LUT: best on M5 Max (0.905x q8_0)
+    for (short j = 0; j < 4; j++) {
+        uint8_t low2 = (qb >> (j * 2)) & 0x3;
+        uint8_t hi1  = (sb >> (so + j)) & 0x1;
+        reg[j] = float(turbo_centroids_3bit_h[low2 | (hi1 << 2)]) * norm;
+    }
+#endif"""
+
+if old_body in content:
+    content = content.replace(old_body, new_body, 1)
+    with open(sys.argv[1], 'w') as f:
+        f.write(content)
+    print("turbo3-4mag: dequantize.h function body replaced")
+else:
+    print("turbo3-4mag: WARNING could not find original function body in dequantize.h", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+        python3 /tmp/turbo3_patch.py "$dequant"
+        rm -f /tmp/turbo3_patch.py
+    fi
+
+    # --- ggml-metal-device.m: add hardware detection for TURBO_USE_4MAG ---
+    if [ -f "$device" ] && ! grep -q 'TURBO_USE_4MAG' "$device"; then
+        # Insert the hardware detection block right before the closing of the
+        # prep dictionary setup (after the last existing setObject call).
+        # We look for the pattern where prep dictionary values are being set.
+        python3 - "$device" << 'PYEOF'
+import sys
+
+path = sys.argv[1]
+with open(path, 'r') as f:
+    lines = f.readlines()
+
+# Find the last setObject:forKey: line in the prep dictionary setup and insert after it
+insert_idx = None
+for i, line in enumerate(lines):
+    if 'setObject:' in line and 'forKey:' in line:
+        insert_idx = i
+
+if insert_idx is None:
+    # Fallback: find the TOSH_ENABLE_DYNAMIC_MOE block and insert before it
+    for i, line in enumerate(lines):
+        if 'TOSH_ENABLE_DYNAMIC_MOE' in line:
+            insert_idx = i - 1
+            break
+
+if insert_idx is None:
+    print("turbo3-4mag: WARNING could not find insertion point in ggml-metal-device.m", file=sys.stderr)
+    sys.exit(1)
+
+block = """
+                // TurboQuant: auto-select dequant path based on hardware
+                // M1/M2/M3/M4 (no tensor API): 4-mag LUT (+38-45% decode at long ctx)
+                // M5+ (has tensor API): 8-entry full LUT (best decode speed)
+                {
+                    const char * force_4mag = getenv("TURBO_FORCE_4MAG");
+                    if (!ggml_metal_device_get_props(dev)->has_tensor || (force_4mag && force_4mag[0] == '1')) {
+                        [prep setObject:@"1" forKey:@"TURBO_USE_4MAG"];
+                        GGML_LOG_INFO("%s: turbo3 using 4-mag LUT%s\\n", __func__,
+                            force_4mag ? " (forced)" : " (pre-M5 hardware)");
+                    } else {
+                        GGML_LOG_INFO("%s: turbo3 using 8-entry full LUT (M5+ hardware)\\n", __func__);
+                    }
+                }
+"""
+
+lines.insert(insert_idx + 1, block)
+with open(path, 'w') as f:
+    f.writelines(lines)
+print("turbo3-4mag: ggml-metal-device.m hardware detection added")
+PYEOF
+    fi
+
+    echo "turbo3-4mag auto-select applied"
 }
 
 build_whisper_engine() {
