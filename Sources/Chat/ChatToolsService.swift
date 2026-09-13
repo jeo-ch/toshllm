@@ -102,7 +102,8 @@ enum ChatToolsService {
     }
 
     static func list(port: Int) async throws -> [BuiltinToolInfo] {
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/tools")!)
+        guard let url = URL(string: "http://127.0.0.1:\(port)/tools") else { return [] }
+        var request = URLRequest(url: url)
         authorize(&request)
         let (data, response) = try await NetworkManager.session.data(for: request)
         try validate(response: response, data: data)
@@ -114,7 +115,8 @@ enum ChatToolsService {
 
     static func execute(name: String, arguments: [String: Any], port: Int,
                         workingDirectory: String? = nil) async throws -> ToolExecutionResult {
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/tools")!)
+        guard let url = URL(string: "http://127.0.0.1:\(port)/tools") else { throw ChatToolsError.invalidResponse }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         // the model can't override this one: the server takes the directory from the header
@@ -137,7 +139,8 @@ enum ChatToolsService {
     static func executeStreaming(name: String, arguments: [String: Any], port: Int,
                                  workingDirectory: String? = nil,
                                  onUpdate: @escaping (String) async -> Void) async throws -> ToolExecutionResult {
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/tools")!)
+        guard let url = URL(string: "http://127.0.0.1:\(port)/tools") else { throw ChatToolsError.invalidResponse }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let workingDirectory, !workingDirectory.isEmpty {

@@ -372,14 +372,17 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
                     if let expected { ModelStore.recordDigest(expected, forFile: destination.lastPathComponent) }
                     self.progress = 1
                     self.phase = .finished
+                    self.session.finishTasksAndInvalidate()
                     self.onFinish?()
                 } catch {
                     self.phase = .failed(error.localizedDescription)
+                    self.session.finishTasksAndInvalidate()
                 }
             } else {
                 try? FileManager.default.removeItem(at: staging)
                 AppLog.downloads.error("checksum mismatch for \(self.fileName)")
                 self.phase = .failed("Checksum SHA-256 no coincide: descarga corrupta, reintenta / checksum mismatch: corrupt download, retry")
+                self.session.finishTasksAndInvalidate()
             }
         }
     }
@@ -673,9 +676,21 @@ final class ModelStore: ObservableObject {
         let repo = comps[r - 2] + "/" + comps[r - 1]
         let branch = comps[r + 1]
         let urlString = source.treeAPI(repo: repo, branch: branch)
-        guard let api = URL(string: urlString),
-              let (data, _) = try? await URLSession.shared.data(from: api),
-              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
+        guard let api = URL(string: urlString) else { return }
+        let data: Data?
+        do { data = try await NetworkManager.session.data(from: api).0 }
+        catch {
+            AppLog.models.error("failed to fetch projectors from tree API: \(error.localizedDescription)")
+            return
+        }
+        guard let data else { return }
+        let entries: [[String: Any]]?
+        do { entries = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] }
+        catch {
+            AppLog.models.error("failed to parse projectors JSON: \(error.localizedDescription)")
+            return
+        }
+        guard let entries else { return }
         let projectors = entries.compactMap { $0["path"] as? String }
             .filter { $0.lowercased().contains("mmproj") && $0.lowercased().hasSuffix(".gguf") }
         // Pick the best projector for Metal-on-AMD. The vision encoder runs partly
@@ -743,7 +758,7 @@ final class ModelStore: ObservableObject {
 
     /// Download the multimodal projector for a catalog vision model into the folder.
     func downloadProjector(for cat: CatalogModel) {
-        guard let url = URL(string: cat.urlString) else { return }
+        guard let url = URL(string: cat.currentDownloadURL) else { return }
         Task { await autoFetchProjector(for: url) }
     }
 

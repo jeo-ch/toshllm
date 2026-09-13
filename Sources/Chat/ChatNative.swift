@@ -371,6 +371,8 @@ final class ChatStore: ObservableObject {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest  = 600   // idle between bytes (covers a slow first token)
         cfg.timeoutIntervalForResource = 3600
+        cfg.waitsForConnectivity = true
+        NetworkManager.applyProxy(to: cfg)
         return URLSession(configuration: cfg)
     }()
     /// Context consumed by the current conversation's last exchange; drives the
@@ -856,7 +858,8 @@ final class ChatStore: ObservableObject {
                     }
                 }
 
-                var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/chat/completions")!)
+                guard let url = URL(string: "http://127.0.0.1:\(port)/v1/chat/completions") else { return }
+                var req = URLRequest(url: url)
                 req.httpMethod = "POST"
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 req.timeoutInterval = 600
@@ -1686,7 +1689,8 @@ final class ChatStore: ObservableObject {
     /// Non-streamed completion that condenses old turns. Returns nil on any
     /// failure; compaction is then retried after the next exchange.
     nonisolated private static func summarize(prompt: String, port: Int) async -> String? {
-        var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/chat/completions")!)
+        guard let url = URL(string: "http://127.0.0.1:\(port)/v1/chat/completions") else { return nil }
+        var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let key = ServerSettings.activeAPIKey() {

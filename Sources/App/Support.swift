@@ -301,6 +301,7 @@ enum AppLog {
     static let speech = Logger(subsystem: subsystem, category: "speech")
     static let chat = Logger(subsystem: subsystem, category: "chat")
     static let app = Logger(subsystem: subsystem, category: "app")
+    static let models = Logger(subsystem: subsystem, category: "models")
 }
 
 /// App support directory for persistent state (logs, lockfiles, chats).

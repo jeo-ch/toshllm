@@ -332,10 +332,16 @@ final class BenchmarkController: ObservableObject {
     private func waitForHealth(port: Int, process: Process) async -> Bool {
         for _ in 0..<240 {
             guard running, process.isRunning else { return false }
-            if let url = URL(string: "http://127.0.0.1:\(port)/health"),
-               let (data, _) = try? await URLSession.shared.data(from: url),
-               String(data: data, encoding: .utf8)?.contains("ok") == true {
-                return true
+            if let url = URL(string: "http://127.0.0.1:\(port)/health") {
+                var data: Data?
+                do {
+                    data = try await NetworkManager.session.data(from: url).0
+                } catch {
+                    AppLog.models.error("failed to fetch health status: \(error.localizedDescription)")
+                }
+                if let data, String(data: data, encoding: .utf8)?.contains("ok") == true {
+                    return true
+                }
             }
             try? await Task.sleep(for: .seconds(2))
         }
@@ -354,9 +360,25 @@ final class BenchmarkController: ObservableObject {
             "prompt": Self.realPrompt, "n_predict": nPredict,
             "temperature": 0, "seed": 42, "cache_prompt": false,
         ])
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200,
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let data: Data?
+        let resp: URLResponse?
+        do {
+            let result = try await NetworkManager.session.data(for: req)
+            data = result.0
+            resp = result.1
+        } catch {
+            AppLog.models.error("failed to fetch completion benchmark: \(error.localizedDescription)")
+            return nil
+        }
+        guard let data, let resp,
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        let obj: [String: Any]?
+        do { obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] }
+        catch {
+            AppLog.models.error("failed to parse completion response JSON: \(error.localizedDescription)")
+            return nil
+        }
+        guard let obj,
               let t = obj["timings"] as? [String: Any],
               let tg = t["predicted_per_second"] as? Double,
               let pp = t["prompt_per_second"] as? Double else { return nil }

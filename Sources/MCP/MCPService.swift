@@ -321,7 +321,8 @@ actor ToshMCPService {
         request.timeoutInterval = TimeInterval(max(5, server.timeoutSeconds))
         request.setValue("mcp", forHTTPHeaderField: "Sec-WebSocket-Protocol")
         applyHeaders(server, to: &request)
-        let socket = URLSession.shared.webSocketTask(with: request)
+        let session = NetworkManager.makeSession()
+        let socket = session.webSocketTask(with: request)
         socket.resume()
         sessions[server.id]?.webSocket = socket
     }

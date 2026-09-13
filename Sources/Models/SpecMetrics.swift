@@ -82,7 +82,17 @@ struct SpecDecodeMetrics: Equatable, Sendable {
         guard let url = URL(string: "http://127.0.0.1:\(port)/metrics") else { return nil }
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
+        let data: Data?
+        let response: URLResponse?
+        do {
+            let result = try await NetworkManager.session.data(for: request)
+            data = result.0
+            response = result.1
+        } catch {
+            AppLog.models.error("failed to fetch spec decode metrics: \(error.localizedDescription)")
+            return nil
+        }
+        guard let data, let response,
               (response as? HTTPURLResponse)?.statusCode == 200,
               let text = String(data: data, encoding: .utf8) else { return nil }
         let parsed = parse(text)

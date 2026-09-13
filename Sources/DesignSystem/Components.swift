@@ -369,7 +369,7 @@ struct CatalogActionButton: View {
             Text(loc.t("No compatible", "Not compatible")).font(.caption).foregroundStyle(.secondary)
         } else {
             Button(loc.t("Descargar", "Download"), systemImage: "arrow.down.circle") {
-                models.download(urlString: model.urlString)
+                models.download(urlString: model.currentDownloadURL)
             }
             .glassButton(prominent: true)
             .controlSize(.small)
