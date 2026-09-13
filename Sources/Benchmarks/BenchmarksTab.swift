@@ -998,7 +998,8 @@ struct BenchmarksView: View {
         profileStore.setAsDefault(p)
         appliedToast = loc.t("Aplicado al default global", "Applied to global default")
         let token = UUID(); lastToast = token
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.9) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.9))
             if lastToast == token { appliedToast = nil }
         }
     }

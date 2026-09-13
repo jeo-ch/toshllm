@@ -60,13 +60,13 @@ enum ModelTraitsCache {
     }
 
     static func warm(paths: [String], then done: @escaping () -> Void) {
-        DispatchQueue.global(qos: .utility).async {
+        Task.detached(priority: .utility) {
             for path in paths {
                 autoreleasepool {
                     _ = traits(for: path)
                 }
             }
-            DispatchQueue.main.async(execute: done)
+            await MainActor.run { done() }
         }
     }
 

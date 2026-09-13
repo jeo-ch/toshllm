@@ -290,7 +290,7 @@ struct MenuServerRow: View {
         }
         return Binding(get: { c.profile?.localNetworkDiscovery ?? false }, set: { v in
             c.profile?.localNetworkDiscovery = v
-            manager.persist()
+            manager.schedulePersist()
             if running { c.restart(c.effectiveSettings()) }
         })
     }

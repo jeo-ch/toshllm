@@ -44,6 +44,6 @@ struct ServerModelPicker: View {
 
     private func select(_ path: String) {
         server.selectModel(path: path, ncmoe: Estimator.ncmoeForSelection(path: path, models: models.models))
-        manager.persist()
+        manager.schedulePersist()
     }
 }

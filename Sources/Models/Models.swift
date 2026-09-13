@@ -324,13 +324,19 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
             let expected = self.expectedBytes ?? Int64(self.totalMB * 1_048_576)
             if expected > 0 { self.progress = min(1, Double(bytes) / Double(expected)) }
 
-            // Speed tracking
+            // Speed tracking (EMA smooths jitter for the speed limiter)
             let now = CFAbsoluteTimeGetCurrent()
             if self.lastDataTime > 0 {
                 let elapsed = now - self.lastDataTime
                 if elapsed > 0 {
                     let deltaBytes = Double(bytes - self.lastDataBytes)
-                    self.currentSpeedBPS = deltaBytes / elapsed
+                    let instantSpeed = deltaBytes / elapsed
+                    if self.currentSpeedBPS > 0 {
+                        // EMA with α=0.3 — reacts to changes in ~3 samples
+                        self.currentSpeedBPS = 0.3 * instantSpeed + 0.7 * self.currentSpeedBPS
+                    } else {
+                        self.currentSpeedBPS = instantSpeed
+                    }
                 }
             }
             self.lastDataTime = now

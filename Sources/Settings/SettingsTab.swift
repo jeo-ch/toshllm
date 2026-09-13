@@ -1043,6 +1043,32 @@ struct SettingsView: View {
                 .settingsGlyph("text.alignleft")
                 .infoTip(loc.t("Tamaño máximo de la conversación en tokens. Más contexto = más memoria para el KV cache (mira los tipos de abajo para compensar).",
                             "Maximum conversation size in tokens. More context = more KV cache memory (see the types below to compensate)."))
+                if !modelPath.isEmpty {
+                    let vramGB = hardware.vramGB
+                    let reserveGB = Double(vramReserve) / 1024.0
+                    let availableGB = max(0, vramGB - reserveGB)
+                    let isTurbo = cacheTypeK.hasPrefix("turbo") || cacheTypeV.hasPrefix("turbo")
+                    let kvScale = isTurbo ? 0.30 : (cacheTypeK == "q8_0" || cacheTypeV == "q8_0") ? 0.53 : 1.0
+                    // Rough heuristic: 7B model ~14GB weights, each 16k ctx ~1GB at f16
+                    let estimatedCtx = max(4096, min(262144, Int((availableGB / kvScale) * 16384)))
+                    let optimal = [4096, 8192, 16384, 32768, 65536, 131072, 262144]
+                        .filter { $0 <= estimatedCtx }.max() ?? 4096
+                    if ctx != optimal {
+                        Button {
+                            ctx = optimal
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "cpu")
+                                Text(loc.t("Ajustar contexto a %dk (óptimo para tu VRAM)",
+                                            "Set context to %dk (optimal for your VRAM)", "\(optimal / 1024)"))
+                            }
+                        }
+                        .glassButton()
+                        .controlSize(.small)
+                        .help(loc.t("Estima el contexto máximo que cabe en VRAM con los tipos de KV actuales.",
+                                    "Estimates the max context that fits in VRAM with current KV types."))
+                    }
+                }
                 if ctx >= 131072 {
                     Label(loc.t("Contexto muy grande (para pruebas). El KV cache puede no caber en VRAM/RAM; en GPU AMD sin Flash Attention la generación se ralentiza con la profundidad. Cuantiza las claves (q8_0) para compensar; para uso normal 16–32k.",
                                 "Very large context (for testing). The KV cache may not fit in VRAM/RAM; on AMD GPUs without Flash Attention generation slows with depth. Quantize keys (q8_0) to compensate; 16–32k is fine for normal use."),
@@ -1117,6 +1143,25 @@ struct SettingsView: View {
                           systemImage: "info.circle")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+                if let s = kvSuggestion, (cacheTypeK != s.k || cacheTypeV != s.v || !faAmd || !persistCache) {
+                    Button {
+                        cacheTypeK = s.k
+                        cacheTypeV = s.v
+                        faAmd = true
+                        persistCache = true
+                        cacheReuse = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "bolt.badge.speedometer")
+                            Text(loc.t("Modo Turbo: aplicar ajustes óptimos",
+                                        "Turbo Mode: apply optimal settings"))
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .glassButton()
+                    .infoTip(loc.t("Aplica la combinación medida (claves q8_0 + valores turbo4), activa el kernel AMD, persistencia de caché y reuso de prompt — todo lo necesario para máximo rendimiento con TurboQuant.",
+                                "Applies the measured combo (q8_0 keys + turbo4 values), enables the AMD kernel, cache persistence, and prompt reuse — everything needed for peak performance with TurboQuant."))
                 }
                 Toggle(loc.t("Reuso de caché de prompt (rápido)", "Prompt cache reuse (fast)"), isOn: $cacheReuse)
                     .settingsGlyph("arrow.triangle.2.circlepath")
@@ -1246,7 +1291,7 @@ struct InfoTip: View {
     @State private var shown = false
     @State private var pinned = false
     @State private var pointerOnIcon = false
-    @State private var hoverWork: DispatchWorkItem?
+    @State private var hoverWork: Task<Void, Never>?
 
     private var visible: Bool { forceVisible || shown || pointerOnIcon }
 
@@ -1265,9 +1310,10 @@ struct InfoTip: View {
                     hoverWork?.cancel()
                     pointerOnIcon = inside
                     if inside {
-                        let work = DispatchWorkItem { shown = true }
-                        hoverWork = work
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: work)
+                        hoverWork = Task { @MainActor in
+                            try? await Task.sleep(for: .seconds(0.18))
+                            shown = true
+                        }
                     } else if !pinned {
                         shown = false
                     }
@@ -1296,11 +1342,10 @@ struct InfoTip: View {
 
     private func scheduleDismiss(after delay: TimeInterval) {
         hoverWork?.cancel()
-        let work = DispatchWorkItem {
+        hoverWork = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(delay))
             if !pinned { shown = false }
         }
-        hoverWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 }
 

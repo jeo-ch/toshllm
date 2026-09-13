@@ -315,7 +315,7 @@ private struct ServerDetailHero: View {
             globalNcmoe = suggested
         } else {
             server.profile?.selectInstanceModel(path: path, ncmoe: suggested)
-            manager.persist()
+            manager.schedulePersist()
         }
     }
 
@@ -390,7 +390,7 @@ private struct ServerConfigurationWorkspace: View {
                     Button { resetOverrides() } label: {
                         Label(loc.t("Restablecer valores", "Reset to defaults"), systemImage: "arrow.counterclockwise")
                     }.glassButton()
-                    Button { manager.persist() } label: {
+                    Button { manager.schedulePersist() } label: {
                         Label(loc.t("Guardar cambios", "Save changes"), systemImage: "checkmark")
                     }.glassButton(prominent: true)
                 }
@@ -669,7 +669,7 @@ private struct ServerConfigurationWorkspace: View {
         }
         profile.pinned = [Profile.Pin.model]
         server.profile = profile
-        manager.persist()
+        manager.schedulePersist()
     }
 
     private func addedBinding<T>(_ keyPath: WritableKeyPath<Profile, T>, fallback: T,
