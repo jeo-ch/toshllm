@@ -141,14 +141,16 @@ build_engine() {
     git clean -qfd 2>/dev/null || true
 
     for patch in "${patches[@]}"; do
-        git apply "$patch"
-        echo "applied ${patch#$ROOT/patches/}"
+        if ! git apply "$patch" 2>/dev/null; then
+            # 0064 has a known-good inline fallback; other patches are fatal.
+            case "$patch" in
+                *0064*) apply_turbo3_4mag ;;
+                *)      echo "ERROR: failed to apply ${patch#$ROOT/patches/}" >&2; exit 1 ;;
+            esac
+        else
+            echo "applied ${patch#$ROOT/patches/}"
+        fi
     done
-
-    # TurboQuant 4-mag auto-select: inject half-precision LUTs and hardware dispatch
-    # into the patched sources.  Applied as inline edits because the patch file had
-    # placeholder line numbers that git could not process.
-    apply_turbo3_4mag
 
     cmake -B build-static "${CMAKE_FLAGS[@]}"
     cmake --build build-static --config Release -j "$(sysctl -n hw.ncpu)" -t llama-server llama-bench llama-perplexity test-backend-ops
