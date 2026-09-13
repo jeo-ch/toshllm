@@ -145,7 +145,7 @@ actor MemoryArchiveHook {
         request.httpBody = body
 
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (_, response) = try await NetworkManager.session.data(for: request)
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             switch code {
             case 200..<300: return .delivered

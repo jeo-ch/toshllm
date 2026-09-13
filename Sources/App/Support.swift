@@ -232,6 +232,22 @@ enum SettingsKeys {
     static let imagenQueueGrid = "imagenQueueGrid"
     static let imagenCanvasGrid = "imagenCanvasGrid"
 
+    // Download source configuration
+    /// Which mirror/provider to download models from: "huggingface" | "hf-mirror" | "modelscope" | "custom"
+    static let downloadSource = "downloadSource"
+    /// Custom mirror base URL when downloadSource is "custom"
+    static let customMirrorURL = "customMirrorURL"
+    /// Download speed limit in MB/s (0 = unlimited)
+    static let downloadSpeedLimit = "downloadSpeedLimit"
+    /// VRAM usage warning threshold percentage (0-100)
+    static let vramWarningThreshold = "vramWarningThreshold"
+    /// VRAM usage critical threshold percentage (0-100)
+    static let vramCriticalThreshold = "vramCriticalThreshold"
+    /// Proxy configuration
+    static let proxyEnabled = "proxyEnabled"
+    static let proxyHost = "proxyHost"
+    static let proxyPort = "proxyPort"
+
     /// Tunable option keys (engine / GPU / inference / chat). Resetting clears these
     /// so `@AppStorage` falls back to its declared defaults. The models folder, the
     /// selected model and onboarding state are deliberately NOT included, so a reset
@@ -264,6 +280,9 @@ enum SettingsKeys {
         chatPDFAsImages,
         chatAutoCompact, chatShowSystemMessage, smoothTyping,
         imagenAspect, imagenBaseSize, imagenSteps, imagenFormat, imagenOffloadCPU, imagenGPU,
+        downloadSource, customMirrorURL, downloadSpeedLimit,
+        vramWarningThreshold, vramCriticalThreshold,
+        proxyEnabled, proxyHost, proxyPort,
     ]
 
     /// Clears every tunable option so they revert to defaults, keeping models intact.

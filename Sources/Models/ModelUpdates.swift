@@ -10,9 +10,19 @@ struct HFFileMetadata {
 }
 
 enum HuggingFaceAPI {
-    /// repo + file path -> sha256/size from the Hugging Face tree API (LFS oid).
+    /// repo + file path -> sha256/size from the model tree API (LFS oid).
+    /// Supports HuggingFace, hf-mirror, ModelScope, and custom mirrors.
     static func fileMetadata(for url: URL) async -> HFFileMetadata? {
-        guard url.host?.contains("huggingface.co") == true else { return nil }
+        // Find which download source this URL belongs to
+        let source: DownloadSource
+        if let hfSource = DownloadSource.allCases.first(where: { $0.matchesURL(url) && $0 != .custom }) {
+            source = hfSource
+        } else if DownloadSource.custom.matchesURL(url) {
+            source = .custom
+        } else {
+            return nil
+        }
+
         let parts = url.path.split(separator: "/").map(String.init)
         guard let resolve = parts.firstIndex(of: "resolve"), resolve >= 2, parts.count > resolve + 1 else { return nil }
         let repo = parts[0] + "/" + parts[1]
@@ -20,8 +30,9 @@ enum HuggingFaceAPI {
         let filePath = parts[(resolve + 2)...].joined(separator: "/")
         let dir = filePath.contains("/") ? "/" + filePath.split(separator: "/").dropLast().joined(separator: "/") : ""
 
-        guard let api = URL(string: "https://huggingface.co/api/models/\(repo)/tree/\(rev)\(dir)"),
-              let (data, _) = try? await URLSession.shared.data(from: api),
+        let apiString = source.treeAPI(repo: repo, branch: rev) + dir
+        guard let api = URL(string: apiString),
+              let (data, _) = try? await NetworkManager.session.data(from: api),
               let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
 
         guard let entry = entries.first(where: { ($0["path"] as? String) == filePath }) else { return nil }

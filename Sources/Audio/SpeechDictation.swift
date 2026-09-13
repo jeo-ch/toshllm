@@ -344,7 +344,7 @@ final class SpeechDictationController: ObservableObject {
                 }
                 var request = URLRequest(url: readyURL)
                 request.timeoutInterval = 0.25
-                if let (_, response) = try? await URLSession.shared.data(for: request),
+                if let (_, response) = try? await NetworkManager.session.data(for: request),
                    (response as? HTTPURLResponse)?.statusCode == 200 {
                     isModelKeptLoaded = true
                     return
@@ -383,7 +383,7 @@ final class SpeechDictationController: ObservableObject {
         request.timeoutInterval = 3_600
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        inferenceTask = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+        inferenceTask = NetworkManager.session.dataTask(with: request) { [weak self] data, response, error in
             Task { @MainActor in
                 self?.finishServer(runID: runID, data: data, response: response, error: error)
             }

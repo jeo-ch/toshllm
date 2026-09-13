@@ -61,7 +61,23 @@ struct ChatMainView: View {
     @AppStorage(SettingsKeys.appAccent) private var accentRaw = AppTheme.defaultKey
     @AppStorage(SettingsKeys.chatFontScale) private var chatFontScale = 1.0
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var networkMonitor = NetworkMonitor.shared
     var body: some View {
+        VStack(spacing: 0) {
+            if !networkMonitor.isConnected {
+                HStack(spacing: 6) {
+                    Image(systemName: "wifi.slash")
+                        .font(.caption)
+                    Text(loc.t("Sin conexión — solo se usarán modelos locales",
+                               "Offline — only local models will be used"))
+                        .font(.caption)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(.orange.opacity(0.15))
+                .foregroundStyle(.orange)
+            }
         // A single NavigationSplitView for both modes: only the sidebar and detail
         // content swap, so the window chrome stays put and Chat/Images doesn't jump.
         NavigationSplitView {
@@ -159,6 +175,7 @@ struct ChatMainView: View {
                 disable: server.disableDflashAndRestart,
                 continueAnyway: server.acknowledgeDflashWarning)
         }
+        } // VStack
     }
 
     private var chatDetail: some View {

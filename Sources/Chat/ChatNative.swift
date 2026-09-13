@@ -1346,7 +1346,7 @@ final class ChatStore: ObservableObject {
             req.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
         }
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["filename": Self.slotFile(convID)])
-        _ = try? await URLSession.shared.data(for: req)
+        _ = try? await NetworkManager.session.data(for: req)
     }
 
     /// Before a turn: if slot 0 doesn't already hold this conversation, restore
@@ -1703,7 +1703,7 @@ final class ChatStore: ObservableObject {
         ]
         if let model = ServerSettings.activeRouterModel() { body["model"] = model }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        guard let (data, response) = try? await URLSession.shared.data(for: req),
+        guard let (data, response) = try? await NetworkManager.session.data(for: req),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = obj["choices"] as? [[String: Any]],

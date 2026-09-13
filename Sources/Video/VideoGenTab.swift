@@ -360,7 +360,7 @@ struct VideoControls: View {
             }
             Button {
                 for component in model.components where !componentPresent(component) {
-                    models.downloadImageComponent(urlString: component.urlString, fileName: component.fileName)
+                    models.downloadImageComponent(urlString: component.currentDownloadURL, fileName: component.fileName)
                 }
             } label: {
                 Label(loc.t("Descargar componentes", "Download components"), systemImage: "arrow.down.circle")

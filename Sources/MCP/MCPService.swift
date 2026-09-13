@@ -283,7 +283,7 @@ actor ToshMCPService {
         if let sessionID { request.setValue(sessionID, forHTTPHeaderField: "Mcp-Session-Id") }
         applyHeaders(server, to: &request)
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let (bytes, response) = try await NetworkManager.session.bytes(for: request)
         let http = response as? HTTPURLResponse
         let status = http?.statusCode ?? 0
         let sessionHeader = http?.value(forHTTPHeaderField: "Mcp-Session-Id")
@@ -360,7 +360,7 @@ actor ToshMCPService {
             request.timeoutInterval = 3_600
             request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
             applyHeaders(server, to: &request)
-            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            let (bytes, response) = try await NetworkManager.session.bytes(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
                 throw MCPError.remote("Legacy MCP SSE connection failed")
             }
@@ -416,7 +416,7 @@ actor ToshMCPService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         applyHeaders(session.server, to: &request)
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await NetworkManager.session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw MCPError.remote("HTTP \(status)") }
     }

@@ -18,7 +18,7 @@ struct WhisperModel: Identifiable, Hashable {
 
     var fileName: String { "ggml-\(id).bin" }
     var downloadURL: String {
-        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/\(fileName)"
+        DownloadSource.current.downloadURL(repo: "ggerganov/whisper.cpp", file: fileName)
     }
 
     static let catalog: [WhisperModel] = [

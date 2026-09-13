@@ -74,18 +74,13 @@ final class SearchStore: ObservableObject {
         loadingTrending = true
         defer { loadingTrending = false }
 
+        let source = DownloadSource.current
         // Fall back to all-time downloads if the chosen order yields nothing,
         // so the tab is never empty.
         for order in [sort.apiValue, HFSortOrder.downloads.apiValue] {
-            var comps = URLComponents(string: "https://huggingface.co/api/models")!
-            comps.queryItems = [
-                URLQueryItem(name: "filter", value: "gguf"),
-                URLQueryItem(name: "sort", value: order),
-                URLQueryItem(name: "direction", value: "-1"),
-                URLQueryItem(name: "limit", value: String(requestLimit)),
-            ]
-            guard let url = comps.url,
-                  let (data, _) = try? await URLSession.shared.data(from: url),
+            let urlString = source.trendingAPI(limit: requestLimit, sort: order)
+            guard let url = URL(string: urlString),
+                  let (data, _) = try? await NetworkManager.session.data(from: url),
                   let repos = try? Self.decoder.decode([HFRepo].self, from: data) else { continue }
             let kept = usable(repos)
             if !kept.isEmpty { trending = kept; return }
@@ -98,16 +93,10 @@ final class SearchStore: ObservableObject {
         searching = true
         defer { searching = false; didSearch = true }
 
-        var comps = URLComponents(string: "https://huggingface.co/api/models")!
-        comps.queryItems = [
-            URLQueryItem(name: "search", value: q),
-            URLQueryItem(name: "filter", value: "gguf"),
-            URLQueryItem(name: "sort", value: sort.apiValue),
-            URLQueryItem(name: "direction", value: "-1"),
-            URLQueryItem(name: "limit", value: String(requestLimit)),
-        ]
-        guard let url = comps.url,
-              let (data, _) = try? await URLSession.shared.data(from: url) else {
+        let source = DownloadSource.current
+        let urlString = source.searchAPI(query: q, limit: requestLimit, sort: sort.apiValue)
+        guard let url = URL(string: urlString),
+              let (data, _) = try? await NetworkManager.session.data(from: url) else {
             results = []
             return
         }
@@ -135,8 +124,10 @@ final class SearchStore: ObservableObject {
         expanded = repo
         guard files[repo] == nil else { return }
 
-        guard let url = URL(string: "https://huggingface.co/api/models/\(repo)/tree/main"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
+        let source = DownloadSource.current
+        let urlString = source.treeAPI(repo: repo)
+        guard let url = URL(string: urlString),
+              let (data, _) = try? await NetworkManager.session.data(from: url),
               let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
 
         let ggufEntries = entries.compactMap { entry -> GGUFFileEntry? in
@@ -163,10 +154,11 @@ final class SearchStore: ObservableObject {
         guard !draftProbed.contains(repo) else { return }
         draftProbed.insert(repo)
         let base = Self.modelBaseName(repo)
+        let source = DownloadSource.current
         guard base.count >= 4,
               let q = "\(base) DFlash".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://huggingface.co/api/models?search=\(q)&limit=12"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
+              let url = URL(string: source.searchAPI(query: q, limit: 12)),
+              let (data, _) = try? await NetworkManager.session.data(from: url),
               let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
         let baseKey = Self.alnum(base)
         for m in arr {
@@ -180,8 +172,10 @@ final class SearchStore: ObservableObject {
     }
 
     private func bestDraftFile(repo: String) async -> DraftInfo? {
-        guard let url = URL(string: "https://huggingface.co/api/models/\(repo)/tree/main"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
+        let source = DownloadSource.current
+        let urlString = source.treeAPI(repo: repo)
+        guard let url = URL(string: urlString),
+              let (data, _) = try? await NetworkManager.session.data(from: url),
               let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
         let ggufs: [(String, Int64)] = arr.compactMap { e in
             guard let p = e["path"] as? String, p.lowercased().hasSuffix(".gguf") else { return nil }
@@ -202,7 +196,7 @@ final class SearchStore: ObservableObject {
         guard let url = URL(string: urlString) else { return false }
         var request = URLRequest(url: url)
         request.setValue("bytes=0-\(headerProbeBytes - 1)", forHTTPHeaderField: "Range")
-        guard let (data, _) = try? await URLSession.shared.data(for: request) else { return false }
+        guard let (data, _) = try? await NetworkManager.session.data(for: request) else { return false }
         return data.range(of: Data(key.utf8)) != nil
     }
 
@@ -238,7 +232,7 @@ final class SearchStore: ObservableObject {
         guard let url = URL(string: urlString) else { return nil }
         var request = URLRequest(url: url)
         request.setValue("bytes=0-\(headerProbeBytes - 1)", forHTTPHeaderField: "Range")
-        guard let (data, _) = try? await URLSession.shared.data(for: request),
+        guard let (data, _) = try? await NetworkManager.session.data(for: request),
               let metadata = GGUFMetadataCache.parse(from: data) else { return nil }
         return metadata.isMoE
     }
@@ -271,6 +265,6 @@ final class SearchStore: ObservableObject {
     }
 
     func downloadURL(repo: String, file: String) -> String {
-        "https://huggingface.co/\(repo)/resolve/main/\(file)"
+        DownloadSource.current.downloadURL(repo: repo, file: file)
     }
 }

@@ -2164,7 +2164,7 @@ final class ServerController: ObservableObject {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let key = ServerSettings.activeAPIKey() { req.setValue("Bearer " + key, forHTTPHeaderField: "Authorization") }
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["filename": file])
-        _ = try? await URLSession.shared.data(for: req)
+        _ = try? await NetworkManager.session.data(for: req)
     }
 
     /// Same request on the way out, where an await would never resume. Bounded so
@@ -2179,7 +2179,7 @@ final class ServerController: ObservableObject {
         if let key = ServerSettings.activeAPIKey() { req.setValue("Bearer " + key, forHTTPHeaderField: "Authorization") }
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["filename": file])
         let done = DispatchSemaphore(value: 0)
-        let task = URLSession.shared.dataTask(with: req) { _, _, _ in done.signal() }
+        let task = NetworkManager.session.dataTask(with: req) { _, _, _ in done.signal() }
         task.resume()
         if done.wait(timeout: .now() + timeout) == .timedOut { task.cancel() }
     }
@@ -2199,7 +2199,7 @@ final class ServerController: ObservableObject {
             let url = URL(string: "http://127.0.0.1:\(port)/health")!
             for _ in 0..<150 {   // up to ~5 min for large models
                 if Task.isCancelled { return }
-                if let (data, _) = try? await URLSession.shared.data(from: url),
+                if let (data, _) = try? await NetworkManager.session.data(from: url),
                    String(data: data, encoding: .utf8)?.contains("ok") == true {
                     await MainActor.run {
                         self?.state = .running

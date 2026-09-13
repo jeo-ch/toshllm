@@ -54,7 +54,7 @@ final class UpdateChecker: ObservableObject {
         defer { checking = false }
 
         guard let url = URL(string: Self.releasesAPI),
-              let (data, response) = try? await URLSession.shared.data(from: url),
+              let (data, response) = try? await NetworkManager.session.data(from: url),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tag = obj["tag_name"] as? String else { return }
@@ -96,14 +96,14 @@ final class UpdateChecker: ObservableObject {
         defer { installing = false }
 
         do {
-            let (temp, _) = try await URLSession.shared.download(from: dmgURL)
+            let (temp, _) = try await NetworkManager.session.download(from: dmgURL)
             let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
             let dest = downloads.appendingPathComponent(dmgURL.lastPathComponent)
             try? FileManager.default.removeItem(at: dest)
             try FileManager.default.moveItem(at: temp, to: dest)
 
             if let checksumsURL,
-               let (data, _) = try? await URLSession.shared.data(from: checksumsURL),
+               let (data, _) = try? await NetworkManager.session.data(from: checksumsURL),
                let listing = String(data: data, encoding: .utf8) {
                 let expected = listing.split(separator: "\n")
                     .first { $0.contains(dmgURL.lastPathComponent) }?
@@ -216,7 +216,7 @@ final class UpdateChecker: ObservableObject {
         loadingNotes = true
         defer { loadingNotes = false }
         guard let url = URL(string: "https://api.github.com/repos/engeldlgado/toshllm/releases?per_page=30"),
-              let (data, response) = try? await URLSession.shared.data(from: url),
+              let (data, response) = try? await NetworkManager.session.data(from: url),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
         let all = list.compactMap { obj -> (String, String)? in

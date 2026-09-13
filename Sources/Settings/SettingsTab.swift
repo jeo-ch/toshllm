@@ -39,6 +39,11 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.noMmap) private var noMmap = true
     @AppStorage(SettingsKeys.jinja) private var jinja = true
     @AppStorage(SettingsKeys.vramReserve) private var vramReserve = 1024
+    @AppStorage(SettingsKeys.vramWarningThreshold) private var vramWarningThreshold = 85.0
+    @AppStorage(SettingsKeys.vramCriticalThreshold) private var vramCriticalThreshold = 95.0
+    @AppStorage(SettingsKeys.proxyEnabled) private var proxyEnabled = false
+    @AppStorage(SettingsKeys.proxyHost) private var proxyHost = ""
+    @AppStorage(SettingsKeys.proxyPort) private var proxyPort = 7890
     @AppStorage(SettingsKeys.gpuIndex) private var gpuIndex = -1
     @AppStorage(SettingsKeys.multiGPU) private var multiGPU = false
     @AppStorage(SettingsKeys.multiGPUCount) private var multiGPUCount = 0
@@ -67,6 +72,9 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.autoStart) private var autoStart = false
     @AppStorage(SettingsKeys.apiKeyEnabled) private var apiKeyEnabled = false
     @AppStorage(SettingsKeys.localNetworkDiscovery) private var localNetworkDiscovery = false
+    @AppStorage(SettingsKeys.downloadSource) private var downloadSource = "huggingface"
+    @AppStorage(SettingsKeys.customMirrorURL) private var customMirrorURL = ""
+    @AppStorage(SettingsKeys.downloadSpeedLimit) private var downloadSpeedLimit = 0.0
     @State private var showResetConfirm = false
     @State private var settingsTransferMessage: String?
     @State private var settingsDestination: SettingsDestination = .general
@@ -505,6 +513,30 @@ struct SettingsView: View {
                            "Changes take effect when the server restarts."))
                     .font(.caption).foregroundStyle(.secondary)
 
+                SettingsRowGroup {
+                    SettingsRow(icon: "network",
+                                title: loc.t("Proxy", "Proxy"),
+                                help: loc.t("Configurar proxy para conexiones de red (descargas, API).",
+                                            "Configure proxy for network connections (downloads, API).")) {
+                        SettingsToggle(isOn: $proxyEnabled)
+                    }
+                    if proxyEnabled {
+                        SettingsRow(icon: "server.rack",
+                                    title: loc.t("Servidor proxy", "Proxy host"),
+                                    help: loc.t("Dirección del servidor proxy (ej: 127.0.0.1).",
+                                                "Proxy server address (e.g. 127.0.0.1).")) {
+                            DeferredSettingsTextField("127.0.0.1", text: $proxyHost,
+                                                      width: 180, monospaced: true)
+                        }
+                        SettingsRow(icon: "number",
+                                    title: loc.t("Puerto proxy", "Proxy port"),
+                                    help: loc.t("Puerto del servidor proxy (ej: 7890).",
+                                                "Proxy server port (e.g. 7890).")) {
+                            DeferredSettingsIntegerField(value: $proxyPort, in: 1...65_535, width: 100)
+                        }
+                    }
+                }
+
                 VStack(alignment: .leading, spacing: 8) {
                     Text(loc.t("Registro del servidor", "Server log"))
                         .font(.system(size: 11, weight: .semibold))
@@ -605,6 +637,39 @@ struct SettingsView: View {
                             }
                             Button(loc.t("Cambiar…", "Change…")) { chooseModelsFolder() }
                                 .glassButton()
+                        }
+                    }
+                    SettingsRow(icon: "icloud.and.arrow.down",
+                                title: loc.t("Fuente de descarga", "Download source"),
+                                help: loc.t("Desde dónde se descargan los modelos GGUF. hf-mirror.com y魔塔社区 son más rápidos en China.",
+                                            "Where GGUF models are downloaded from. hf-mirror.com and ModelScope are faster in China.")) {
+                        ToshDropdown(selection: $downloadSource, options: [
+                            .init(value: "huggingface", title: "HuggingFace"),
+                            .init(value: "hf-mirror", title: "hf-mirror.com"),
+                            .init(value: "modelscope", title: "魔塔社区"),
+                            .init(value: "custom", title: loc.t("Personalizado", "Custom"))
+                        ], width: 200)
+                    }
+                    if downloadSource == "custom" {
+                        SettingsRow(icon: "link",
+                                    title: loc.t("URL del espejo", "Mirror URL"),
+                                    help: loc.t("URL base del espejo personalizado (ej: https://your-mirror.com).",
+                                                "Base URL of the custom mirror (e.g. https://your-mirror.com).")) {
+                            DeferredSettingsTextField("https://", text: $customMirrorURL,
+                                                      width: 280)
+                        }
+                    }
+                    SettingsRow(icon: "speedometer",
+                                title: loc.t("Límite de descarga", "Download speed limit"),
+                                help: loc.t("Límite de velocidad de descarga en MB/s. 0 = sin límite.",
+                                            "Download speed limit in MB/s. 0 = unlimited.")) {
+                        HStack(spacing: 8) {
+                            Slider(value: $downloadSpeedLimit, in: 0...100, step: 5)
+                                .frame(width: 180)
+                            Text(downloadSpeedLimit == 0 ? "∞" : "\(Int(downloadSpeedLimit)) MB/s")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 70, alignment: .trailing)
                         }
                     }
                 }
@@ -901,6 +966,40 @@ struct SettingsView: View {
                     .settingsGlyph("gauge.with.needle")
                     .infoTip(loc.t("VRAM que se deja libre para el sistema y la interfaz. 1024 MB es un margen seguro.",
                                 "VRAM left free for the system and UI. 1024 MB is a safe margin."))
+                HStack {
+                    Text(loc.t("Umbral de aviso VRAM", "VRAM warning threshold"))
+                        .settingsGlyph("exclamationmark.triangle")
+                    Spacer()
+                    Text("\(Int(vramWarningThreshold))%")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    Slider(value: $vramWarningThreshold, in: 50...99, step: 1)
+                        .frame(width: 140)
+                }
+                .infoTip(loc.t("Mostrar advertencia cuando el uso de VRAM supera este porcentaje.",
+                            "Show warning when VRAM usage exceeds this percentage."))
+                HStack {
+                    Text(loc.t("Umbral crítico VRAM", "VRAM critical threshold"))
+                        .settingsGlyph("exclamationmark.octagon")
+                    Spacer()
+                    Text("\(Int(vramCriticalThreshold))%")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    Slider(value: $vramCriticalThreshold, in: 70...100, step: 1)
+                        .frame(width: 140)
+                }
+                .infoTip(loc.t("Mostrar alerta crítica cuando el uso de VRAM supera este porcentaje.",
+                            "Show critical alert when VRAM usage exceeds this percentage."))
+                if vramWarningThreshold >= vramCriticalThreshold {
+                    Label(loc.t("El umbral de aviso debe ser menor que el crítico",
+                                "Warning threshold must be less than critical"),
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.red)
+                        .onAppear {
+                            // Auto-correct: push critical above warning
+                            vramCriticalThreshold = min(100, vramWarningThreshold + 5)
+                        }
+                }
                 Toggle(loc.t("Copiar pesos a VRAM (--no-mmap, recomendado)",
                              "Copy weights to VRAM (--no-mmap, recommended)"), isOn: $noMmap)
                     .settingsGlyph("arrow.down.to.line")

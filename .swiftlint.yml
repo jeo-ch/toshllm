@@ -1,0 +1,78 @@
+# ToshLLM SwiftLint configuration
+# SwiftLint is not bundled; run via: brew install swiftlint && swiftlint lint
+
+disabled_rules:
+  - trailing_whitespace          # The project uses Xcode auto-indent
+  - todo                         # TODOs are intentional in source
+  - cyclomatic_complexity        # Complex server logic is expected
+  - function_body_length         # Long functions exist in ChatNative/Server
+  - type_body_length             # Large types are common in SwiftUI views
+  - file_length                  # Some files are intentionally large
+  - force_cast                   # Used in UI code for known types
+  - force_try                    # Used in file I/O where errors are handled
+  - nesting                      # Nested types are used throughout
+
+opt_in_rules:
+  - empty_count
+  - closure_spacing
+  - contains_over_first_not_nil
+  - fatal_error_message
+  - first_where
+  - modifier_order
+  - overridden_super_call
+  - private_action
+  - private_outlet
+  - prohibited_super_call
+  - redundant_nil_coalescing
+  - sorted_first_last
+
+excluded:
+  - .build
+  - DerivedData
+  - "*/\.build/*"
+  - "**/*.generated.swift"
+
+line_length:
+  warning: 150
+  error: 200
+  ignores_comments: true
+  ignores_urls: true
+
+type_name:
+  min_length: 3
+  max_length: 60
+
+identifier_name:
+  min_length:
+    warning: 2
+  max_length:
+    warning: 60
+  excluded:
+    - id
+    - x
+    - y
+    - z
+    - i
+    - j
+    - k
+    - n
+    - t
+    - db
+    - vm
+    - ok
+
+type_body_length:
+  warning: 600
+  error: 1000
+
+file_length:
+  warning: 1000
+  error: 2000
+
+function_body_length:
+  warning: 100
+  error: 200
+
+cyclomatic_complexity:
+  warning: 15
+  error: 25

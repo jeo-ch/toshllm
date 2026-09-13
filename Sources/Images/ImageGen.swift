@@ -17,10 +17,54 @@ import UniformTypeIdentifiers
 struct ImageGenComponent: Identifiable {
     enum Kind { case checkpoint, diffusion, vae, audioVAE, connectors, textEncoder, t5, clipL }
     let kind: Kind
+    /// Original URL (used as fallback and for non-HuggingFace sources)
     let urlString: String
+    /// Repository path (e.g. "city96/FLUX.1-schnell-gguf"), extracted from URL
+    let repo: String
+    /// File path within the repo, extracted from URL
+    let file: String
     let fileName: String
     let sizeGB: Double
     var id: String { fileName }
+
+    /// Download URL for the currently selected download source.
+    var currentDownloadURL: String {
+        if repo.isEmpty || file.isEmpty { return urlString }
+        return DownloadSource.current.downloadURL(repo: repo, file: file)
+    }
+
+    /// Initialize with repo and file for automatic download source switching.
+    init(kind: Kind, repo: String, file: String, fileName: String, sizeGB: Double) {
+        self.kind = kind
+        self.repo = repo
+        self.file = file
+        self.urlString = DownloadSource.huggingface.downloadURL(repo: repo, file: file)
+        self.fileName = fileName
+        self.sizeGB = sizeGB
+    }
+
+    /// Legacy initializer: extract repo/file from HuggingFace URL.
+    init(kind: Kind, urlString: String, fileName: String, sizeGB: Double) {
+        self.kind = kind
+        self.urlString = urlString
+        self.fileName = fileName
+        self.sizeGB = sizeGB
+
+        if let url = URL(string: urlString),
+           url.host?.contains("huggingface.co") == true {
+            let parts = url.pathComponents
+            if let resolveIdx = parts.firstIndex(of: "resolve"), resolveIdx >= 2, parts.count > resolveIdx + 2 {
+                self.repo = parts[resolveIdx - 2] + "/" + parts[resolveIdx - 1]
+                self.file = parts[(resolveIdx + 2)...].joined(separator: "/")
+            } else {
+                self.repo = ""
+                self.file = ""
+            }
+        } else {
+            self.repo = ""
+            self.file = ""
+        }
+    }
 
     /// The sd-cli argument this file is passed as.
     var flag: String {

@@ -46,7 +46,7 @@ enum ModelCapabilitiesService {
         if let key = ServerSettings.activeAPIKey() {
             request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
         }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await NetworkManager.session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             return nil
         }

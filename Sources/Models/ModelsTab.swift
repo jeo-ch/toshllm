@@ -496,7 +496,8 @@ private struct CatalogModelInspector: View {
         guard let url = URL(string: model.urlString),
               let resolve = url.pathComponents.firstIndex(of: "resolve") else { return nil }
         let path = url.pathComponents[1..<resolve].joined(separator: "/")
-        return URL(string: "https://huggingface.co/\(path)")
+        let source = DownloadSource.current
+        return URL(string: "\(source.apiBase)/\(path)")
     }
     private var repositoryOwner: String { repositoryURL?.pathComponents.dropFirst().first ?? "—" }
     private var quantization: String { ModelName.forPath(model.fileName).quant }
@@ -620,9 +621,10 @@ private struct BrowseTab: View {
                 primaryValue: "\(search.didSearch ? search.results.count : search.trending.count)",
                 primaryLabel: loc.t("resultados", "results"),
                 secondaryValue: "GGUF", secondaryLabel: loc.t("formato local", "local format"),
-                actionTitle: "Hugging Face"
+                actionTitle: DownloadSource.current == .huggingface ? "Hugging Face" : DownloadSource.current.displayName
             ) {
-                if let url = URL(string: "https://huggingface.co/models?library=gguf") {
+                let source = DownloadSource.current
+                if let url = URL(string: "\(source.apiBase)/models?library=gguf") {
                     NSWorkspace.shared.open(url)
                 }
             }
@@ -1025,7 +1027,7 @@ private struct MyModelsTab: View {
                               title: loc.t("Descarga directa", "Direct download"),
                               subtitle: loc.t("Añade un archivo GGUF desde una URL.", "Add a GGUF file from a URL."))
                 HStack {
-                    TextField("https://huggingface.co/…/resolve/main/model.gguf", text: $customURL)
+                    TextField(loc.t("URL del archivo GGUF", "GGUF file URL"), text: $customURL)
                         .textFieldStyle(.plain).padding(.horizontal, 11).padding(.vertical, 8)
                         .background(WorkspaceStyle.inset, in: RoundedRectangle(cornerRadius: 8))
                     Button(loc.t("Descargar", "Download"), systemImage: "arrow.down.circle") {

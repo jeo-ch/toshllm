@@ -185,7 +185,8 @@ struct LocalModelDetailsSheet: View {
         var components: [String] { url.pathComponents.filter { $0 != "/" } }
         var resolveIndex: Int? { components.firstIndex(of: "resolve") ?? components.firstIndex(of: "blob") }
         var repository: String? {
-            guard url.host?.contains("huggingface.co") == true,
+            let source = DownloadSource.current
+            guard source.matchesURL(url),
                   let index = resolveIndex, index >= 2 else { return nil }
             return components[(index - 2)...(index - 1)].joined(separator: "/")
         }
@@ -195,7 +196,9 @@ struct LocalModelDetailsSheet: View {
             return components[index + 1]
         }
         var fileName: String { url.lastPathComponent.removingPercentEncoding ?? url.lastPathComponent }
-        var repositoryURL: URL? { repository.flatMap { URL(string: "https://huggingface.co/\($0)") } }
+        var repositoryURL: URL? {
+            repository.flatMap { URL(string: "\(DownloadSource.current.apiBase)/\($0)") }
+        }
     }
 
     private var source: SourceInfo? {

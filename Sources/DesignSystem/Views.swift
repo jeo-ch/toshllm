@@ -56,6 +56,7 @@ struct ControlPanelView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @AppStorage(SettingsKeys.appAccent) private var accentRaw = AppTheme.defaultKey
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject private var networkMonitor = NetworkMonitor.shared
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -63,6 +64,20 @@ struct ControlPanelView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 244, max: 290)
         } detail: {
             VStack(spacing: 0) {
+                if !networkMonitor.isConnected {
+                    HStack(spacing: 6) {
+                        Image(systemName: "wifi.slash")
+                            .font(.caption)
+                        Text(loc.t("Sin conexión — solo se usarán modelos locales",
+                                   "Offline — only local models will be used"))
+                            .font(.caption)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.orange.opacity(0.15))
+                    .foregroundStyle(.orange)
+                }
                 HStack(spacing: 14) {
                     if selectedServer != nil {
                         Button {

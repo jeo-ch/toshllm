@@ -104,7 +104,7 @@ enum ChatToolsService {
     static func list(port: Int) async throws -> [BuiltinToolInfo] {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/tools")!)
         authorize(&request)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await NetworkManager.session.data(for: request)
         try validate(response: response, data: data)
         guard let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             throw ChatToolsError.invalidResponse
@@ -123,7 +123,7 @@ enum ChatToolsService {
         }
         authorize(&request)
         request.httpBody = try JSONSerialization.data(withJSONObject: ["tool": name, "params": arguments])
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await NetworkManager.session.data(for: request)
         try validate(response: response, data: data)
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ChatToolsError.invalidResponse
@@ -147,7 +147,7 @@ enum ChatToolsService {
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "tool": name, "params": arguments, "stream": true
         ])
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let (bytes, response) = try await NetworkManager.session.bytes(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             var detail = ""

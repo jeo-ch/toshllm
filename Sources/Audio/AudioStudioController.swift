@@ -594,7 +594,7 @@ final class AudioStudioController: ObservableObject {
             routerModel: routerModel, apiKey: ServerSettings.activeAPIKey(),
             glossary: glossary, context: context
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await NetworkManager.session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         guard (200..<300).contains(http.statusCode) else {
             throw AudioTranslationError.server(http.statusCode, Self.serverError(from: data))

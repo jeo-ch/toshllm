@@ -8,7 +8,9 @@ enum WhisperVADModel {
     static let name = "Silero VAD 6.2"
     static let fileName = "ggml-silero-v6.2.0.bin"
     static let sizeKB = 864
-    static let downloadURL = "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin"
+    static var downloadURL: String {
+        DownloadSource.current.downloadURL(repo: "ggml-org/whisper-vad", file: fileName)
+    }
 
     static func url(in directory: URL) -> URL {
         directory.appendingPathComponent(fileName)

@@ -592,6 +592,8 @@ struct GPUsCard: View {
     @AppStorage(SettingsKeys.multiGPU) private var multiGPU = false
     @AppStorage(SettingsKeys.gpuList) private var gpuListCSV = ""
     @AppStorage(SettingsKeys.splitMode) private var splitMode = "layer"
+    @AppStorage(SettingsKeys.vramWarningThreshold) private var warningThreshold = 85.0
+    @AppStorage(SettingsKeys.vramCriticalThreshold) private var criticalThreshold = 95.0
     @EnvironmentObject var vram: VRAMMonitor
     @EnvironmentObject var loc: Localizer
 
@@ -639,6 +641,9 @@ struct GPUsCard: View {
     }
 
     @ViewBuilder private func gpuRow(_ g: GPUStat) -> some View {
+        let fractionPct = g.fraction * 100
+        let isCritical = fractionPct >= criticalThreshold
+        let isWarning = fractionPct >= warningThreshold
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 if vram.gpus.count > 1 {
@@ -647,12 +652,25 @@ struct GPUsCard: View {
                 }
                 Text(g.name).font(.callout).lineLimit(1)
                 peerBadge(for: g)
+                if isCritical {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .font(.system(size: 10))
+                        .help(loc.t("VRAM casi llena — cierra apps oreduce ctx",
+                                    "VRAM nearly full — close apps or reduce ctx"))
+                } else if isWarning {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .font(.system(size: 10))
+                        .help(loc.t("Uso de VRAM alto",
+                                    "High VRAM usage"))
+                }
                 Spacer(minLength: 8)
                 Text(String(format: "%.1f / %.0f GB", g.usedMB / 1024, g.totalMB / 1024))
                     .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
             }
             ProgressView(value: g.fraction)
-                .tint(g.fraction > 0.9 ? .red : g.fraction > 0.75 ? .orange : .accentColor)
+                .tint(isCritical ? .red : isWarning ? .orange : .accentColor)
         }
         .padding(.leading, peerColors.isEmpty ? 0 : 11)
         // As an overlay the bar takes the height of the row; a Shape in the row

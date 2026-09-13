@@ -151,6 +151,16 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
 
     var onFinish: (() -> Void)?
 
+    // Speed limit: bytes per second (0 = unlimited). Read from UserDefaults.
+    var bytesPerSecondLimit: Int {
+        let mbps = UserDefaults.standard.double(forKey: SettingsKeys.downloadSpeedLimit)
+        return mbps > 0 ? Int(mbps * 1_048_576) : 0
+    }
+
+    // Auto-retry on network errors
+    private static let maxAutoRetries = 5
+    private var retryCount = 0
+
     private var expectedSHA256: String?
     private var expectedBytes: Int64?
     private var task: URLSessionDataTask?
@@ -159,6 +169,12 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
     private let sessionConfiguration: URLSessionConfiguration
     private lazy var session = URLSession(configuration: sessionConfiguration, delegate: self, delegateQueue: nil)
 
+    // Speed tracking
+    private var lastDataTime: CFAbsoluteTime = 0
+    private var lastDataBytes: Int64 = 0
+    /// Current download speed in bytes/sec, computed from recent samples.
+    private(set) var currentSpeedBPS: Double = 0
+
     // Compatibility accessors used across the UI
     var finished: Bool { phase == .finished }
     var error: String? {
@@ -166,14 +182,15 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
         return nil
     }
 
-    init(remote: URL, destination: URL, sessionConfiguration: URLSessionConfiguration = .default) {
+    init(remote: URL, destination: URL, sessionConfiguration: URLSessionConfiguration? = nil) {
         self.remote = remote
         self.destination = destination
         // The saved name, which may differ from the remote (e.g. projectors are
         // renamed to <model>.mmproj.gguf). The UI keys progress off this.
         self.fileName = destination.lastPathComponent
         self.sink = DownloadSink(url: destination.appendingPathExtension("download"))
-        self.sessionConfiguration = sessionConfiguration
+        // Use provided config or create via NetworkManager (inherits proxy settings)
+        self.sessionConfiguration = sessionConfiguration ?? NetworkManager.makeConfiguration()
         super.init()
         Task { await prepare() }
     }
@@ -229,6 +246,8 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
 
     func resume() {
         guard phase == .paused else { return }
+        // User-initiated resume gets a fresh set of retries
+        retryCount = 0
         startTask()
     }
 
@@ -298,9 +317,40 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
             return
         }
         Task { @MainActor in
+            // Successful data receipt means connection is healthy; reset retry counter
+            self.retryCount = 0
+
             self.receivedMB = Double(bytes) / 1_048_576
             let expected = self.expectedBytes ?? Int64(self.totalMB * 1_048_576)
             if expected > 0 { self.progress = min(1, Double(bytes) / Double(expected)) }
+
+            // Speed tracking
+            let now = CFAbsoluteTimeGetCurrent()
+            if self.lastDataTime > 0 {
+                let elapsed = now - self.lastDataTime
+                if elapsed > 0 {
+                    let deltaBytes = Double(bytes - self.lastDataBytes)
+                    self.currentSpeedBPS = deltaBytes / elapsed
+                }
+            }
+            self.lastDataTime = now
+            self.lastDataBytes = bytes
+
+            // Speed limiting: pause task when exceeding limit, resume after cooldown
+            let limit = self.bytesPerSecondLimit
+            if limit > 0, self.currentSpeedBPS > Double(limit) {
+                // Calculate how long to wait to get back under the limit
+                let overshoot = self.currentSpeedBPS / Double(limit)
+                let cooldown = min(1.0, (overshoot - 1.0) * 0.5) // up to 1s pause
+                Task { @MainActor in
+                    self.task?.suspend()
+                    try? await Task.sleep(for: .milliseconds(Int(cooldown * 1000)))
+                    // Reset speed tracking after cooldown to avoid measuring the pause
+                    self.lastDataTime = 0
+                    self.lastDataBytes = bytes
+                    self.task?.resume()
+                }
+            }
         }
     }
 
@@ -341,9 +391,22 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
                 if (error as NSError).code == NSURLErrorCancelled || self.phase == .paused || self.error != nil {
                     return
                 }
+
+                // Auto-retry on transient network errors
+                if self.retryCount < Self.maxAutoRetries {
+                    self.retryCount += 1
+                    let backoff = min(30.0, Double(1 << self.retryCount)) // 2, 4, 8, 16, 30s
+                    AppLog.downloads.error("download error (retry \(self.retryCount)/\(Self.maxAutoRetries)): \(error.localizedDescription), backoff \(Int(backoff))s")
+                    try? await Task.sleep(for: .seconds(backoff))
+                    // Verify task wasn't cancelled during sleep
+                    guard self.phase != .failed("Cancelada / cancelled") else { return }
+                    self.startTask()
+                    return
+                }
+
                 // Keep the partial file and resume from the stable URL.
                 self.phase = .paused
-                AppLog.downloads.error("download paused after network error: \(error.localizedDescription)")
+                AppLog.downloads.error("download paused after network error (retries exhausted): \(error.localizedDescription)")
                 return
             }
             self.finishTransfer()
@@ -599,16 +662,18 @@ final class ModelStore: ObservableObject {
         }
     }
 
-    /// If `modelURL` points at a Hugging Face GGUF whose repo also contains an
+    /// If `modelURL` points at a GGUF whose repo also contains an
     /// `*mmproj*.gguf` (multimodal projector), download that projector to the same
-    /// folder. No-op for non-HF URLs, non-vision repos, or when it's already local.
+    /// folder. No-op for non-supported URLs, non-vision repos, or when it's already local.
     func autoFetchProjector(for modelURL: URL) async {
-        guard modelURL.host?.contains("huggingface.co") == true else { return }
+        let source = DownloadSource.current
+        guard source.matchesURL(modelURL) else { return }
         let comps = modelURL.pathComponents   // ["/", owner, repo, "resolve", branch, file…]
         guard let r = comps.firstIndex(of: "resolve"), r >= 2, comps.count > r + 1 else { return }
         let repo = comps[r - 2] + "/" + comps[r - 1]
         let branch = comps[r + 1]
-        guard let api = URL(string: "https://huggingface.co/api/models/\(repo)/tree/\(branch)"),
+        let urlString = source.treeAPI(repo: repo, branch: branch)
+        guard let api = URL(string: urlString),
               let (data, _) = try? await URLSession.shared.data(from: api),
               let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
         let projectors = entries.compactMap { $0["path"] as? String }
@@ -630,7 +695,8 @@ final class ModelStore: ObservableObject {
         let projDest = directory.appendingPathComponent(projName)
         guard !FileManager.default.fileExists(atPath: projDest.path),
               !downloads.contains(where: { $0.destination == projDest && $0.error == nil }) else { return }
-        download(urlString: "https://huggingface.co/\(repo)/resolve/\(branch)/\(proj)", preferredName: projName)
+        let downloadURLStr = source.downloadURL(repo: repo, file: proj, branch: branch)
+        download(urlString: downloadURLStr, preferredName: projName)
     }
 
     func clearFinishedDownloads() {
@@ -686,8 +752,9 @@ final class ModelStore: ObservableObject {
         let name = "\(modelStem).dflash.gguf"
         guard !FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).path),
               !downloads.contains(where: { $0.destination.lastPathComponent == name && $0.error == nil }) else { return }
-        download(urlString: "https://huggingface.co/\(repo)/resolve/main/\(file)",
-                 preferredName: name, fetchVisionProjector: false)
+        let source = DownloadSource.current
+        let downloadURLStr = source.downloadURL(repo: repo, file: file)
+        download(urlString: downloadURLStr, preferredName: name, fetchVisionProjector: false)
     }
 
     /// Retry a failed download by replacing it with a fresh transfer (new session

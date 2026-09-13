@@ -33,7 +33,7 @@ struct ImageControls: View {
     private func startUpscale(_ urls: [URL]) {
         guard ImageUpscaler.installed(flavor, customPath: upscalerCustom, in: models) else {
             if let c = flavor.component(customPath: upscalerCustom), !c.urlString.isEmpty {
-                models.downloadImageComponent(urlString: c.urlString, fileName: c.fileName)
+                models.downloadImageComponent(urlString: c.currentDownloadURL, fileName: c.fileName)
             }
             return
         }
@@ -1007,7 +1007,7 @@ struct ImageInstanceForm: View {
             ForEach(model.components) { componentRow($0) }
             Button {
                 for comp in model.components {
-                    models.downloadImageComponent(urlString: comp.urlString, fileName: comp.fileName)
+                    models.downloadImageComponent(urlString: comp.currentDownloadURL, fileName: comp.fileName)
                 }
             } label: {
                 Label(loc.t("Descargar todo (%.1f GB)", "Download all (%.1f GB)")
