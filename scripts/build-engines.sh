@@ -11,6 +11,11 @@ set -e
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
+# Clean up temp files on exit (Ctrl-C, error, or normal completion)
+TURBO3_TMPFILE=""
+cleanup() { rm -f "$TURBO3_TMPFILE"; }
+trap cleanup EXIT
+
 LLAMA_COMMIT="${LLAMA_COMMIT:-465e49b9c}"   # llama.cpp commit validated against the patches
 WHISPER_COMMIT="${WHISPER_COMMIT:-371b5a7561823ab2bb32142d2751e35e7534727b}" # whisper.cpp v1.9.3
 SD_COMMIT="${SD_COMMIT:-97d2990}"         # stable-diffusion.cpp commit validated for image gen
@@ -198,7 +203,6 @@ apply_turbo3_4mag() {
 
     # --- dequantize.h: add half-precision LUTs before the function ---
     if [ -f "$dequant" ] && ! grep -q 'turbo_mag_3bit_h' "$dequant"; then
-        # Insert the half-precision LUT arrays right after turbo_centroids_3bit
         sed -i '' '/^constant float turbo_centroids_3bit\[8\]/,/^};/{
             /^};/a\
 \
@@ -215,9 +219,9 @@ constant half turbo_mag_3bit_h[4] = {\
 };
         }' "$dequant"
 
-        # Replace the function body with the auto-select version
-        cat > /tmp/turbo3_patch.py << 'PYEOF'
-import re, sys
+        TURBO3_TMPFILE=$(mktemp /tmp/turbo3_patch.XXXXXX.py)
+        cat > "$TURBO3_TMPFILE" << 'PYEOF'
+import sys
 
 with open(sys.argv[1], 'r') as f:
     content = f.read()
@@ -264,42 +268,36 @@ if old_body in content:
     content = content.replace(old_body, new_body, 1)
     with open(sys.argv[1], 'w') as f:
         f.write(content)
-    print("turbo3-4mag: dequantize.h function body replaced")
 else:
-    print("turbo3-4mag: WARNING could not find original function body in dequantize.h", file=sys.stderr)
+    print("ERROR: could not find original function body in dequantize.h", file=sys.stderr)
     sys.exit(1)
 PYEOF
-        python3 /tmp/turbo3_patch.py "$dequant"
-        rm -f /tmp/turbo3_patch.py
+        python3 "$TURBO3_TMPFILE" "$dequant"
     fi
 
     # --- ggml-metal-device.m: add hardware detection for TURBO_USE_4MAG ---
     if [ -f "$device" ] && ! grep -q 'TURBO_USE_4MAG' "$device"; then
-        # Insert the hardware detection block right before the closing of the
-        # prep dictionary setup (after the last existing setObject call).
-        # We look for the pattern where prep dictionary values are being set.
-        python3 - "$device" << 'PYEOF'
+        TURBO3_TMPFILE=$(mktemp /tmp/turbo3_patch.XXXXXX.py)
+        cat > "$TURBO3_TMPFILE" << 'PYEOF'
 import sys
 
 path = sys.argv[1]
 with open(path, 'r') as f:
     lines = f.readlines()
 
-# Find the last setObject:forKey: line in the prep dictionary setup and insert after it
 insert_idx = None
 for i, line in enumerate(lines):
     if 'setObject:' in line and 'forKey:' in line:
         insert_idx = i
 
 if insert_idx is None:
-    # Fallback: find the TOSH_ENABLE_DYNAMIC_MOE block and insert before it
     for i, line in enumerate(lines):
         if 'TOSH_ENABLE_DYNAMIC_MOE' in line:
             insert_idx = i - 1
             break
 
 if insert_idx is None:
-    print("turbo3-4mag: WARNING could not find insertion point in ggml-metal-device.m", file=sys.stderr)
+    print("ERROR: could not find insertion point in ggml-metal-device.m", file=sys.stderr)
     sys.exit(1)
 
 block = """
@@ -321,11 +319,22 @@ block = """
 lines.insert(insert_idx + 1, block)
 with open(path, 'w') as f:
     f.writelines(lines)
-print("turbo3-4mag: ggml-metal-device.m hardware detection added")
 PYEOF
+        python3 "$TURBO3_TMPFILE" "$device"
     fi
 
-    echo "turbo3-4mag auto-select applied"
+    # Post-apply validation: verify both files have the expected markers
+    local ok=1
+    if ! grep -q 'turbo_mag_3bit_h' "$dequant" 2>/dev/null; then
+        echo "ERROR: turbo3-4mag: dequantize.h missing turbo_mag_3bit_h after injection" >&2
+        ok=0
+    fi
+    if ! grep -q 'TURBO_USE_4MAG' "$device" 2>/dev/null; then
+        echo "ERROR: turbo3-4mag: ggml-metal-device.m missing TURBO_USE_4MAG after injection" >&2
+        ok=0
+    fi
+    [ "$ok" -eq 1 ] || exit 1
+    echo "turbo3-4mag auto-select applied and verified"
 }
 
 build_whisper_engine() {

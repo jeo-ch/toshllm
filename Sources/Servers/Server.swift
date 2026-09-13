@@ -608,7 +608,9 @@ final class ServerController: ObservableObject {
     }
 
     /// Quitting: the engine must be signalled inline, since a detached task does
-    /// not outlive the process.
+    /// not outlive the process.  Called from synchronous app-termination handlers
+    /// (SIGTERM, applicationWillTerminate) so this cannot use async/await — the
+    /// brief usleep is the trade-off for guaranteed cleanup before exit.
     func stopImmediately() {
         AudioStudioController.shared.shutdown()
         SpeechDictationController.shared.shutdown()
@@ -633,9 +635,11 @@ final class ServerController: ObservableObject {
                                   timeout: 10)
         }
         p.terminate()
+        // Poll for graceful exit (50ms intervals, max 1s).  SIGKILL is the
+        // fallback if the process refuses to die — same as stop()'s 6s timer.
         var waited = 0
         while p.isRunning && waited < 20 {
-            usleep(100_000)
+            usleep(50_000)
             waited += 1
         }
         if p.isRunning { kill(pid, SIGKILL) }

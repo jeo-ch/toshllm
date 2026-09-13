@@ -1761,8 +1761,13 @@ final class ChatStore: ObservableObject {
     // Serial queue: keeps writes ordered while encoding off the main thread,
     // since the full history JSON grows with use and would cause hitches.
     private static let saveQueue = DispatchQueue(label: "dev.engel.toshllm.chat-save", qos: .utility)
+    private static var saveWork: DispatchWorkItem?
 
     func save() {
+        // Debounce: cancel previous pending save and schedule a new one after 150ms.
+        // This collapses rapid successive calls (delete, rename, new conversation)
+        // into a single disk write.
+        Self.saveWork?.cancel()
         for i in conversations.indices {
             guard let active = conversations[i].activeBranchID,
                   let j = conversations[i].branches?.firstIndex(where: { $0.id == active }) else { continue }
@@ -1774,7 +1779,7 @@ final class ChatStore: ObservableObject {
         let pURL = projectsURL
         let bkURL = backupURL
         let bkPURL = backupProjectsURL
-        Self.saveQueue.async {
+        let work = DispatchWorkItem { [oldWork = Self.saveWork] in
             // Snapshot previous version as backup before overwriting
             let fm = FileManager.default
             if fm.fileExists(atPath: url.path) {
@@ -1812,6 +1817,8 @@ final class ChatStore: ObservableObject {
                 AppLog.chat.error("ChatStore: failed to encode projects")
             }
         }
+        Self.saveWork = work
+        Self.saveQueue.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 
     func exportText(_ c: Conversation, _ loc: Localizer) -> String {
