@@ -9,6 +9,8 @@ on:
       - "Package.swift"
       - "Package.resolved"
       - ".github/workflows/build.yml"
+      - "patches/**"
+      - "scripts/build-engines.sh"
     tags: ["*"]
   pull_request:
     branches: [main, master]
@@ -16,6 +18,14 @@ on:
     inputs:
       notarize:
         description: "Sign and notarize (adds up to an hour of Apple queue)"
+        type: boolean
+        default: false
+      force_rebuild:
+        description: "Force full engine rebuild (ignore cache)"
+        type: boolean
+        default: false
+      run_performance_tests:
+        description: "Run performance regression tests"
         type: boolean
         default: false
 
@@ -38,6 +48,25 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: swift test
+
+  # Performance regression tests - run on PRs and manual triggers
+  performance:
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_performance_tests)
+    name: Performance tests
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run performance tests
+        run: |
+          swift test --filter PerformanceTests
+      - name: Upload performance results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: performance-results
+          path: .build/performance-results.json
+          retention-days: 30
 
   build:
     # PRs validate a single variant; tags and manual runs build BOTH CPU variants
@@ -80,7 +109,11 @@ jobs:
         with:
           path: vendor
           # Per variant: the two ISA baselines produce different engine binaries.
-          key: engines-${{ matrix.variant }}-${{ hashFiles('patches/**/*.patch', 'scripts/build-engines.sh') }}
+          # Include engine commit hashes for better cache invalidation.
+          key: engines-${{ matrix.variant }}-${{ hashFiles('patches/**/*.patch', 'scripts/build-engines.sh', 'vendor/**/*.commit') }}
+          restore-keys: |
+            engines-${{ matrix.variant }}-
+            engines-
 
       - name: Run unit tests
         if: github.event_name == 'pull_request' && steps.scope.outputs.build == 'true'
@@ -89,16 +122,10 @@ jobs:
       - name: Build inference engines (x86_64)
         if: github.event_name != 'pull_request' || steps.scope.outputs.build == 'true'
         run: |
-          if [ ! -x vendor/llama.cpp/build-static/bin/llama-server ] || \
-             [ ! -f vendor/llama.cpp/build-static/bin/default.metallib ] || \
-             [ ! -x vendor/whisper.cpp/build-static/bin/whisper-cli ] || \
-             [ ! -f vendor/whisper.cpp/build-static/bin/default.metallib ] || \
-             [ ! -x vendor/stable-diffusion.cpp/build-static/bin/sd-cli ] || \
-             [ ! -f vendor/stable-diffusion.cpp/build-static/bin/default.metallib ]; then
-            ARCH=x86_64 ./scripts/build-engines.sh
-          else
-            echo "Using cached inference engines"
-          fi
+          # Use parallel builds for faster CI, incremental builds for cache hits
+          export PARALLEL_ENGINES=1
+          export FORCE_REBUILD=${{ inputs.force_rebuild && '1' || '0' }}
+          ARCH=x86_64 ./scripts/build-engines.sh
 
       - name: Build app (x86_64)
         if: github.event_name != 'pull_request' || steps.scope.outputs.build == 'true'
@@ -188,6 +215,16 @@ jobs:
         with:
           name: dmg-${{ matrix.variant }}
           path: dist/*.dmg
+
+      - name: Upload build metrics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-metrics-${{ matrix.variant }}
+          path: |
+            .build-engines.log
+            vendor/*/.build-cache
+          retention-days: 7
 
   # Collect both variants' DMGs and publish one release with both assets, so the
   # updater can pick the matching one per install (AppInfo.isNoAVX2).

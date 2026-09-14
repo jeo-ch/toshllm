@@ -7,14 +7,129 @@
 #   ./scripts/build-engines.sh                  # host architecture
 #   ARCH=x86_64 ./scripts/build-engines.sh      # cross-compile (CI on arm64 runners)
 #   ARCH=universal ./scripts/build-engines.sh   # x86_64 + arm64 fat binaries (experimental)
+#   PARALLEL_ENGINES=1 ./scripts/build-engines.sh  # build engines in parallel (faster CI)
+#   FORCE_REBUILD=1 ./scripts/build-engines.sh     # force full rebuild (ignore cache)
 set -e
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
+
+# Build performance tracking
+BUILD_START_TIME=$(date +%s)
+BUILD_LOG="$ROOT/.build-engines.log"
+log_build_time() {
+    local engine="$1"
+    local start="$2"
+    local end=$(date +%s)
+    local duration=$((end - start))
+    echo "[$engine] Build completed in ${duration}s" | tee -a "$BUILD_LOG"
+}
 
 # Clean up temp files on exit (Ctrl-C, error, or normal completion)
 TURBO3_TMPFILE=""
 cleanup() { rm -f "$TURBO3_TMPFILE"; }
 trap cleanup EXIT
+
+# Incremental build support: check if engine needs rebuild
+needs_rebuild() {
+    local vendor="$1"
+    local patches_hash="$2"
+    local cache_file="$vendor/.build-cache"
+    
+    # Force rebuild if requested
+    if [ "${FORCE_REBUILD:-0}" = "1" ]; then
+        echo "FORCE_REBUILD enabled — rebuilding $vendor"
+        return 0
+    fi
+    
+    # Check if cache file exists
+    if [ ! -f "$cache_file" ]; then
+        echo "No build cache for $vendor — full build"
+        return 0
+    fi
+    
+    # Read cached values
+    local cached_hash=$(head -1 "$cache_file" 2>/dev/null || echo "")
+    local cached_commit=$(sed -n '2p' "$cache_file" 2>/dev/null || echo "")
+    
+    # Get current values
+    local current_commit=$(cd "$vendor" && git rev-parse HEAD 2>/dev/null || echo "")
+    
+    # Compare
+    if [ "$cached_hash" = "$patches_hash" ] && [ "$cached_commit" = "$current_commit" ]; then
+        echo "Build cache hit for $vendor (patches and commit unchanged)"
+        return 1  # No rebuild needed
+    fi
+    
+    echo "Build cache miss for $vendor (patches or commit changed)"
+    return 0  # Rebuild needed
+}
+
+# Update build cache after successful build
+update_build_cache() {
+    local vendor="$1"
+    local patches_hash="$2"
+    local cache_file="$vendor/.build-cache"
+    
+    local current_commit=$(cd "$vendor" && git rev-parse HEAD 2>/dev/null || echo "")
+    echo "$patches_hash" > "$cache_file"
+    echo "$current_commit" >> "$cache_file"
+}
+
+# Calculate patches hash for cache key
+calculate_patches_hash() {
+    local patches=("$@")
+    local hash_input=""
+    for patch in "${patches[@]}"; do
+        if [ -f "$patch" ]; then
+            hash_input+="$(cat "$patch")"
+        fi
+    done
+    echo "$hash_input" | shasum -a 256 | cut -d' ' -f1
+}
+
+# Parallel engine build support
+build_engines_parallel() {
+    local pids=()
+    local engines=()
+    
+    # Build llama.cpp in background
+    if [ -z "$SKIP_LLAMA" ]; then
+        (
+            source "$0" --subbuild-llama
+        ) &
+        pids+=($!)
+        engines+=("llama.cpp")
+    fi
+    
+    # Build whisper.cpp in background
+    if [ -z "$SKIP_WHISPER" ]; then
+        (
+            source "$0" --subbuild-whisper
+        ) &
+        pids+=($!)
+        engines+=("whisper.cpp")
+    fi
+    
+    # Build stable-diffusion.cpp in background
+    if [ -z "$SKIP_IMAGE" ]; then
+        (
+            source "$0" --subbuild-image
+        ) &
+        pids+=($!)
+        engines+=("stable-diffusion.cpp")
+    fi
+    
+    # Wait for all builds
+    local failed=0
+    for i in "${!pids[@]}"; do
+        if ! wait "${pids[$i]}"; then
+            echo "ERROR: ${engines[$i]} build failed" >&2
+            failed=1
+        fi
+    done
+    
+    return $failed
+}
 
 LLAMA_COMMIT="${LLAMA_COMMIT:-465e49b9c}"   # llama.cpp commit validated against the patches
 WHISPER_COMMIT="${WHISPER_COMMIT:-371b5a7561823ab2bb32142d2751e35e7534727b}" # whisper.cpp v1.9.3
@@ -133,7 +248,18 @@ build_engine() {
     local vendor="$1" ref="$2" fetch_ref="$3"
     shift 3
     local patches=("$@")
-
+    local engine_start=$(date +%s)
+    
+    # Calculate patches hash for incremental build
+    local patches_hash=$(calculate_patches_hash "${patches[@]}")
+    
+    # Check if rebuild is needed
+    if ! needs_rebuild "$vendor" "$patches_hash"; then
+        echo "Skipping $vendor — using cached build"
+        cd "$ROOT"
+        return 0
+    fi
+    
     if [ ! -d "$vendor/.git" ]; then
         retry_git git clone --filter=blob:none https://github.com/ggml-org/llama.cpp "$vendor"
     fi
@@ -190,8 +316,15 @@ build_engine() {
             METAL_PRECOMPILE=0
         fi
     fi
-    echo "engine ready at $PWD/build-static/bin (arch: $ARCH)"
+    
+    # Update build cache
     cd "$ROOT"
+    cd "$vendor"
+    update_build_cache "$vendor" "$patches_hash"
+    cd "$ROOT"
+    
+    log_build_time "llama.cpp" "$engine_start"
+    echo "engine ready at $PWD/build-static/bin (arch: $ARCH)"
 }
 
 # Inject TurboQuant 4-mag auto-select into the patched sources.
@@ -339,6 +472,18 @@ PYEOF
 
 build_whisper_engine() {
     local vendor="vendor/whisper.cpp"
+    local engine_start=$(date +%s)
+    
+    # Calculate patches hash for incremental build
+    local patches=("$ROOT"/patches/shared-metal/0001-*.patch "$ROOT"/patches/whisper/*.patch)
+    local patches_hash=$(calculate_patches_hash "${patches[@]}")
+    
+    # Check if rebuild is needed
+    if ! needs_rebuild "$vendor" "$patches_hash"; then
+        echo "Skipping whisper.cpp — using cached build"
+        return 0
+    fi
+    
     if [ ! -d "$vendor/.git" ]; then
         retry_git git clone --filter=blob:none https://github.com/ggml-org/whisper.cpp "$vendor"
     fi
@@ -395,6 +540,11 @@ build_whisper_engine() {
             METAL_PRECOMPILE=0
         fi
     fi
+    
+    # Update build cache
+    update_build_cache "$vendor" "$patches_hash"
+    
+    log_build_time "whisper.cpp" "$engine_start"
     echo "speech-to-text engine ready at $PWD/build-static/bin (arch: $ARCH)"
     cd "$ROOT"
 }
@@ -403,6 +553,18 @@ build_whisper_engine() {
 # 0001 series and nothing else; the llama half has no counterpart here.
 build_image_engine() {
     local vendor="vendor/stable-diffusion.cpp"
+    local engine_start=$(date +%s)
+    
+    # Calculate patches hash for incremental build
+    local patches=("$ROOT"/patches/shared-metal/0001-*.patch "$ROOT"/patches/image/*.patch)
+    local patches_hash=$(calculate_patches_hash "${patches[@]}")
+    
+    # Check if rebuild is needed
+    if ! needs_rebuild "$vendor" "$patches_hash"; then
+        echo "Skipping stable-diffusion.cpp — using cached build"
+        return 0
+    fi
+    
     # `git clone --recursive` stalls on the ggml submodule fetch on flaky links;
     # clone the main repo, then init the submodule separately, both abort-and-retry
     # on a stalled transfer instead of hanging.
@@ -520,6 +682,11 @@ build_image_engine() {
             METAL_PRECOMPILE=0
         fi
     fi
+    
+    # Update build cache
+    update_build_cache "$vendor" "$patches_hash"
+    
+    log_build_time "stable-diffusion.cpp" "$engine_start"
     echo "image engine ready at $PWD/build-static/bin (arch: $ARCH)"
     cd "$ROOT"
 }
@@ -531,18 +698,41 @@ patch_series() {
         awk -F/ '{print $NF"\t"$0}' | sort | cut -f2-
 }
 
-# 1. Official engine (skip with SKIP_LLAMA=1 when iterating on the image engine)
-if [ -z "$SKIP_LLAMA" ]; then
-build_engine vendor/llama.cpp "$LLAMA_COMMIT" "$LLAMA_COMMIT" ${(f)"$(patch_series llama)"}
-fi
+# Main execution
+main() {
+    local main_start=$(date +%s)
+    
+    # Check for parallel build option
+    if [ "${PARALLEL_ENGINES:-0}" = "1" ]; then
+        echo "Building engines in parallel..."
+        build_engines_parallel
+    else
+        echo "Building engines sequentially..."
+        
+        # 1. Official engine (skip with SKIP_LLAMA=1 when iterating on the image engine)
+        if [ -z "$SKIP_LLAMA" ]; then
+            build_engine vendor/llama.cpp "$LLAMA_COMMIT" "$LLAMA_COMMIT" ${(f)"$(patch_series llama)"}
+        fi
 
-# 2. Speech-to-text engine (skip with SKIP_WHISPER=1)
-if [ -z "$SKIP_WHISPER" ]; then
-    build_whisper_engine
-fi
+        # 2. Speech-to-text engine (skip with SKIP_WHISPER=1)
+        if [ -z "$SKIP_WHISPER" ]; then
+            build_whisper_engine
+        fi
 
+        # 3. Image engine (stable-diffusion.cpp; skip with SKIP_IMAGE=1)
+        if [ -z "$SKIP_IMAGE" ]; then
+            build_image_engine
+        fi
+    fi
+    
+    # Summary
+    local total_duration=$(($(date +%s) - main_start))
+    echo ""
+    echo "=== Build Summary ==="
+    echo "Total build time: ${total_duration}s"
+    echo "Build log: $BUILD_LOG"
+    echo "====================="
+}
 
-# 3. Image engine (stable-diffusion.cpp; skip with SKIP_IMAGE=1)
-if [ -z "$SKIP_IMAGE" ]; then
-    build_image_engine
-fi
+# Run main function
+main
