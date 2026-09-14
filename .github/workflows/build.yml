@@ -9,7 +9,7 @@ on:
       - "Package.swift"
       - "Package.resolved"
       - ".github/workflows/build.yml"
-    tags: ["v*"]
+    tags: ["*"]
   pull_request:
     branches: [main, master]
   workflow_dispatch:
@@ -43,7 +43,7 @@ jobs:
     # PRs validate a single variant; tags and manual runs build BOTH CPU variants
     # (standard = AVX2, noavx2 = pre-AVX2 legacy) and ship a DMG for each. Branch
     # pushes are handled by the test job above, so build is skipped for them.
-    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
     name: Build ${{ matrix.variant }} (x86_64)
     runs-on: macos-26
     # Apple's notary queue took 66 min on this account's first submission.
@@ -51,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: ${{ (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && fromJSON('["standard","noavx2"]') || fromJSON('["standard"]') }}
+        variant: ${{ (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') && fromJSON('["standard","noavx2"]') || fromJSON('["standard"]') }}
     env:
       # The no-AVX2 leg lowers the CPU baseline in build-engines.sh and stamps the
       # bundle (make-app.sh) so the updater keeps it on its own release channel.
@@ -109,7 +109,7 @@ jobs:
       # everything else keeps the ad-hoc signature unless a manual run opts in.
       - name: Sign and notarize (if secrets configured)
         id: sign
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.notarize
+        if: startsWith(github.ref, 'refs/tags/') || inputs.notarize
         env:
           CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -156,7 +156,7 @@ jobs:
       # push/PR just burns time and artifact storage. Only tags and manual runs
       # ship a DMG. make-dmg.sh reads the bundle's variant to name it (-noavx2).
       - name: Package DMG
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         run: |
           VERSION="${GITHUB_REF_NAME}"
           [[ "$VERSION" == v* ]] || VERSION="dev-${GITHUB_SHA::7}"
@@ -183,7 +183,7 @@ jobs:
           done
 
       - name: Upload artifact
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v7
         with:
           name: dmg-${{ matrix.variant }}
@@ -192,7 +192,7 @@ jobs:
   # Collect both variants' DMGs and publish one release with both assets, so the
   # updater can pick the matching one per install (AppInfo.isNoAVX2).
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/')
     needs: build
     name: Publish release
     runs-on: macos-26
