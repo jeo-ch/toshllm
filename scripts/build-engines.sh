@@ -95,7 +95,7 @@ build_engines_parallel() {
     # Build llama.cpp in background
     if [ -z "$SKIP_LLAMA" ]; then
         (
-            source "$0" --subbuild-llama
+            build_engine vendor/llama.cpp "$LLAMA_COMMIT" "$LLAMA_COMMIT" ${(f)"$(patch_series llama)"}
         ) &
         pids+=($!)
         engines+=("llama.cpp")
@@ -104,7 +104,7 @@ build_engines_parallel() {
     # Build whisper.cpp in background
     if [ -z "$SKIP_WHISPER" ]; then
         (
-            source "$0" --subbuild-whisper
+            build_whisper_engine
         ) &
         pids+=($!)
         engines+=("whisper.cpp")
@@ -113,7 +113,7 @@ build_engines_parallel() {
     # Build stable-diffusion.cpp in background
     if [ -z "$SKIP_IMAGE" ]; then
         (
-            source "$0" --subbuild-image
+            build_image_engine
         ) &
         pids+=($!)
         engines+=("stable-diffusion.cpp")
@@ -121,7 +121,7 @@ build_engines_parallel() {
     
     # Wait for all builds
     local failed=0
-    for i in "${!pids[@]}"; do
+    for i in {1..$#pids}; do
         if ! wait "${pids[$i]}"; then
             echo "ERROR: ${engines[$i]} build failed" >&2
             failed=1
