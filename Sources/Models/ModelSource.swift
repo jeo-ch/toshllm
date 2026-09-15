@@ -113,12 +113,13 @@ struct LocalGGUFSource: ModelSource {
     }
     
     func download(item: ModelSourceItem, progress: @escaping (Double) -> Void) async throws -> URL {
-        // Local files are already downloaded
-        guard let url = item.downloadURL else {
+        // Local files are already downloaded - return the local path
+        let localURL = URL(fileURLWithPath: item.id)
+        guard FileManager.default.fileExists(atPath: localURL.path) else {
             throw ModelSourceError.fileNotFound
         }
         progress(1.0)
-        return url
+        return localURL
     }
     
     func metadata(for item: ModelSourceItem) async throws -> ModelSourceMetadata {
@@ -164,24 +165,17 @@ struct HuggingFaceSource: ModelSource {
         let modelsDir = ServerSettings.modelsDirectory
         let destination = modelsDir.appendingPathComponent(item.name)
         
-        return try await withCheckedThrowingContinuation { continuation in
-            let task = URLSession.shared.downloadTask(with: downloadURL) { tempURL, _, error in
-                guard let tempURL, error == nil else {
-                    continuation.resume(throwing: ModelSourceError.downloadFailed)
-                    return
-                }
-                
-                do {
-                    try FileManager.default.moveItem(at: tempURL, to: destination)
-                    progress(1.0)
-                    continuation.resume(returning: destination)
-                } catch {
-                    continuation.resume(throwing: ModelSourceError.downloadFailed)
-                }
-            }
-            
-            task.resume()
+        // Use async download API to avoid race condition
+        let (tempURL, _) = try await URLSession.shared.download(from: downloadURL)
+        
+        // Copy temp file immediately (before system cleans it up)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
         }
+        try FileManager.default.copyItem(at: tempURL, to: destination)
+        
+        progress(1.0)
+        return destination
     }
     
     func metadata(for item: ModelSourceItem) async throws -> ModelSourceMetadata {

@@ -111,7 +111,9 @@ struct PermissionPolicy: Codable, Sendable {
         /// Check if a specific operation matches this rule.
         func matches(operation: String) -> Bool {
             patterns.isEmpty || patterns.contains { pattern in
-                operation.localizedCaseInsensitiveContains(pattern)
+                // Use NSPredicate for proper Glob matching
+                let predicate = NSPredicate(format: "SELF LIKE %@", pattern)
+                return predicate.evaluate(with: operation)
             }
         }
     }
@@ -141,12 +143,16 @@ struct PermissionPolicy: Codable, Sendable {
     /// Check if an operation is allowed.
     func checkPermission(category: Category, operation: String) -> PermissionResult {
         // Check blacklist first (highest priority)
-        if denyPatterns.contains(where: { operation.localizedCaseInsensitiveContains($0) }) {
+        if denyPatterns.contains(where: { pattern in
+            NSPredicate(format: "SELF LIKE %@", pattern).evaluate(with: operation)
+        }) {
             return .denied(reason: "Operation matches deny pattern")
         }
         
         // Check whitelist (second priority)
-        if allowPatterns.contains(where: { operation.localizedCaseInsensitiveContains($0) }) {
+        if allowPatterns.contains(where: { pattern in
+            NSPredicate(format: "SELF LIKE %@", pattern).evaluate(with: operation)
+        }) {
             return .allowed(reason: "Operation matches allow pattern")
         }
         

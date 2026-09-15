@@ -20,7 +20,7 @@ final class PluginManager: ObservableObject, PluginManagerProtocol {
     }
     
     /// Plugin entry with metadata.
-    struct PluginEntry: Identifiable, Sendable {
+    struct PluginEntry: Identifiable, @unchecked Sendable {
         let id: String
         let plugin: any Plugin
         var state: PluginState

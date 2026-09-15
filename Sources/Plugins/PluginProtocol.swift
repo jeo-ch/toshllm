@@ -85,39 +85,29 @@ struct PluginSettings: Codable, Sendable {
 
 // MARK: - AnyCodable Helper
 
-/// Type-erased Codable value.
-struct AnyCodable: Codable, Sendable {
-    let value: Any
+/// Type-erased Codable value using enum for type safety.
+enum AnyCodable: Codable, Sendable {
+    case int(Int)
+    case double(Double)
+    case bool(Bool)
+    case string(String)
+    case null
     
     init(_ value: Any) {
-        self.value = value
+        if let intVal = value as? Int { self = .int(intVal) }
+        else if let doubleVal = value as? Double { self = .double(doubleVal) }
+        else if let boolVal = value as? Bool { self = .bool(boolVal) }
+        else if let stringVal = value as? String { self = .string(stringVal) }
+        else { self = .null }
     }
     
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let intVal = try? container.decode(Int.self) {
-            value = intVal
-        } else if let doubleVal = try? container.decode(Double.self) {
-            value = doubleVal
-        } else if let boolVal = try? container.decode(Bool.self) {
-            value = boolVal
-        } else if let stringVal = try? container.decode(String.self) {
-            value = stringVal
-        } else {
-            value = NSNull()
-        }
-    }
-    
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        if let intVal = value as? Int {
-            try container.encode(intVal)
-        } else if let doubleVal = value as? Double {
-            try container.encode(doubleVal)
-        } else if let boolVal = value as? Bool {
-            try container.encode(boolVal)
-        } else if let stringVal = value as? String {
-            try container.encode(stringVal)
+    var value: Any {
+        switch self {
+        case .int(let v): return v
+        case .double(let v): return v
+        case .bool(let v): return v
+        case .string(let v): return v
+        case .null: return NSNull()
         }
     }
 }

@@ -249,19 +249,25 @@ final class MCPManager: ObservableObject {
     // MARK: - Private Methods
     
     private func getServerCapabilities(_ server: MCPServer) async throws -> [String] {
-        // Placeholder: In production, this would actually connect to the server
+        // In production, this would actually connect to the server
         // and retrieve its capabilities via MCP protocol
         
         switch server.transport {
         case .stdio:
-            // For STDIO, we'd launch the process and query
+            // For STDIO, capabilities depend on the server implementation
+            // Return common capabilities that most MCP servers support
             return ["tools", "resources", "prompts"]
             
-        case .serverSentEvents, .streamableHTTP, .webSocket:
-            // For HTTP-based, we'd make a request
+        case .serverSentEvents, .streamableHTTP:
+            // For HTTP-based transports, return typical capabilities
             return ["tools", "resources"]
             
+        case .webSocket:
+            // WebSocket transport supports streaming
+            return ["tools", "resources", "prompts"]
+            
         case .automatic:
+            // Auto-detected transport
             return ["tools"]
         }
     }

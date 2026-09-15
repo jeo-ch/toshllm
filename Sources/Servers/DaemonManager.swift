@@ -82,6 +82,7 @@ final class DaemonManager: ObservableObject {
     private var healthCheckTask: Task<Void, Never>?
     private var restartCount = 0
     private var startedAt: Date?
+    private var isRestarting = false
     
     // MARK: - Initialization
     
@@ -243,14 +244,19 @@ final class DaemonManager: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 
+                // Prevent recursive restart
+                guard !self.isRestarting else { return }
+                
                 if process.terminationStatus != 0 {
                     self.status = .error
                     self.lastError = "Daemon exited with status \(process.terminationStatus)"
                     
                     // Attempt restart if within limits
                     if self.restartCount < self.configuration.maxRestarts {
+                        self.isRestarting = true
                         self.restartCount += 1
                         try? await Task.sleep(for: .seconds(2))
+                        self.isRestarting = false
                         try? await self.start()
                     }
                 }
@@ -373,6 +379,7 @@ enum DaemonError: LocalizedError {
 /// Simple Unix socket client for daemon communication.
 private final class Socket {
     let fileDescriptor: Int32
+    private var isClosed = false
     
     private init(fileDescriptor: Int32) {
         self.fileDescriptor = fileDescriptor
@@ -413,7 +420,10 @@ private final class Socket {
     
     func write(_ data: Data) throws {
         let result = data.withUnsafeBytes { ptr in
-            send(fileDescriptor, ptr.baseAddress!, data.count, 0)
+            guard let baseAddress = ptr.baseAddress else {
+                return -1
+            }
+            return send(fileDescriptor, baseAddress, data.count, 0)
         }
         guard result >= 0 else {
             throw DaemonError.commandFailed("Failed to write to socket")
@@ -430,12 +440,14 @@ private final class Socket {
     }
     
     func closeSocket() throws {
+        guard !isClosed else { return }
         guard Darwin.close(fileDescriptor) >= 0 else {
             throw DaemonError.commandFailed("Failed to close socket")
         }
+        isClosed = true
     }
     
     deinit {
-        Darwin.close(fileDescriptor)
+        try? closeSocket()
     }
 }

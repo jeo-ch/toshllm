@@ -147,7 +147,7 @@ final class GatewayServer: ObservableObject {
     func enableChannel(_ type: ChannelType) async throws {
         guard let index = channels.firstIndex(where: { $0.type == type }) else { return }
         
-        var config = channels[index]
+        let config = channels[index]
         channels[index] = ChannelConfig(
             type: config.type,
             enabled: true,
@@ -188,8 +188,17 @@ final class GatewayServer: ObservableObject {
         channel: ChannelType,
         messages: [[String: String]],
         model: String?,
-        stream: Bool
+        stream: Bool,
+        apiKey: String? = nil
     ) async throws -> GatewayResponse {
+        // Validate API key
+        if let channelConfig = channels.first(where: { $0.type == channel }),
+           let expectedKey = channelConfig.apiKey {
+            guard let apiKey, apiKey == expectedKey else {
+                throw GatewayError.authenticationFailed
+            }
+        }
+        
         // Forward to local inference engine
         let inferenceURL = URL(string: "http://127.0.0.1:8080/v1/chat/completions")!
         
@@ -216,13 +225,41 @@ final class GatewayServer: ObservableObject {
             throw GatewayError.inferenceFailed
         }
         
-        let result = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GatewayError.inferenceFailed
+        }
+        
+        // Parse choices
+        var choices: [GatewayResponse.Choice] = []
+        if let choicesArray = result["choices"] as? [[String: Any]] {
+            for (index, choiceDict) in choicesArray.enumerated() {
+                if let messageDict = choiceDict["message"] as? [String: String],
+                   let role = messageDict["role"],
+                   let content = messageDict["content"] {
+                    choices.append(GatewayResponse.Choice(
+                        index: index,
+                        message: .init(role: role, content: content),
+                        finishReason: choiceDict["finish_reason"] as? String
+                    ))
+                }
+            }
+        }
+        
+        // Parse usage
+        var usage: GatewayResponse.Usage?
+        if let usageDict = result["usage"] as? [String: Int] {
+            usage = GatewayResponse.Usage(
+                promptTokens: usageDict["prompt_tokens"] ?? 0,
+                completionTokens: usageDict["completion_tokens"] ?? 0,
+                totalTokens: usageDict["total_tokens"] ?? 0
+            )
+        }
         
         return GatewayResponse(
-            id: UUID().uuidString,
-            model: model ?? "default",
-            choices: [],
-            usage: nil
+            id: result["id"] as? String ?? UUID().uuidString,
+            model: result["model"] as? String ?? model ?? "default",
+            choices: choices,
+            usage: usage
         )
     }
     
