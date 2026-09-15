@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Engelbert <engeldlgado@gmail.com>
+Date: Mon, 14 Sep 2026 22:33:58 -0400
+Subject: [PATCH] 0067-mgpu-tp2-wg32-measured-head-shapes
+
+---
+ ggml/src/ggml-metal/ggml-metal-ops.cpp | 22 ++++++++++++++++++++--
+ 1 file changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+index f0b10881e..ae3eb90a7 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -3663,6 +3663,25 @@ int ggml_metal_op_add_id(ggml_metal_op_t ctx, int idx) {
+     return 1;
+ }
+ 
++// Measured depth where the 32-way split starts to win for a single-row dk128 query on 64 lanes, per
++// local query and KV heads; shapes that were not measured keep the full-die depth.
++static int64_t ggml_metal_fa_wg_dk128_min_kv_w64(int64_t n_head, int64_t n_head_kv) {
++    static const struct { int64_t n_head, n_head_kv, min_kv; } measured[] = {
++        {  8, 4, 1536 },
++        { 16, 8, 3584 },
++        { 16, 4, 3072 },
++        { 16, 2, 3584 },
++        { 16, 1, 4096 },
++        { 20, 4, 4608 },
++    };
++    for (const auto & m : measured) {
++        if (m.n_head == n_head && m.n_head_kv == n_head_kv) {
++            return m.min_kv;
++        }
++    }
++    return 16384;
++}
++
+ // Suffix for the AMD vec FA pipeline name, or nullptr for types we don't instantiate.
+ static const char * ggml_metal_fa_amd_type_suffix(enum ggml_type t) {
+     switch (t) {
+@@ -4338,9 +4357,8 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+         const bool wg_wide_head =
+             ne00 == 256 || ne00 == 512 || (ne00 == 576 && ne20 == 512) ||
+             (ne00 == 320 && ne20 == 256);
+-        // the split costs in proportion to the local query heads, so sixteen of them turn much earlier
+         const int64_t wg_dk128_min_kv = wg_dk128_env >= 0 ? wg_dk128_env
+-                                      : (props_dev->simd_width == 64 ? (ne02 == 16 ? 3072 : 16384) : 24576);
++                                      : (props_dev->simd_width == 64 ? ggml_metal_fa_wg_dk128_min_kv_w64(ne02, ne12) : 24576);
+         const bool wg_dk128_width_ok = props_dev->simd_width == 32 || props_dev->simd_width == 64;
+         // head 64 has the instantiations but no measured depth of its own yet;
+         // TOSH_FA_WG_DK64=<kv> opens it so that one can be swept

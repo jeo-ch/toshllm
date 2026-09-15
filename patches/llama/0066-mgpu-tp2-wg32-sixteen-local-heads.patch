@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Engelbert <engeldlgado@gmail.com>
+Date: Mon, 14 Sep 2026 21:42:41 -0400
+Subject: [PATCH] 0066-mgpu-tp2-wg32-sixteen-local-heads
+
+---
+ ggml/src/ggml-metal/ggml-metal-ops.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+index 7faf20135..f0b10881e 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -4338,8 +4338,9 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+         const bool wg_wide_head =
+             ne00 == 256 || ne00 == 512 || (ne00 == 576 && ne20 == 512) ||
+             (ne00 == 320 && ne20 == 256);
++        // the split costs in proportion to the local query heads, so sixteen of them turn much earlier
+         const int64_t wg_dk128_min_kv = wg_dk128_env >= 0 ? wg_dk128_env
+-                                      : (props_dev->simd_width == 64 ? 16384 : 24576);
++                                      : (props_dev->simd_width == 64 ? (ne02 == 16 ? 3072 : 16384) : 24576);
+         const bool wg_dk128_width_ok = props_dev->simd_width == 32 || props_dev->simd_width == 64;
+         // head 64 has the instantiations but no measured depth of its own yet;
+         // TOSH_FA_WG_DK64=<kv> opens it so that one can be swept
