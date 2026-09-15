@@ -314,11 +314,9 @@ build_engine() {
         fi
     fi
     
-    # Update build cache
+    # Update build cache (must be called from ROOT for relative paths)
     cd "$ROOT"
-    cd "$vendor"
     update_build_cache "$vendor" "$patches_hash"
-    cd "$ROOT"
     
     log_build_time "llama.cpp" "$engine_start"
     echo "engine ready at $PWD/build-static/bin (arch: $ARCH)"
@@ -538,12 +536,12 @@ build_whisper_engine() {
         fi
     fi
     
-    # Update build cache
+    # Update build cache (must be called from ROOT for relative paths)
+    cd "$ROOT"
     update_build_cache "$vendor" "$patches_hash"
     
     log_build_time "whisper.cpp" "$engine_start"
     echo "speech-to-text engine ready at $PWD/build-static/bin (arch: $ARCH)"
-    cd "$ROOT"
 }
 
 # stable-diffusion.cpp shares the ggml/Metal stack, so it takes the ggml-metal hunks of the
@@ -680,12 +678,12 @@ build_image_engine() {
         fi
     fi
     
-    # Update build cache
+    # Update build cache (must be called from ROOT for relative paths)
+    cd "$ROOT"
     update_build_cache "$vendor" "$patches_hash"
     
     log_build_time "stable-diffusion.cpp" "$engine_start"
     echo "image engine ready at $PWD/build-static/bin (arch: $ARCH)"
-    cd "$ROOT"
 }
 
 # Patches live in patches/<engine>/<area>/, and the numeric prefix is the apply order across
