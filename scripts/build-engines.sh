@@ -68,9 +68,9 @@ needs_rebuild() {
 update_build_cache() {
     local vendor="$1"
     local patches_hash="$2"
-    local cache_file="$vendor/.build-cache"
-    
-    local current_commit=$(cd "$vendor" && git rev-parse HEAD 2>/dev/null || echo "")
+    local cache_file="$ROOT/$vendor/.build-cache"
+
+    local current_commit=$(git -C "$ROOT/$vendor" rev-parse HEAD 2>/dev/null || echo "")
     echo "$patches_hash" > "$cache_file"
     echo "$current_commit" >> "$cache_file"
 }
