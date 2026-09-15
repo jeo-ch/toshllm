@@ -273,7 +273,8 @@ struct RequestTracer {
         let averageDuration = completed.isEmpty ? 0 : totalDuration / Double(completed.count)
         
         let totalTokens = completed.compactMap(\.tokenUsage).reduce(0) { $0 + $1.totalTokens }
-        let averageTokensPerSecond = completed.compactMap(\.tokenUsage?.tokensPerSecond).reduce(0, +) / Double(max(1, completed.count))
+        let tokensPerSecondValues = completed.compactMap(\.tokenUsage?.tokensPerSecond)
+        let averageTokensPerSecond = tokensPerSecondValues.isEmpty ? 0 : tokensPerSecondValues.reduce(0, +) / Double(tokensPerSecondValues.count)
         
         return TraceStatistics(
             totalRequests: traces.count,

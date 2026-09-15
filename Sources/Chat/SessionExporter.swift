@@ -267,8 +267,12 @@ struct SessionExporter {
                 // Parse new role
                 if let closeBracket = line.firstIndex(of: "]") {
                     currentRole = String(line[line.index(after: line.startIndex)..<closeBracket])
-                    let contentStart = line.index(closeBracket, offsetBy: 2)
-                    currentContent = String(line[contentStart...])
+                    // Safely get content after "]: " (at least 2 chars after close bracket)
+                    let contentStartIndex = line.index(closeBracket, offsetBy: 1, limitedBy: line.endIndex)
+                    if let contentStart = contentStartIndex {
+                        let trimmed = line[contentStart...].trimmingCharacters(in: .whitespaces)
+                        currentContent = trimmed.hasPrefix(": ") ? String(trimmed.dropFirst(2)) : String(trimmed)
+                    }
                 }
             } else {
                 currentContent += "\n" + line

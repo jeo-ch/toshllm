@@ -72,7 +72,9 @@ struct ConcurrencyEstimator {
             let sharedBW = effectiveBW / Double(maxSessions)
             
             if spec.isMoE {
-                let active = spec.activeParamsB > 0 ? spec.activeParamsB : spec.paramsB * 0.11
+                // Use actual active params if provided, otherwise estimate (typical MoE activates ~10-20%)
+                let activeRatio = spec.activeParamsB > 0 ? spec.activeParamsB / spec.paramsB : 0.15
+                let active = spec.activeParamsB > 0 ? spec.activeParamsB : spec.paramsB * activeRatio
                 let bytesPerParam = spec.fileGB / max(1, spec.paramsB)
                 let activeGB = active * bytesPerParam
                 tokensPerSecond = sharedBW / max(0.5, activeGB)
@@ -103,15 +105,16 @@ struct ConcurrencyEstimator {
     static func quickEstimate(
         vramGB: Double,
         modelGB: Double,
-        ctx: Int = 16384
+        ctx: Int = 16384,
+        kvBytesPerToken: Double = 256.0  // Default f16, varies by quantization
     ) -> Int {
         let weightsGB = modelGB * 1.03
         let computeGB = 0.9
         let reservedGB = 2.0
         let availableForKV = max(0, vramGB - weightsGB - computeGB - reservedGB)
         
-        // Rough estimate: 256 bytes per token * 2 (K+V) * ctx tokens
-        let kvPerSession = (Double(ctx) * 512) / 1_073_741_824
+        // KV cache: K and V each use kvBytesPerToken per token
+        let kvPerSession = (Double(ctx) * kvBytesPerToken * 2) / 1_073_741_824
         
         return kvPerSession > 0 ? Int(availableForKV / kvPerSession) : 0
     }

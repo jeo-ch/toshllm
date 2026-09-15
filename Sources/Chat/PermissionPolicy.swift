@@ -211,17 +211,26 @@ struct PermissionPolicy: Codable, Sendable {
         var categoryRisks: [Category: RiskSummary.RiskLevel] = [:]
         
         for category in Category.allCases {
-            let risk: RiskSummary.RiskLevel
-            switch globalLevel {
-            case .yolo:
-                risk = .high
-            case .allow:
-                risk = .medium
-            case .deny:
-                risk = .low
-            case .ask:
-                risk = category.riskLevel >= 4 ? .medium : .low
+            var risk: RiskSummary.RiskLevel
+            
+            // Check category-specific rules first
+            if let rule = rules.first(where: { $0.category == category }) {
+                switch rule.level {
+                case .yolo: risk = .high
+                case .allow: risk = .low
+                case .deny: risk = .low
+                case .ask: risk = category.riskLevel >= 4 ? .medium : .low
+                }
+            } else {
+                // Fall back to global level
+                switch globalLevel {
+                case .yolo: risk = .high
+                case .allow: risk = .medium
+                case .deny: risk = .low
+                case .ask: risk = category.riskLevel >= 4 ? .medium : .low
+                }
             }
+            
             categoryRisks[category] = risk
         }
         

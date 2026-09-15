@@ -127,7 +127,8 @@ struct QuantizationRecommendation {
         isMoE: Bool,
         hardware: HardwareInfo,
         ctx: Int = 16384,
-        kvScale: Double = 1.0
+        kvScale: Double = 1.0,
+        ramBandwidthGBs: Double = 48.0  // Default DDR4-3200 dual channel
     ) -> QuantizationRecommendation {
         let vramGB = hardware.vramGB
         let bandwidthGBs = Estimator.bandwidthGBs(of: hardware.bestGPU)
@@ -170,7 +171,7 @@ struct QuantizationRecommendation {
                 // Partially fits, but slower
                 let onGPU = max(0, vramBudget - fixedOverhead)
                 let fracRAM = max(0, min(1, (totalNeed - onGPU) / max(0.5, totalNeed)))
-                let perToken = fileSizeGB * ((1 - fracRAM) / effectiveBW + fracRAM / 48.0)  // 48 GB/s RAM
+                let perToken = fileSizeGB * ((1 - fracRAM) / effectiveBW + fracRAM / ramBandwidthGBs)
                 let speed = 1 / max(0.0001, perToken) * tier.speedMultiplier
                 
                 if speed > bestSpeed {

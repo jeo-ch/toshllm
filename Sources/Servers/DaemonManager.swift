@@ -136,10 +136,11 @@ final class DaemonManager: ObservableObject {
             // Send SIGTERM for graceful shutdown
             process.terminate()
             
-            // Wait for process to exit (max 5 seconds)
+            // Wait for process to exit (max 5 seconds) using non-blocking approach
             let deadline = Date().addingTimeInterval(5)
             while process.isRunning && Date() < deadline {
-                usleep(100_000) // 100ms
+                // Use RunLoop to avoid blocking main thread
+                RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
             }
             
             // Force kill if still running

@@ -189,11 +189,27 @@ extension HardwareProfile {
             },
             hasUnifiedMemory: hw.arch == "arm64",
             bandwidthGBs: Estimator.bandwidthGBs(of: hw.bestGPU),
-            fp16TFLOPS: hw.arch == "arm64" ? 10.0 : 0,  // Conservative estimate
+            fp16TFLOPS: estimateFP16TFLOPS(for: hw),
             osVersion: hw.osVersion,
             createdAt: Date(),
             updatedAt: Date()
         )
+    }
+    
+    /// Estimate FP16 TFLOPS based on hardware.
+    private static func estimateFP16TFLOPS(for hw: HardwareInfo) -> Double {
+        // Apple Silicon estimates based on known specs
+        if hw.arch == "arm64" {
+            let brand = hw.cpuBrand.lowercased()
+            if brand.contains("m4") { return 18.0 }
+            if brand.contains("m3") { return 14.0 }
+            if brand.contains("m2") { return 6.8 }
+            if brand.contains("m1") { return 4.2 }
+            // Default arm64
+            return 10.0
+        }
+        // Intel/AMD discrete GPUs - use GPU compute units if available
+        return 0
     }
 }
 

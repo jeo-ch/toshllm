@@ -147,14 +147,20 @@ final class PluginManager: ObservableObject, PluginManagerProtocol {
         plugins.filter { $0.capabilities.contains(capability) && $0.state == .active }
     }
     
-    /// Dispatch an event to all active plugins.
+    /// Dispatch an event to all active plugins in parallel.
     func dispatchEvent(_ event: PluginEvent) async {
-        for plugin in activePlugins() {
-            do {
-                try await plugin.plugin.handleEvent(event)
-            } catch {
-                let logger = PluginLogger(pluginID: plugin.id)
-                logger.error("Failed to handle event: \(error.localizedDescription)")
+        let active = activePlugins()
+        
+        await withTaskGroup(of: Void.self) { group in
+            for plugin in active {
+                group.addTask { [plugin] in
+                    do {
+                        try await plugin.plugin.handleEvent(event)
+                    } catch {
+                        let logger = PluginLogger(pluginID: plugin.id)
+                        logger.error("Failed to handle event: \(error.localizedDescription)")
+                    }
+                }
             }
         }
     }

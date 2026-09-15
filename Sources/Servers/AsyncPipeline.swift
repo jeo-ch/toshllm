@@ -58,11 +58,8 @@ final class AsyncPipeline: ObservableObject {
             }
         }
         
-        // Create download task with backpressure
-        let config = URLSessionConfiguration.default
-        config.waitsForConnectivity = true
-        config.timeoutIntervalForRequest = 60
-        let session = URLSession(configuration: config)
+        // Reuse shared session for connection pooling
+        let session = URLSession.shared
         
         let (tempURL, response) = try await session.download(from: url)
         
