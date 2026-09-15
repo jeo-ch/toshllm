@@ -435,7 +435,7 @@
 - **完成文件**：`Sources/Chat/SessionExporter.swift`
 - **提交**：`0b3c6b2`
 
-### 19. 插件化架构预研
+### 19. 插件化架构预研 ✅
 - **来源**：deepseek-harness Cordis、openclaw 插件 SDK
 - **影响力**：3/5
 - **协同度**：2/5
@@ -454,8 +454,11 @@
   6. 将 UI 面板抽象为插件（设置、仪表盘、日志）
   7. 实现插件沙箱隔离
   8. 设计插件市场（ClawHub）
+- **完成状态**：✅ 已完成
+- **完成文件**：`Sources/Plugins/PluginProtocol.swift`、`Sources/Plugins/PluginManager.swift`
+- **提交**：`868f883`
 
-### 20. 网关模式 + 多渠道适配
+### 20. 网关模式 + 多渠道适配 ✅
 - **来源**：openclaw Gateway、多渠道适配
 - **影响力**：3/5
 - **协同度**：2/5
@@ -473,6 +476,9 @@
   5. 实现 VS Code/Cline/Cursor 直连支持
   6. 添加安全审计日志
   7. 添加访问控制（API Key 认证）
+- **完成状态**：✅ 已完成
+- **完成文件**：`Sources/Gateway/GatewayServer.swift`
+- **提交**：`868f883`
 
 ---
 
