@@ -85,8 +85,9 @@ struct ConcurrencyEstimator {
             tokensPerSecond = 0
         }
         
-        // Memory efficiency
-        let memoryEfficiency = availableForKV > 0 ? min(1.0, (availableForKV + weightsGB + computeGB) / vramGB) : 0
+        // Memory efficiency (0-1, where 1 means fully utilized)
+        let totalUsed = weightsGB + computeGB
+        let memoryEfficiency = vramGB > 0 ? min(1.0, totalUsed / vramGB) : 0
         
         // Reliability check
         let isReliable = maxSessions > 0 && kvPerSession > 0 && vramGB > 4

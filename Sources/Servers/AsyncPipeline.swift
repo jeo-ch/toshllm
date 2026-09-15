@@ -114,9 +114,9 @@ final class AsyncPipeline: ObservableObject {
         // Append or write data
         if existingBytes > 0, FileManager.default.fileExists(atPath: destination.path) {
             let fileHandle = try FileHandle(forWritingTo: destination)
+            defer { fileHandle.closeFile() }
             fileHandle.seekToEndOfFile()
             fileHandle.write(data)
-            fileHandle.closeFile()
         } else {
             try data.write(to: destination)
         }

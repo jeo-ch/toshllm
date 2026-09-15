@@ -96,7 +96,6 @@ struct SpeculativeControl: View {
                 }
             }
         }
-        .onAppear {}
         .help(loc.t("Auto usa DFlash cuando hay un draft compatible y el planificador deja memoria suficiente. Forzado ignora la reserva de seguridad y avisa si la VRAM supera 95 %.",
                     "Auto uses DFlash when a compatible draft is installed and the memory planner leaves enough headroom. Forced ignores the safety reserve and warns if VRAM exceeds 95%."))
     }

@@ -188,14 +188,9 @@ final class PluginManager: ObservableObject, PluginManagerProtocol {
             return []
         }
         
-        var plugins: [any Plugin] = []
-        
-        for file in files where file.pathExtension == "toshplugin" {
-            // In production, this would load the plugin bundle
-            // For now, return empty
-        }
-        
-        return plugins
+        // In production, this would load the plugin bundle
+        // For now, return empty
+        return []
     }
     
     /// Get plugin statistics.

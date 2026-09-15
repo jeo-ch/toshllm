@@ -124,8 +124,12 @@ struct DFlashDecoder: SpeculativeDecoder {
 /// Central manager for all speculative decoding methods.
 /// Provides a unified interface to query and configure decoders.
 struct SpeculativeDecoderManager {
-    /// All available decoder types.
+    /// All available decoder types (cached instances).
     static let allDecoders: [SpeculativeDecoder] = [MTPDecoder(), DFlashDecoder()]
+    
+    /// Cached instances for quick access
+    private static let mtpDecoder = MTPDecoder()
+    private static let dflashDecoder = DFlashDecoder()
     
     /// Get all decoders available for a given model.
     static func availableDecoders(forModel path: String) -> [SpeculativeDecoder] {
@@ -145,21 +149,19 @@ struct SpeculativeDecoderManager {
     /// Get the first enabled draft path for a model (prioritizes DFlash for MoE, MTP otherwise).
     static func activeDraftPath(forModel path: String) -> String? {
         // DFlash is preferred for MoE models
-        if let dflashPath = DFlashDecoder().draftPath(forModel: path) {
+        if let dflashPath = dflashDecoder.draftPath(forModel: path) {
             return dflashPath
         }
         // Fall back to MTP
-        return MTPDecoder().draftPath(forModel: path)
+        return mtpDecoder.draftPath(forModel: path)
     }
     
     /// Get the preferred decoder for a model (DFlash for MoE, MTP for dense).
     static func preferredDecoder(forModel path: String) -> SpeculativeDecoder? {
         if ServerSettings.modelIsMoE(at: path) {
-            let dflash = DFlashDecoder()
-            if dflash.isAvailable(forModel: path) { return dflash }
+            if dflashDecoder.isAvailable(forModel: path) { return dflashDecoder }
         }
-        let mtp = MTPDecoder()
-        if mtp.isAvailable(forModel: path) { return mtp }
+        if mtpDecoder.isAvailable(forModel: path) { return mtpDecoder }
         return nil
     }
 }

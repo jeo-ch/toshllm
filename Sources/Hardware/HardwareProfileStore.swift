@@ -301,21 +301,21 @@ final class HardwareProfileStore: ObservableObject {
     
     /// Import a profile from JSON data.
     func importProfile(from data: Data) -> HardwareProfile? {
-        guard var profile = try? JSONDecoder().decode(HardwareProfile.self, from: data) else {
+        guard let decoded = try? JSONDecoder().decode(HardwareProfile.self, from: data) else {
             return nil
         }
-        // Assign a new ID to prevent duplicates
-        profile = HardwareProfile(
+        // Assign a new ID to prevent duplicates, but preserve original createdAt
+        let profile = HardwareProfile(
             id: UUID(),
-            name: profile.name,
-            cpu: profile.cpu,
-            ramGB: profile.ramGB,
-            gpus: profile.gpus,
-            hasUnifiedMemory: profile.hasUnifiedMemory,
-            bandwidthGBs: profile.bandwidthGBs,
-            fp16TFLOPS: profile.fp16TFLOPS,
-            osVersion: profile.osVersion,
-            createdAt: Date(),
+            name: decoded.name,
+            cpu: decoded.cpu,
+            ramGB: decoded.ramGB,
+            gpus: decoded.gpus,
+            hasUnifiedMemory: decoded.hasUnifiedMemory,
+            bandwidthGBs: decoded.bandwidthGBs,
+            fp16TFLOPS: decoded.fp16TFLOPS,
+            osVersion: decoded.osVersion,
+            createdAt: decoded.createdAt,  // Preserve original date
             updatedAt: Date()
         )
         addProfile(profile)

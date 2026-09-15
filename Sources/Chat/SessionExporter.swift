@@ -335,9 +335,3 @@ private extension JSONEncoder {
         return encoder
     }()
 }
-
-// MARK: - Conversation Extension
-
-extension Conversation {
-    // Note: summary and other properties already exist in the Conversation struct
-}
