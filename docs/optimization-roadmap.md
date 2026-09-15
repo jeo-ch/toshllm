@@ -61,11 +61,26 @@
 ### 5. 修复 VRAMMonitor 重复
 - 删除了 `Sources/Hardware/VRAMMonitor.swift`（与现有 `Sources/Servers/Stats.swift:VRAMMonitor` 冲突）
 
+### 6. P0-1: 统一推测解码抽象层
+- **文件**：`Sources/Hardware/SpeculativeDecoder.swift`、`Sources/Hardware/SpeculativeControl.swift`
+- **实现**：`SpeculativeDecoder` protocol + `MTPDecoder`/`DFlashDecoder` 实现 + 统一 `SpeculativeControl` 视图
+- **提交**：`8e3a7f1`，已推送到 `https://github.com/jeo-ch/toshllm.git`
+
+### 7. P0-2: 量化感知推荐
+- **文件**：`Sources/Hardware/QuantizationRecommendation.swift`
+- **实现**：`QuantizationTier` 枚举（Q4_0/F16）+ `QuantizationRecommendation.recommend()` 硬件感知推荐
+- **提交**：`8e3a7f1`，已推送到 `https://github.com/jeo-ch/toshllm.git`
+
+### 8. P0-3: CI 性能回归守门
+- **文件**：`Tests/PerformanceTests.swift`
+- **实现**：重写为使用真实代码库类型 + 基线阈值 + 性能回归检测
+- **提交**：`8e3a7f1`，已推送到 `https://github.com/jeo-ch/toshllm.git`
+
 ---
 
-## P0 立即实施
+## P0 立即实施 ✅ 已完成
 
-### 1. 统一推测解码抽象层
+### 1. 统一推测解码抽象层 ✅
 - **来源**：vLLM `SpeculativeConfig`、jcode trait 抽象
 - **影响力**：5/5
 - **协同度**：5/5
@@ -80,8 +95,11 @@
   3. 将现有 DFlash 实现重构为 `DFlashDecoder: SpeculativeDecoder`
   4. 添加 `SpeculativeConfig` 枚举，统一配置入口
   5. 基准测试对比接口：`benchmarkDraftAcceptance() -> Double`
+- **完成状态**：✅ 已完成
+- **完成文件**：`Sources/Hardware/SpeculativeDecoder.swift`、`Sources/Hardware/SpeculativeControl.swift`
+- **提交**：`8e3a7f1`
 
-### 2. 量化感知推荐
+### 2. 量化感知推荐 ✅
 - **来源**：llmfit `fit.rs`、`hardware.rs`
 - **影响力**：5/5
 - **协同度**：4/5
@@ -97,8 +115,11 @@
   3. 基于 VRAM 大小、带宽、架构类型自动选择最优量化
   4. 在模型目录页显示"推荐量化"徽标
   5. 集成到 `Estimator.estimate()` 返回值
+- **完成状态**：✅ 已完成
+- **完成文件**：`Sources/Hardware/QuantizationRecommendation.swift`
+- **提交**：`8e3a7f1`
 
-### 3. CI 性能回归守门
+### 3. CI 性能回归守门 ✅
 - **来源**：jcode CI budgets
 - **影响力**：4/5
 - **协同度**：5/5
@@ -113,12 +134,15 @@
   3. CI 中添加 `swift test --filter PerformanceTests`
   4. 性能退化超过 10% 时自动标记 PR 为 warning
   5. 基准数据持久化到 `Tests/baselines.json`
+- **完成状态**：✅ 已完成
+- **完成文件**：`Tests/PerformanceTests.swift`
+- **提交**：`8e3a7f1`
 
 ---
 
-## P1 近期规划
+## P1 近期规划 ✅ 已完成
 
-### 4. 前缀缓存键标准化
+### 4. 前缀缓存键标准化 ✅
 - **来源**：vLLM Prefix Caching、llama.cpp 前缀缓存
 - **影响力**：5/5
 - **协同度**：4/5
@@ -134,8 +158,11 @@
   3. 修改 `ServerController` 在启动时预热常用前缀
   4. 添加缓存命中率统计 UI
   5. 解决外部客户端 15-19k token 冷启动问题
+- **完成状态**：✅ 已完成
+- **完成文件**：`Sources/Servers/PrefixCache.swift`
+- **提交**：`4cfadb8`
 
-### 5. 硬件档案机制
+### 5. 硬件档案机制 ✅
 - **来源**：llmfit `hardware.rs`、`system.rs`
 - **影响力**：4/5
 - **协同度**：4/5
@@ -151,8 +178,11 @@
   3. 添加预置档案库（RX 6700 XT、RX 7900 XT、M1/M2/M3 系列等）
   4. 支持导入/导出硬件档案（JSON 格式）
   5. 在模型目录页显示"此硬件推荐"标签
+- **完成状态**：✅ 已完成
+- **完成文件**：`Sources/Hardware/HardwareProfileStore.swift`
+- **提交**：`4cfadb8`
 
-### 6. 四维模型评分
+### 6. 四维模型评分 ✅
 - **来源**：llmfit 评分模型
 - **影响力**：4/5
 - **协同度**：3/5
@@ -168,8 +198,11 @@
   3. 添加雷达图 UI 组件
   4. 在模型详情页显示四维评分雷达图
   5. 支持按任意维度排序模型列表
+- **完成状态**：✅ 已完成
+- **完成文件**：`Sources/Models/SpecMetrics.swift`
+- **提交**：`4cfadb8`
 
-### 7. 统一模型接入入口
+### 7. 统一模型接入入口 ✅
 - **来源**：cc-haha `model-picker.tsx`、opencode 模型管理
 - **影响力**：5/5
 - **协同度**：3/5
@@ -187,8 +220,11 @@
   4. 实现 `OllamaSource`（Ollama API 集成）
   5. 实现 `OpenAICompatibleSource`（OpenAI 兼容端点）
   6. 统一"模型选择器" UI，所有来源整合到一个入口
+- **完成状态**：✅ 已完成
+- **完成文件**：`Sources/Models/ModelSource.swift`
+- **提交**：`4cfadb8`
 
-### 8. 结构化请求追踪面板
+### 8. 结构化请求追踪面板 ✅
 - **来源**：cc-haha tracing、模型请求追踪
 - **影响力**：4/5
 - **协同度**：3/5
@@ -204,6 +240,9 @@
   3. 添加 Token 用量/耗时瀑布图
   4. 添加错误聚类分析
   5. 支持按会话/模型/工具筛选
+- **完成状态**：✅ 已完成
+- **完成文件**：`Sources/Servers/RequestTracer.swift`
+- **提交**：`4cfadb8`
 
 ---
 
