@@ -1715,7 +1715,12 @@ final class ChatStore: ObservableObject {
             }
         }
         let proposed = title?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = proposed?.isEmpty == false ? proposed! : "Fork of \(displayTitle(source))"
+        let name: String
+        if let p = proposed, !p.isEmpty {
+            name = p
+        } else {
+            name = "Fork of \(displayTitle(source))"
+        }
         let fork = Conversation(title: name, messages: messages, created: Date(), updated: Date(),
                                 projectID: source.projectID, systemPrompt: source.systemPrompt)
         conversations.insert(fork, at: 0)

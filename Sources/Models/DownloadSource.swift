@@ -62,50 +62,50 @@ enum DownloadSource: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Build an API URL to search for models.
+/// Build an API URL to search for models.
     func searchAPI(query: String, limit: Int = 20, sort: String = "trendingScore") -> String {
         switch self {
         case .huggingface, .hfMirror, .custom:
-            var comps = URLComponents(string: "\(apiBase)/api/models")!
-            comps.queryItems = [
+            var comps = URLComponents(string: "\(apiBase)/api/models")
+            comps?.queryItems = [
                 URLQueryItem(name: "search", value: query),
                 URLQueryItem(name: "filter", value: "gguf"),
                 URLQueryItem(name: "sort", value: sort),
                 URLQueryItem(name: "direction", value: "-1"),
                 URLQueryItem(name: "limit", value: String(limit)),
             ]
-            return comps.url?.absoluteString ?? "\(apiBase)/api/models"
+            return comps?.url?.absoluteString ?? "\(apiBase)/api/models"
         case .modelScope:
             // ModelScope search API
-            var comps = URLComponents(string: "\(apiBase)/api/v1/models")!
-            comps.queryItems = [
+            var comps = URLComponents(string: "\(apiBase)/api/v1/models")
+            comps?.queryItems = [
                 URLQueryItem(name: "Query", value: query),
                 URLQueryItem(name: "PageSize", value: String(limit)),
                 URLQueryItem(name: "SortBy", value: "Downloads"),
             ]
-            return comps.url?.absoluteString ?? "\(apiBase)/api/v1/models"
+            return comps?.url?.absoluteString ?? "\(apiBase)/api/v1/models"
         }
     }
-
+    
     /// Build an API URL to list trending/popular models.
     func trendingAPI(limit: Int = 20, sort: String = "trendingScore") -> String {
         switch self {
         case .huggingface, .hfMirror, .custom:
-            var comps = URLComponents(string: "\(apiBase)/api/models")!
-            comps.queryItems = [
+            var comps = URLComponents(string: "\(apiBase)/api/models")
+            comps?.queryItems = [
                 URLQueryItem(name: "filter", value: "gguf"),
                 URLQueryItem(name: "sort", value: sort),
                 URLQueryItem(name: "direction", value: "-1"),
                 URLQueryItem(name: "limit", value: String(limit)),
             ]
-            return comps.url?.absoluteString ?? "\(apiBase)/api/models"
+            return comps?.url?.absoluteString ?? "\(apiBase)/api/models"
         case .modelScope:
-            var comps = URLComponents(string: "\(apiBase)/api/v1/models")!
-            comps.queryItems = [
+            var comps = URLComponents(string: "\(apiBase)/api/v1/models")
+            comps?.queryItems = [
                 URLQueryItem(name: "PageSize", value: String(limit)),
                 URLQueryItem(name: "SortBy", value: "Downloads"),
             ]
-            return comps.url?.absoluteString ?? "\(apiBase)/api/v1/models"
+            return comps?.url?.absoluteString ?? "\(apiBase)/api/v1/models"
         }
     }
 

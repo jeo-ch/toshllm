@@ -204,7 +204,7 @@ final class GatewayServer: ObservableObject {
         
         var body: [String: Any] = [
             "messages": messages,
-            "stream": false  // TODO: Implement SSE streaming support
+            "stream": stream
         ]
         
         if let model {

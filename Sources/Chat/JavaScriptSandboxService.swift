@@ -126,7 +126,12 @@ private final class JavaScriptSandboxSession: NSObject, WKScriptMessageHandler {
     }
 
     private static func harness(code: String) -> String {
-        let codeData = try! JSONSerialization.data(withJSONObject: [code])
+        let codeData: Data
+        do {
+            codeData = try JSONSerialization.data(withJSONObject: [code])
+        } catch {
+            return ""
+        }
         let codeArray = String(decoding: codeData, as: UTF8.self)
         return """
         <!doctype html><html><head>

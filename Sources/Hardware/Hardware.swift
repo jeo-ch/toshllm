@@ -30,6 +30,21 @@ struct HardwareInfo {
         return eligible.isEmpty ? gpus : eligible
     }
 
+    /// On Apple Silicon (unified memory), the GPU may actually wire up to
+    /// `recommendedMaxWorkingSetSize` — macOS caps this well below total RAM.
+    /// Returns `nil` on non-Apple Silicon or when the query is unavailable.
+    /// Distinct from `vramGB` which reports the total shared pool.
+    var gpuAvailableGB: Double? {
+        #if os(macOS)
+        if #available(macOS 13.0, *) {
+            if let device = MTLCreateSystemDefaultDevice() {
+                return Double(device.recommendedMaxWorkingSetSize) / 1_073_741_824
+            }
+        }
+        #endif
+        return nil
+    }
+
     /// GPUs joined by an Infinity Fabric link, internal to a Duo or across a bridge.
     /// A card with no link reports group 0, so a group is the only evidence of one.
     var peerGroups: [[GPUDevice]] { Self.peerGroups(of: gpus) }
@@ -460,7 +475,7 @@ enum GPUPeerTopology {
         let linked = items.filter { $0.groupID != 0 }
         let byGroup = Dictionary(grouping: linked, by: \.groupID).filter { $0.value.count > 1 }
         return byGroup.keys.sorted { left, right in
-            let a = byGroup[left]!, b = byGroup[right]!
+            guard let a = byGroup[left], let b = byGroup[right] else { return false }
             let firstA = a.map(\.index).min() ?? 0, firstB = b.map(\.index).min() ?? 0
             return a.count == b.count ? firstA < firstB : a.count > b.count
         }

@@ -687,16 +687,20 @@ final class BenchmarkController: ObservableObject {
             let chosenSlots = measured
                 .filter { $0.tg >= targetTG }
                 .min { lhs, rhs in lhs.slots == rhs.slots ? lhs.pp > rhs.pp : lhs.slots < rhs.slots }
-                ?? measured.max { lhs, rhs in lhs.tg == rhs.tg ? lhs.pp < rhs.pp : lhs.tg < rhs.tg }!
+?? measured.max { lhs, rhs in lhs.tg == rhs.tg ? lhs.pp < rhs.pp : lhs.tg < rhs.tg }
             var chosen = chosenSlots
+            guard var chosenUnwrapped = chosen else {
+                dynamicMoeOptimizationStatus = .noSweepResults
+                return
+            }
             var chosenPrefetch = 0
-
+            
             for prefetch in [1, 2, 4] {
                 guard optimizingDynamicMoe else { return }
                 var candidate = base
                 candidate.dynamicMoe = true
                 candidate.dynamicMoePolicy = "cache"
-                candidate.dynamicMoeSlots = chosenSlots.slots
+                candidate.dynamicMoeSlots = chosenUnwrapped.slots
                 candidate.dynamicMoePrefetch = prefetch
                 candidate.benchPP = 512
                 candidate.benchTG = 128
@@ -715,10 +719,10 @@ final class BenchmarkController: ObservableObject {
                 ]
                 guard let result = await runOnce(settings: candidate, environmentOverrides: environment) else { continue }
                 dynamicMoeOptimizationSamples.append(DynamicMoeOptimizationSample(
-                    route: .split, slots: chosenSlots.slots, prefetch: prefetch,
-                    pp: result.pp, tg: result.tg, estimatedVRAMFraction: chosenSlots.vram))
-                if result.tg >= chosenSlots.tg * 0.97, result.pp > chosen.pp {
-                    chosen = (slots: chosenSlots.slots, pp: result.pp, tg: result.tg, vram: chosenSlots.vram)
+                    route: .split, slots: chosenUnwrapped.slots, prefetch: prefetch,
+                    pp: result.pp, tg: result.tg, estimatedVRAMFraction: chosenUnwrapped.vram))
+                if result.tg >= chosenUnwrapped.tg * 0.97, result.pp > chosenUnwrapped.pp {
+                    chosenUnwrapped = (slots: chosenUnwrapped.slots, pp: result.pp, tg: result.tg, vram: chosenUnwrapped.vram)
                     chosenPrefetch = prefetch
                 }
             }
@@ -727,13 +731,13 @@ final class BenchmarkController: ObservableObject {
                 modelFingerprint: fingerprint,
                 modelName: URL(fileURLWithPath: base.modelPath).lastPathComponent,
                 gpuName: gpu.name, gpuVRAMMB: gpu.vramMB,
-                route: .split, slots: chosen.slots, ringSlots: ring, prefetch: chosenPrefetch,
+                route: .split, slots: chosenUnwrapped.slots, ringSlots: ring, prefetch: chosenPrefetch,
                 hotMapPath: mapURL.path,
-                promptTokensPerSecond: chosen.pp,
-                generationTokensPerSecond: chosen.tg,
+                promptTokensPerSecond: chosenUnwrapped.pp,
+                generationTokensPerSecond: chosenUnwrapped.tg,
                 baselinePromptTokensPerSecond: baseline.pp,
                 baselineGenerationTokensPerSecond: baseline.tg,
-                estimatedVRAMFraction: chosen.vram, createdAt: .now)
+                estimatedVRAMFraction: chosenUnwrapped.vram, createdAt: .now)
             do {
                 try DynamicMoeProfileStore.save(profile, gpu: gpu)
                 dynamicMoeOptimizationProfile = profile

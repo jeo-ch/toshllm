@@ -35,14 +35,16 @@ enum ModelCapabilitiesService {
     }
 
     static func fetch(port: Int, model: String?) async throws -> ModelModalities? {
-        var components = URLComponents(string: "http://127.0.0.1:\(port)/props")!
+        guard let baseURL = URL(string: "http://127.0.0.1:\(port)/props") else { return nil }
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         if let model, !model.isEmpty {
-            components.queryItems = [
+            components?.queryItems = [
                 URLQueryItem(name: "model", value: model),
                 URLQueryItem(name: "autoload", value: "false"),
             ]
         }
-        var request = URLRequest(url: components.url!, timeoutInterval: 15)
+        guard let url = components?.url else { return nil }
+        var request = URLRequest(url: url, timeoutInterval: 15)
         if let key = ServerSettings.activeAPIKey() {
             request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
         }

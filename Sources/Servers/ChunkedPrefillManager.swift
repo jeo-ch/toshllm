@@ -144,7 +144,13 @@ final class ChunkedPrefillManager: ObservableObject {
                 guard !Task.isCancelled else { break }
                 
                 let endTime = Date()
-                let duration = endTime.timeIntervalSince(updatedChunk.startTime!)
+                guard let chunkStartTime = updatedChunk.startTime else {
+                    updatedChunk.status = .completed
+                    updatedChunk.endTime = endTime
+                    currentChunks[index] = updatedChunk
+                    continue
+                }
+                let duration = endTime.timeIntervalSince(chunkStartTime)
                 let tps = Double(chunk.tokens.count) / max(0.001, duration)
                 
                 updatedChunk.status = .completed

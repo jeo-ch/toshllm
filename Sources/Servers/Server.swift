@@ -1781,7 +1781,7 @@ final class ServerController: ObservableObject {
         let backend = log.range(of: "vulkan", options: .caseInsensitive) != nil ? "Vulkan" : "Metal"
         items.append(URLQueryItem(name: "backend", value: backend))
         comps.queryItems = items
-        return comps.url!
+        return comps.url ?? URL(string: "http://127.0.0.1:\(currentPort)/")!
     }
 
     /// Cached: the UI reads this from view bodies, and MTLCopyAllDevices() is far
