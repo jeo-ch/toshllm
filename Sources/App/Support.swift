@@ -130,6 +130,7 @@ enum SettingsKeys {
     static let mgpuPeer = "mgpuPeer"
     static let forcePrivateBuffers = "forcePrivateBuffers"
     static let cacheReuse = "cacheReuse"
+    static let pagedAttention = "pagedAttention"
     static let loadVision = "loadVision"
     static let imageMaxTokens = "imageMaxTokens"
     static let apiKeyEnabled = "apiKeyEnabled"

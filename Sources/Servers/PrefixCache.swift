@@ -215,6 +215,12 @@ struct PrefixCache {
     
     // MARK: - Private Helpers
     
+/// Estimate current cache usage in bytes.
+    func currentUsageBytes() -> Int {
+        // Return the tracked total size
+        return max(0, stats.totalSizeBytes)
+    }
+    
     /// Evict the least recently used entry.
     private mutating func evictLRU() {
         guard let oldestKey = cache.min(by: { $0.value.lastAccessed < $1.value.lastAccessed })?.key else {

@@ -178,6 +178,20 @@ struct ServerSettings {
     /// shrinks the vision encoder's attention quadratically, which is what rescues a
     /// card that cannot allocate that buffer.
     var imageMaxTokens: Int = 0
+    /// PagedAttention: enable virtual KV cache with page-based memory management.
+    /// When enabled, KV cache is allocated in fixed-size pages (default 16 tokens/page)
+    /// allowing memory sharing across requests, prefix caching, and reduced fragmentation.
+    /// Requires llama.cpp with PagedAttention support (bundled engine has it).
+    var pagedAttention: Bool = false
+    /// PagedAttention: tokens per page (16-256). Smaller pages = less waste, more metadata.
+    /// Default 16 matches vLLM. Tune for your model's context length.
+    var pagedAttentionPageTokens: Int = 16
+    /// PagedAttention: max total pages across all slots. 0 = auto (fit in available VRAM).
+    /// Limits total KV cache memory when using paged attention.
+    var pagedAttentionMaxPages: Int = 0
+    /// PagedAttention: enable prefix caching across requests. Reuses KV pages for common
+    /// system prompts / few-shot examples. Requires pagedAttention = true.
+    var pagedAttentionPrefixCache: Bool = true
     /// llama-bench workload sizes: prompt tokens (-p → ppN), generated tokens
     /// (-n → tgN) and context depth (-d, tokens already in the KV cache before
     /// measuring). Benchmark-only; llama-server ignores them.
@@ -570,6 +584,19 @@ struct ServerSettings {
         if let counts = layerBalancedTensorSplit {
             args += ["--tensor-split", counts.map(String.init).joined(separator: ",")]
         }
+        // PagedAttention / KV Cache pagination
+        if pagedAttention {
+            args += ["--paged-attention", "1"]
+            if pagedAttentionPageTokens > 0 {
+                args += ["--page-size", String(pagedAttentionPageTokens)]
+            }
+            if pagedAttentionMaxPages > 0 {
+                args += ["--max-pages", String(pagedAttentionMaxPages)]
+            }
+            if pagedAttentionPrefixCache {
+                args += ["--prefix-cache", "1"]
+            }
+        }
         return args
     }
 
@@ -694,6 +721,19 @@ struct ServerSettings {
             if routerMode || cliff == nil || ncmoe < cliff! {
                 env["GGML_SCHED_PREFETCH_EXPERTS"] = "1"
                 env["GGML_CPU_NO_REPACK"] = "1"
+            }
+        }
+        // PagedAttention / KV Cache pagination (consumed by the patched Metal backend)
+        if pagedAttention {
+            env["TOSH_PAGED_ATTENTION"] = "1"
+            if pagedAttentionPageTokens > 0 {
+                env["TOSH_PAGE_SIZE"] = String(pagedAttentionPageTokens)
+            }
+            if pagedAttentionMaxPages > 0 {
+                env["TOSH_MAX_PAGES"] = String(pagedAttentionMaxPages)
+            }
+            if pagedAttentionPrefixCache {
+                env["TOSH_PREFIX_CACHE"] = "1"
             }
         }
         // KEY=VALUE tokens from Extra arguments become env vars (e.g. the GCN/Vega

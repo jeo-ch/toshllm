@@ -31,6 +31,13 @@ final class ContinuousBatchScheduler: ObservableObject {
         case cancelled = "cancelled"
     }
     
+/// Request processing mode.
+    enum ProcessingMode: String, Sendable {
+        case prefill   // Prefill phase: compute KV cache
+        case decode    // Decode phase: generate next token
+        case mixed     // Mixed prefill+decode (single token prefill)
+    }
+    
     /// A scheduled request.
     struct ScheduledRequest: Identifiable, Sendable {
         let id: UUID
@@ -44,17 +51,29 @@ final class ContinuousBatchScheduler: ObservableObject {
         var result: String?
         var error: String?
         
+        /// Processing mode (prefill, decode, mixed).
+        var mode: ProcessingMode = .prefill
+        
+        /// Number of tokens to generate in decode mode.
+        var maxTokens: Int = 512
+        
         /// Processing time in seconds.
         var processingTime: TimeInterval? {
             guard let startedAt, let completedAt else { return nil }
             return completedAt.timeIntervalSince(startedAt)
         }
         
-        /// Wait time in seconds.
-        var waitTime: TimeInterval {
-            let start = startedAt ?? Date()
-            return start.timeIntervalSince(createdAt)
-        }
+/// Wait time in seconds.
+    var waitTime: TimeInterval {
+        let start = startedAt ?? Date()
+        return start.timeIntervalSince(createdAt)
+    }
+    
+    /// Token usage summary (prefill/decode counts).
+    var tokenUsage: (prefill: Int, decode: Int)? {
+        // Would be populated by the server handler
+        nil
+    }
     }
     
     // MARK: - Properties
@@ -70,6 +89,17 @@ final class ContinuousBatchScheduler: ObservableObject {
     /// Maximum queue size.
     private let maxQueueSize: Int
     
+    /// Target throughput (requests per second). When pending requests exceed this
+    /// threshold, new requests are held back to prevent GPU saturation.
+    private let targetTPS: Double
+    
+    /// Current estimated throughput (calculated over last N requests).
+    private var _estimatedTPS: Double = 0
+    
+    /// Smoothed TPS for stable control decisions.
+    private var tpSSmoothing: [TimeInterval] = []
+    private let tpSWindow: Int = 10
+    
     /// Processing task.
     private var processingTask: Task<Void, Never>?
     
@@ -78,9 +108,10 @@ final class ContinuousBatchScheduler: ObservableObject {
     
     // MARK: - Initialization
     
-    init(maxConcurrent: Int = 1, maxQueueSize: Int = 100) {
+    init(maxConcurrent: Int = 1, maxQueueSize: Int = 100, targetTPS: Double = 20) {
         self.maxConcurrent = maxConcurrent
         self.maxQueueSize = maxQueueSize
+        self.targetTPS = targetTPS
     }
     
     // MARK: - Public API
@@ -179,21 +210,71 @@ final class ContinuousBatchScheduler: ObservableObject {
             guard let self else { return }
             
             while !Task.isCancelled {
+                // Backpressure: if current TPS exceeds target, hold back new requests
+                if self._estimatedTPS > self.targetTPS * 1.2 {
+                    // Hold back: don't dequeue new request, let current finish
+                    await MainActor.run {
+                        self.isProcessing = !self.pendingRequests.isEmpty
+                    }
+                    continue
+                }
+                
                 guard self.processingRequests.count < self.maxConcurrent,
                       !self.pendingRequests.isEmpty else {
                     break
                 }
                 
-                // Get next request from queue
+                // Priority scheduling with preemption:
+                // Check if any pending request has higher priority than currently processing
+                let hasHigherPriority = self.processingRequests.contains { processing in
+                    return self.pendingRequests.contains { pending in
+                        pending.id == processing.id && pending.priority.rawValue < processing.priority.rawValue
+                    }
+                }
+                
+                if hasHigherPriority {
+                    // Preempt lowest priority processing request
+                    if let lowestIdx = self.processingRequests.enumerated()
+                        .max(by: { $0.element.priority.rawValue > $1.element.priority.rawValue })?.offset {
+                        var preempted = self.processingRequests.remove(at: lowestIdx)
+                        preempted.status = .pending
+                        preempted.startedAt = nil
+                        preempted.completedAt = nil
+                        preempted.result = nil
+                        preempted.error = nil
+                        self.pendingRequests.append(preempted)
+                        self.sortPendingQueue()
+                        await MainActor.run {
+                            self.isProcessing = !self.pendingRequests.isEmpty
+                        }
+                        continue  // Restart loop to process higher priority request
+                    }
+                }
+                
+                // Get next highest priority request from queue
+                self.pendingRequests.sort { $0.priority < $1.priority || 
+                    ($0.priority == $1.priority && $0.createdAt < $1.createdAt) }
                 let request = self.pendingRequests.removeFirst()
                 self.processingRequests.append(request)
                 
-                // Process request
+                // Process request and track TPS
+                let requestStart = Date()
                 await self.processRequest(request, handler: handler)
-            }
-            
-            await MainActor.run {
-                self.isProcessing = !self.pendingRequests.isEmpty
+                let elapsed = Date().timeIntervalSince(requestStart)
+                
+                // Update TPS smoothing window
+                self.tpSSmoothing.append(elapsed)
+                if self.tpSSmoothing.count > self.tpSWindow {
+                    self.tpSSmoothing.removeFirst()
+                }
+                if !tpSSmoothing.isEmpty {
+                    let avgInterval = tpSSmoothing.reduce(0, +) / Double(tpSSmoothing.count)
+                    self._estimatedTPS = 1.0 / avgInterval
+                }
+                
+                await MainActor.run {
+                    self.isProcessing = !self.pendingRequests.isEmpty
+                }
             }
         }
     }
