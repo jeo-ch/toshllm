@@ -18,7 +18,7 @@ struct CatalogModel: Identifiable {
     var isVision: Bool = false   // multimodal: reads images (ships an mmproj projector)
 
     var id: String { name }
-    var fileName: String { URL(string: urlString)!.lastPathComponent }
+    var fileName: String { URL(string: urlString)?.lastPathComponent ?? (urlString as NSString).lastPathComponent }
     var isMoE: Bool { spec.isMoE }
     var isCoder: Bool { name.localizedCaseInsensitiveContains("coder") }
 

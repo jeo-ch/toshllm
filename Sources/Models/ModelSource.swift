@@ -166,7 +166,7 @@ struct HuggingFaceSource: ModelSource {
         let destination = modelsDir.appendingPathComponent(item.name)
         
         // Use async download API to avoid race condition
-        let (tempURL, _) = try await URLSession.shared.download(from: downloadURL)
+        let (tempURL, _) = try await NetworkManager.session.download(from: downloadURL)
         
         // Copy temp file immediately (before system cleans it up)
         if FileManager.default.fileExists(atPath: destination.path) {
@@ -208,7 +208,7 @@ struct OllamaSource: ModelSource {
             var request = URLRequest(url: url)
             request.timeoutInterval = 2
             do {
-                let (_, response) = try await URLSession.shared.data(for: request)
+                let (_, response) = try await NetworkManager.session.data(for: request)
                 return (response as? HTTPURLResponse)?.statusCode == 200
             } catch {
                 return false
@@ -221,7 +221,7 @@ struct OllamaSource: ModelSource {
             throw ModelSourceError.invalidURL
         }
         
-        let (data, _) = try await URLSession.shared.data(from: url)
+        let (data, _) = try await NetworkManager.session.data(from: url)
         let response = try JSONDecoder().decode(OllamaTagsResponse.self, from: data)
         
         return response.models.map { model in
@@ -255,7 +255,7 @@ struct OllamaSource: ModelSource {
         request.httpMethod = "POST"
         request.httpBody = try JSONSerialization.data(withJSONObject: ["name": item.name])
         
-        let (_, _) = try await URLSession.shared.data(for: request)
+        let (_, _) = try await NetworkManager.session.data(for: request)
         progress(1.0)
         
         // Ollama downloads to its own storage, return a placeholder URL

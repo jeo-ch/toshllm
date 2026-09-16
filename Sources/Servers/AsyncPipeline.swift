@@ -59,7 +59,7 @@ final class AsyncPipeline: ObservableObject {
         }
         
         // Reuse shared session for connection pooling
-        let session = URLSession.shared
+        let session = NetworkManager.session
         
         let (tempURL, response) = try await session.download(from: url)
         
@@ -104,7 +104,7 @@ final class AsyncPipeline: ObservableObject {
             request.setValue("bytes=\(existingBytes)-", forHTTPHeaderField: "Range")
         }
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await NetworkManager.session.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
@@ -167,7 +167,7 @@ final class AsyncPipeline: ObservableObject {
         request: URLRequest,
         stream: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await NetworkManager.session.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
