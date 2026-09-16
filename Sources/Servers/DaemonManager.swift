@@ -257,7 +257,7 @@ final class DaemonManager: ObservableObject {
                         self.isRestarting = true
                         self.restartCount += 1
                         try? await Task.sleep(for: .seconds(2))
-                        self.isRestarting = false
+                        defer { self.isRestarting = false }
                         try? await self.start()
                     }
                 }
