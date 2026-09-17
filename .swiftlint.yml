@@ -32,7 +32,7 @@ opt_in_rules:
 excluded:
   - .build
   - DerivedData
-  - "*/\.build/*"
+  - '*/.build/*'
   - "**/*.generated.swift"
 
 line_length:
