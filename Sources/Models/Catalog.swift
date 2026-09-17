@@ -134,7 +134,7 @@ enum Catalog {
             name: "GPT-OSS-20B",
             detailES: "MoE de OpenAI (3.6B activos), razonamiento sólido",
             detailEN: "OpenAI's MoE (3.6B active), solid reasoning",
-            repo: "ggml-org/gpt-oss-20b-GGUF", file: "gpt-oss-20b-mxfp4.gguf",
+            repo: "ggml-org/gpt-oss-20b-GGUF", file: "gpt-oss-20b-MXFP4.gguf",
             spec: ModelSpec(fileGB: 12.1, paramsB: 20.9, layers: 24, isMoE: true, activeParamsB: 3.6)),
         CatalogModel(
             name: "Gemma-4-26B-A4B",
