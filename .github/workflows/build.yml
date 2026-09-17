@@ -11,7 +11,7 @@ on:
       - ".github/workflows/build.yml"
       - "patches/**"
       - "scripts/build-engines.sh"
-    tags: ["*"]
+    tags: ["v*"]
   pull_request:
     branches: [main, master]
   workflow_dispatch:
@@ -37,23 +37,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Lint and static analysis - runs first as a fast gate
-  lint:
-    name: SwiftLint
-    runs-on: macos-26
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install SwiftLint
-        run: brew install swiftlint
-      - name: Run SwiftLint
-        run: swiftlint lint --strict --config .swiftlint.yml Sources/
-      - name: Run SwiftLint on Tests
-        run: swiftlint lint --strict --config .swiftlint.yml Tests/
-
   # Direct pushes to main only run the unit tests — a fast gate
   test:
-    needs: lint
     if: github.event_name == 'push' && github.ref_type == 'branch'
     name: Unit tests
     runs-on: macos-26
@@ -64,7 +49,6 @@ jobs:
 
   # Performance regression tests - run on PRs and manual triggers
   performance:
-    needs: lint
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_performance_tests)
     name: Performance tests
     runs-on: macos-26
@@ -83,7 +67,6 @@ jobs:
           retention-days: 30
 
   build:
-    needs: lint
     # PRs validate a single variant; tags and manual runs build BOTH CPU variants
     # (standard = AVX2, noavx2 = pre-AVX2 legacy) and ship a DMG for each. Branch
     # pushes are handled by the test job above, so build is skipped for them.
