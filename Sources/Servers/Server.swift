@@ -1601,10 +1601,14 @@ struct ServerSettings {
     static func activeRouterModel() -> String? {
         let d = UserDefaults.standard
         guard d.bool(forKey: SettingsKeys.routerMode) else { return nil }
+        // 1) Prefer the server-configuration model selection
+        if let path = d.string(forKey: SettingsKeys.modelPath), !path.isEmpty {
+            return routerAlias(for: path)
+        }
+        // 2) Fall back to the chat model picker
         let alias = d.string(forKey: SettingsKeys.chatSelectedModel) ?? ""
         if !alias.isEmpty { return alias }
-        // Default to the first model when the chat hasn't picked one yet (its
-        // picker's default-selection task lives in a lazily-built popover).
+        // 3) Default to the first model when the chat hasn't picked one yet
         return LocalModel.scan(in: modelsDirectory).first.map { routerAlias(for: $0.url.path) }
     }
 }
