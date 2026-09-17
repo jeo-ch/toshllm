@@ -47,9 +47,9 @@ jobs:
       - name: Install SwiftLint
         run: brew install swiftlint
       - name: Run SwiftLint
-        run: swiftlint lint --strict --path Sources/ --config .swiftlint.yml
+        run: swiftlint lint --strict --config .swiftlint.yml Sources/
       - name: Run SwiftLint on Tests
-        run: swiftlint lint --strict --path Tests/ --config .swiftlint.yml
+        run: swiftlint lint --strict --config .swiftlint.yml Tests/
 
   # Direct pushes to main only run the unit tests — a fast gate
   test:
