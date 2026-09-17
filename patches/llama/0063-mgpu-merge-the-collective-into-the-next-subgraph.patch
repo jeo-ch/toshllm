@@ -1018,7 +1018,7 @@ index 8b4a6ff2c..2d2bcc517 100644
  
      if (ctx->has_error) {
          GGML_LOG_ERROR("%s: backend is in error state from a previous command buffer failure - recreate the backend to recover\n", __func__);
-@@ -3093,16 +3612,32 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
+@@ -3093,16 +3612,34 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
          // the main thread commits the first few commands immediately
          // cmd_buf[n_cb]
          {
@@ -1030,10 +1030,12 @@ index 8b4a6ff2c..2d2bcc517 100644
 +                ctx->cmd_buf_hold = nil;
 +                // the collective is already encoded in here; anything that queued a wait since
 +                // then has to land between it and this subgraph, not be dropped
-+                if (ctx->n_ev_wait_pending > 0 || ctx->n_peer_waits > 0) {
-+                    atomic_fetch_add(&g_tr_merge_waits, ctx->n_ev_wait_pending + ctx->n_peer_waits);
++                if (tosh_mgpu_trace()) {
++                    if (ctx->n_ev_wait_pending > 0 || ctx->n_peer_waits > 0) {
++                        atomic_fetch_add(&g_tr_merge_waits, ctx->n_ev_wait_pending + ctx->n_peer_waits);
++                    }
++                    atomic_fetch_add(&g_tr_merge_reuse, 1);
 +                }
-+                atomic_fetch_add(&g_tr_merge_reuse, 1);
 +            } else {
 +                if (tosh_mgpu_trace()) atomic_fetch_add(&g_tr_cmd_all, 1);
 +                cmd_buf = [queue commandBufferWithUnretainedReferences];

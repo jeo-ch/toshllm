@@ -3,25 +3,33 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.87.5] - 2026-09-16
 
 ### Improved
 
-- **LLMs: reading a prompt on a model split by tensors across two dies of one Radeon Pro Vega II Duo.** The reduction between the dies now reads the partner's memory directly over the card's own internal link instead of passing through system memory. 785 to 990 tokens a second on an 8B and 228 to 261 on a 27B, with generation speed, perplexity and output unchanged. Turned on by the existing bridge option in Settings.
-
-- **LLMs: generating on a model split by tensors across the two dies of one Radeon Pro Vega II Duo is now faster than on a single die.** An 8B goes from 52 to 75 tokens a second, against 69 on one die, and a 27B from 19.1 to 24.1, against 18.6, with identical output.
-
-- **LLMs: a model split by tensors across two Radeon Pro Vega II Duo cards is faster.** With TensorMesh a 27B generates 23.8 tokens a second instead of 18.9, and a 177B MoE reads a prompt at 309 instead of 197 and generates 25.3 instead of 20.3. Splitting across all four dies, the 27B goes from 13.9 to 21.7.
-
 - **LLMs: long conversations on a model split by tensors across the dies of a Radeon Pro Vega II Duo generate faster.** At 8K of context an 8B goes from 52 to 59 tokens a second, a 14B from 38 to 41 and a 1B from 150 to 160, with the same output and memory.
 
-- **LLMs: Qwen3.8 Flash Next generates faster on its own.** The app finds the model's prediction head beside it or in its `MTP/` folder and uses it without any flag: 25.8 to 28.6 tokens a second on a 177B MoE, and 44.0 on predictable text.
-
-- **LLMs: models that predict several tokens at once generate 8 to 10% faster when split across GPUs.** Nothing extra is reserved on the card and the output is identical.
+- **LLMs: Qwen3.8 Flash Next reads prompts and generates faster with TensorMesh.** Against the published 0.87.4 binary, the 177B model goes from 181 to 277 prompt tokens a second and from 23.5 to 25.0 generated tokens a second. The complete A/B, including the 8B and 27B models, is in [Radeon Pro Vega II Duo](docs/performance/0.87.4-radeon-pro-vega-ii-duo.md#0874-against-0875).
 
 ### Fixed
 
-- **LLMs: a model split across GPUs answers its first request with text instead of a run of zeros.**
+- **LLMs: Qwen3.8 Flash Next keeps answering correctly across repeated requests.** Its separate prediction head could work on the first request and then produce repeated zeroes. The engine now refuses that unstable path and continues with the main model instead.
+
+- **LLMs: tensor-parallel work keeps its synchronization objects and collective buffers alive until every GPU has finished with them.** This closes three lifetime and fallback gaps in the fused two-die path without changing its output.
+
+## [0.87.4] - 2026-09-16
+
+### Improved
+
+- **LLMs: generating on a model split by tensors across the dies of a Radeon Pro Vega II Duo.** A 27B goes from 19.1 to 24.1 tokens a second on the two dies of one card, from 13.9 to 21.7 across the four dies of two cards, and from 18.9 to 23.8 with TensorMesh, with identical output. Tables per arrangement in [Radeon Pro Vega II Duo](docs/performance/0.87.4-radeon-pro-vega-ii-duo.md).
+
+- **LLMs: a model split by tensors across two Radeon Pro Vega II Duo cards reads long prompts faster.** A 177B mixture-of-experts goes from 197 to 309 tokens a second with TensorMesh, and generates 25.3 instead of 20.3.
+
+### Fixed
+
+- **LLMs: GPT-OSS-20B downloads from the catalog again.** The catalog asked Hugging Face for a filename that differs in capitalisation from the one it hosts, so the transfer failed the moment it started. Contributed in [#100](https://github.com/engeldlgado/toshllm/pull/100).
+
+- **LLMs: applying a profile brings back the GPU split it was saved with.** The snapshot left out how a model splits across cards, and vision and local-network discovery with it, so two profiles differing only in the split applied the same configuration. Contributed in [#101](https://github.com/engeldlgado/toshllm/pull/101).
 
 ## [0.87.3] - 2026-09-12
 

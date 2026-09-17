@@ -50,6 +50,10 @@ struct GlassSegmentedControl<Value: Hashable>: View {
         .glassSurface(in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.primary.opacity(0.07)))
         .fixedSize()
+        // The pill animates here, not around the binding: animating the write puts whatever the
+        // selection swaps into the same transaction, and a page that changes size inside it can
+        // keep asking the window for another constraints pass until macOS 15 gives up (#97).
+        .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: selection)
     }
 
     @ViewBuilder
@@ -62,10 +66,6 @@ struct GlassSegmentedControl<Value: Hashable>: View {
     }
 
     private func select(_ value: Value) {
-        if reduceMotion {
-            selection = value
-        } else {
-            withAnimation(.snappy(duration: 0.28)) { selection = value }
-        }
+        selection = value
     }
 }

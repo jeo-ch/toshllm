@@ -61,6 +61,24 @@ final class SplitEnvironmentTests: XCTestCase {
         XCTAssertEqual(settings(devices: 4, mode: "tensor", group: 2).effectiveSplitGroupSize, 2)
     }
 
+    /// The four arrangements, as the engine receives them.
+    func testEachArrangementReachesTheEngineWhole() {
+        let mesh = settings(devices: 4, mode: "tensor", group: 2)
+        XCTAssertEqual(mesh.environment["GGML_METAL_DEVICE_LIST"], "0,1,2,3")
+        XCTAssertEqual(mesh.environment["TOSH_MGPU_TENSOR_GROUP"], "2")
+        XCTAssertEqual(mesh.environment["TOSH_MGPU_PEER"], "1")
+        XCTAssertEqual(mesh.environment["TOSH_MGPU_EVENTS"], "1")
+        XCTAssertEqual(mesh.arguments[mesh.arguments.firstIndex(of: "--split-mode")! + 1], "tensor")
+
+        let tp4 = settings(devices: 4, mode: "tensor", group: 0)
+        XCTAssertNil(tp4.environment["TOSH_MGPU_TENSOR_GROUP"])
+        XCTAssertEqual(tp4.arguments[tp4.arguments.firstIndex(of: "--split-mode")! + 1], "tensor")
+
+        let tp2 = settings(devices: 2, mode: "tensor", group: 0)
+        XCTAssertEqual(tp2.environment["GGML_METAL_DEVICE_LIST"], "0,1")
+        XCTAssertEqual(tp2.arguments[tp2.arguments.firstIndex(of: "--split-mode")! + 1], "tensor")
+    }
+
     func testALayerSplitLeavesTheBridgeOut() {
         let s = settings(devices: 4, mode: "layer", group: 2)
         XCTAssertNil(s.environment["TOSH_MGPU_PEER"])

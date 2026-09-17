@@ -78,7 +78,7 @@ index 72b953b91..57dfaa7b9 100644
      fprintf(stderr, "  commit to GPU start   %.1f ms\n", atomic_load(&g_tr_sched_ns)/1e6);
      // decode-only, per card per token
      if (atomic_load(&g_snap_taken)) {
-@@ -2047,20 +2063,50 @@ static bool ggml_metal_add_inplace_into(ggml_metal_t ctx, id<MTLCommandBuffer> c
+@@ -2047,20 +2063,55 @@ static bool ggml_metal_add_inplace_into(ggml_metal_t ctx, id<MTLCommandBuffer> c
          }
      }
  
@@ -122,6 +122,11 @@ index 72b953b91..57dfaa7b9 100644
 +                     ggml_is_contiguous(acc) && ggml_nelements(acc) < 65536;
 +    struct ggml_metal_pipeline_with_params pipeline = rb4 ? ggml_metal_pipeline_add_rb4(ctx->lib)
 +                                                          : ggml_metal_library_get_pipeline_bin_one(ctx->lib, GGML_OP_ADD);
++    // Runtime compilation of the specialized row-broadcast kernel is optional. Keep the
++    // generic ADD as a correctness fallback if this device cannot create that pipeline.
++    if (pipeline.pipeline == NULL && rb4) {
++        pipeline = ggml_metal_library_get_pipeline_bin_one(ctx->lib, GGML_OP_ADD);
++    }
      if (pipeline.pipeline == NULL) {
          return false;
      }
@@ -177,7 +182,7 @@ index 72b953b91..57dfaa7b9 100644
      const uint64_t seq_out  = seq;
      const uint64_t seq_in   = seq;
      link_out->seq_x = seq;
-@@ -2752,41 +2808,75 @@ bool ggml_metal_exchange_reduce(ggml_metal_t ctx_self, ggml_metal_t ctx_peer,
+@@ -2752,41 +2808,76 @@ bool ggml_metal_exchange_reduce(ggml_metal_t ctx_self, ggml_metal_t ctx_peer,
  
          id<MTLCounterSampleBuffer> cts = tosh_ct_buffer(ctx_self);
          uint64_t cbase = 0;
@@ -244,7 +249,8 @@ index 72b953b91..57dfaa7b9 100644
 +        if (fused_bnd) {
 +            // the partner may reuse the block the moment done is signalled, so it goes after
 +            // the add that reads the block
-+            ggml_metal_add_inplace_buffer(ctx_self, cmd_buf, t_self, link_in->wrap_dst, 0);
++            const bool added = ggml_metal_add_inplace_buffer(ctx_self, cmd_buf, t_self, link_in->wrap_dst, 0);
++            GGML_ASSERT(added);
 +            if (tosh_mgpu_trace()) atomic_fetch_add(&g_tr_signals, 1);
 +            [cmd_buf encodeSignalEvent:link_in->ev_x_done value:seq_in];
 +        } else {
