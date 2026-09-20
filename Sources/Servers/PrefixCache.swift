@@ -3,10 +3,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import Foundation
+import CommonCrypto
 
 /// Standardized prefix cache key system for efficient KV cache reuse.
 /// Inspired by vLLM's prefix caching and llama.cpp's slot management.
-struct PrefixCache {
+/// Uses reference semantics (class) so that NSLock and mutable state work correctly
+/// when passed around the application.
+final class PrefixCache {
     
     // MARK: - Cache Key Components
     
@@ -48,6 +51,7 @@ struct PrefixCache {
         }
         
         /// LRU eviction timestamp (for cache management).
+        /// Excluded from Hashable to avoid breaking dictionary lookups when updated.
         var lastAccessed: Date = Date()
         
         /// Size estimate in bytes (for memory budget enforcement).
@@ -55,6 +59,33 @@ struct PrefixCache {
             // Rough estimate: context_length * 2 (K+V) * 128 bytes per token for f16
             let bytesPerToken = cacheType == "f16" ? 256 : (cacheType == "q8_0" ? 128 : 64)
             return contextLength * 2 * bytesPerToken
+        }
+        
+        // Custom Hashable: exclude lastAccessed so dictionary lookups work correctly
+        static func == (lhs: CacheKey, rhs: CacheKey) -> Bool {
+            lhs.systemPromptHash == rhs.systemPromptHash &&
+            lhs.toolDefsHash == rhs.toolDefsHash &&
+            lhs.prefixTokenCount == rhs.prefixTokenCount &&
+            lhs.modelHash == rhs.modelHash &&
+            lhs.quantizationTier == rhs.quantizationTier &&
+            lhs.contextLength == rhs.contextLength &&
+            lhs.flashAttention == rhs.flashAttention &&
+            lhs.cacheType == rhs.cacheType &&
+            lhs.dynamicMoE == rhs.dynamicMoE &&
+            lhs.moeSlots == rhs.moeSlots
+        }
+        
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(systemPromptHash)
+            hasher.combine(toolDefsHash)
+            hasher.combine(prefixTokenCount)
+            hasher.combine(modelHash)
+            hasher.combine(quantizationTier)
+            hasher.combine(contextLength)
+            hasher.combine(flashAttention)
+            hasher.combine(cacheType)
+            hasher.combine(dynamicMoE)
+            hasher.combine(moeSlots)
         }
     }
     
@@ -133,10 +164,10 @@ struct PrefixCache {
         moeSlots: Int
     ) -> CacheKey {
         CacheKey(
-            systemPromptHash: SHA256.hash(systemPrompt),
-            toolDefsHash: SHA256.hash(toolDefs.map { String(describing: $0) } ?? ""),
+            systemPromptHash: CCSHA256.hash(systemPrompt),
+            toolDefsHash: CCSHA256.hash(toolDefs.map { String(describing: $0) } ?? ""),
             prefixTokenCount: prefixTokens,
-            modelHash: SHA256.hash(modelPath),
+            modelHash: CCSHA256.hash(modelPath),
             quantizationTier: quantizationTier,
             contextLength: contextLength,
             flashAttention: flashAttention,
@@ -148,7 +179,7 @@ struct PrefixCache {
     
     /// Look up a cache entry by key.
     /// Returns the slot file path if found, nil otherwise.
-    mutating func lookup(key: CacheKey) -> String? {
+    func lookup(key: CacheKey) -> String? {
         lock.lock()
         defer { lock.unlock() }
         
@@ -164,7 +195,7 @@ struct PrefixCache {
     }
     
     /// Insert a new cache entry.
-    mutating func insert(key: CacheKey, slotFile: String) {
+    func insert(key: CacheKey, slotFile: String) {
         lock.lock()
         defer { lock.unlock() }
         
@@ -180,7 +211,7 @@ struct PrefixCache {
     }
     
     /// Remove a specific cache entry.
-    mutating func remove(key: CacheKey) {
+    func remove(key: CacheKey) {
         lock.lock()
         defer { lock.unlock() }
         
@@ -192,7 +223,7 @@ struct PrefixCache {
     }
     
     /// Clear all cache entries.
-    mutating func clear() {
+    func clear() {
         lock.lock()
         defer { lock.unlock() }
         
@@ -222,7 +253,7 @@ struct PrefixCache {
     }
     
     /// Evict the least recently used entry.
-    private mutating func evictLRU() {
+    private func evictLRU() {
         guard let oldestKey = cache.min(by: { $0.value.lastAccessed < $1.value.lastAccessed })?.key else {
             return
         }
@@ -237,7 +268,8 @@ struct PrefixCache {
 
 // MARK: - SHA256 Helper
 
-private enum SHA256 {
+/// SHA256 hashing using CommonCrypto (avoids CryptoKit dependency for this module).
+private enum CCSHA256 {
     static func hash(_ input: String) -> String {
         let data = Data(input.utf8)
         var digest = [UInt8](repeating: 0, count: 32)
@@ -247,8 +279,6 @@ private enum SHA256 {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 }
-
-import CommonCrypto
 
 // MARK: - Cache Manager
 

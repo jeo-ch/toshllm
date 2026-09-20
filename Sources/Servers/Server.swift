@@ -10,6 +10,16 @@ extension Notification.Name {
     static let engineDidStart = Notification.Name("toshEngineDidStart")
 }
 
+/// Simple deterministic hash for alias collision resolution (FNV-1a).
+private func fnv1aHash(_ s: String) -> String {
+    var hash: UInt64 = 14695981039346656037
+    for byte in s.utf8 {
+        hash ^= UInt64(byte)
+        hash *= 1099511628211
+    }
+    return String(hash, radix: 16, uppercase: false)
+}
+
 struct GPUDevice: Identifiable, Hashable {
     let index: Int
     let name: String
@@ -487,7 +497,11 @@ struct ServerSettings {
         var sections: [String] = []
         for path in modelPaths.sorted() {
             var alias = Self.routerAlias(for: path)
-            if seenAliases.contains(alias) { alias += "-\(abs(path.hashValue) % 1000)" }
+            if seenAliases.contains(alias) {
+                // Deterministic suffix: first 6 hex chars of FNV-1a hash of the path
+                let hash = fnv1aHash(path).prefix(6)
+                alias += "-\(hash)"
+            }
             seenAliases.insert(alias)
 
             let modelCtx = Self.routerCtx(forModel: path, requested: ctx, ncmoe: ncmoeByPath[path] ?? 0,
@@ -1608,9 +1622,15 @@ struct ServerSettings {
         // 2) Fall back to the chat model picker
         let alias = d.string(forKey: SettingsKeys.chatSelectedModel) ?? ""
         if !alias.isEmpty { return alias }
-        // 3) Default to the first model when the chat hasn't picked one yet
-        return LocalModel.scan(in: modelsDirectory).first.map { routerAlias(for: $0.url.path) }
+        // 3) Default to the first model when the chat hasn't picked one yet.
+        //    Cache the result to avoid repeated filesystem scans on every request.
+        return cachedFirstModelAlias
     }
+    
+    /// Cached alias for the first available model, computed once on first access.
+    private static let cachedFirstModelAlias: String? = {
+        LocalModel.scan(in: modelsDirectory).first.map { routerAlias(for: $0.url.path) }
+    }()
 }
 
 /// Owns the running engine instances.

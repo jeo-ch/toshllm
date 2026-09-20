@@ -107,8 +107,7 @@ jobs:
         with:
           path: vendor
           # Per variant: the two ISA baselines produce different engine binaries.
-          # Include engine commit hashes for better cache invalidation.
-          key: engines-${{ matrix.variant }}-${{ hashFiles('patches/**/*.patch', 'scripts/build-engines.sh', 'vendor/**/*.commit') }}
+          key: engines-${{ matrix.variant }}-${{ hashFiles('patches/**/*.patch', 'scripts/build-engines.sh') }}
           restore-keys: |
             engines-${{ matrix.variant }}-
             engines-

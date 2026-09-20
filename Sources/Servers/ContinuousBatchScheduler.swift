@@ -225,14 +225,10 @@ final class ContinuousBatchScheduler: ObservableObject {
                 }
                 
                 // Priority scheduling with preemption:
-                // Check if any pending request has higher priority than currently processing
-                let hasHigherPriority = self.processingRequests.contains { processing in
-                    return self.pendingRequests.contains { pending in
-                        pending.id == processing.id && pending.priority.rawValue < processing.priority.rawValue
-                    }
-                }
-                
-                if hasHigherPriority {
+                // Compare the highest-priority pending request against the lowest-priority processing request
+                if let lowestProcessing = self.processingRequests.min(by: { $0.priority.rawValue < $1.priority.rawValue }),
+                   let highestPending = self.pendingRequests.min(by: { $0.priority.rawValue < $1.priority.rawValue }),
+                   highestPending.priority.rawValue < lowestProcessing.priority.rawValue {
                     // Preempt lowest priority processing request
                     if let lowestIdx = self.processingRequests.enumerated()
                         .max(by: { $0.element.priority.rawValue > $1.element.priority.rawValue })?.offset {
