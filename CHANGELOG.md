@@ -3,6 +3,80 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.10] - 2026-09-25
+
+### Improved
+
+- **LLMs: long prompts read much faster with a model split into groups of GPUs.** On two Radeon Pro Vega II Duo cards a 2048 token prompt reads 32% faster with Qwen3-14B, 41% with Qwen3.8-27B and 29% with Qwen3.6-35B-A3B; short prompts read as before.
+
+- **LLMs: a model split by tensors across GPUs generates faster, also with multi-token prediction (MTP).** On a Radeon Pro Vega II Duo Qwen3-14B generates 49.4 tokens a second instead of 47.2 and Qwen3.8-27B Q4_0 30.7 instead of 29.3, also in groups of two across four GPUs; with MTP the 27B goes from 31.1 to 33.3.
+
+### Known issues
+
+- **LLMs: Qwen3.8 Flash Next can still answer with a run of zeros after a long prompt on Radeon Pro Vega and Radeon VII.** Prompts of a few thousand tokens work; past roughly 20,000 tokens they may not. It is not solved in this version.
+
+- **LLMs: Qwen3.8 Flash Next split by tensors can still stop in the middle of a long answer on Radeon PRO W6800X Duo cards.** Generation stalls with a GPU timeout.
+
+## [0.87.9] - 2026-09-24
+
+### Added
+
+- **LLMs: multi-token prediction (MTP) can be switched off per model, like DFlash.** The switch is in the model's settings, on the dashboard and in the server details. MTP stays on by default; with text the model predicts poorly it can generate slower than without it, and off it generates one token per step.
+
+- **LLMs: the engine moves to a newer upstream.** It brings the fixes and the model support added there since the last one, among them router mode no longer hanging when several requests ask for the same model, DFM Mimir 1B, and the Ling 3.0 and DeepSeek V3.2 and V4 chat formats. Speed is unchanged apart from the improvements below.
+
+### Improved
+
+- **LLMs: mixture of experts models generate faster on Radeon Pro Vega and Radeon VII.** On a Radeon Pro Vega II gpt-oss-20B generates 92.7 tokens a second instead of 90.8 and Qwen3.6-35B-A3B 70.0 instead of 68.3.
+
+- **LLMs: batches of two tokens run faster on Radeon Pro Vega and Radeon VII.** On a Radeon Pro Vega II Qwen3.8-27B Q4_0 reads them 18 percent faster and Qwen3.6-35B-A3B 12 percent.
+
+- **LLMs: multi-token prediction (MTP) costs less on Q4_0 models on Radeon Pro Vega and Radeon VII.** On a Radeon Pro Vega II Qwen3.8-27B Q4_0 generates 21.4 tokens a second with it instead of 18.7 on a technical answer where it accepts about half of its guesses. That is still below the 25.7 it reaches without MTP, so on text like this the new switch is worth turning off.
+
+### Known issues
+
+- **LLMs: Qwen3.8 Flash Next can still answer with a run of zeros after a long prompt on Radeon Pro Vega and Radeon VII.** Prompts of a few thousand tokens work; past roughly 20,000 tokens they may not. It is not solved in this version.
+
+- **LLMs: Qwen3.8 Flash Next split by tensors can still stop in the middle of a long answer on Radeon PRO W6800X Duo cards.** Generation stalls with a GPU timeout.
+
+## [0.87.8] - 2026-09-22
+
+### Added
+
+- **Images: Qwen-Image 2.1.** A 7B model that writes legible text inside the image and edits from up to sixteen reference images. On a Radeon RX 6700 XT a 1024x1024 image takes 4 min 52 s at the published 25 steps. A card that also draws the desktop goes up to 1920 pixels; one without a display, like a Radeon Pro Vega II, to 2048. Four sizes cover cards from 8 GB up.
+
+- **Images: fast mode.** Reuses sampling steps instead of computing them again, in three levels: 1.13x, 1.45x and 1.69x faster on Qwen-Image 2.1, at the cost of fine detail. Off by default.
+
+### Improved
+
+- **LLMs: multi-token prediction (MTP) now speeds up generation on Radeon Pro Vega, Radeon VII and AMD RDNA2 (tested on the Radeon RX 6700 XT).** On a Radeon RX 6700 XT Qwen3.8-9B Q4_K_M generates 59.4 tokens a second with it instead of 54.6 without, where it used to lose. On a Radeon Pro Vega II Qwen3.8-27B Q4_K_S generates 21.2 with it against 20.8 without, where it lost 17 percent before. Each card now drafts the number of tokens that pays on it, and one rejected draft no longer switches prediction off.
+
+- **LLMs: mixture of experts models read prompts and generate faster on Radeon Pro Vega, Radeon VII and AMD RDNA2 (tested on the Radeon RX 6700 XT).** Prompt lengths that left part of the card idle are gone: on a Radeon RX 6700 XT gpt-oss-20B reads them 28 to 34 percent faster and OLMoE-1B-7B 17 to 26 percent, and on a Radeon Pro Vega II an 8 expert model reads a 128 token batch in 1.33 ms instead of 4.47. The router now runs as one kernel: Qwen3.6-35B-A3B generates 68.3 tokens a second instead of 65.5 on a Radeon Pro Vega II, and gpt-oss-20B 101.1 instead of 99.9 on a Radeon RX 6700 XT. Same output.
+
+- **LLMs: short batches of two to eight tokens run faster, on Radeon Pro Vega, Radeon VII and AMD RDNA2 (tested on the Radeon RX 6700 XT).** They speed up multi-token prediction and several requests at once. On a Radeon RX 6700 XT two-token batches take 32 percent less on Q4_K, 29 percent on Q5_K and 21 to 28 percent on IQ3; on a Radeon Pro Vega II 23 percent less on Q4_K and 16 to 41 percent on IQ4_NL, MXFP4, Q2_K, Q3_K and Q4_0, and Qwen3.8-27B IQ4_XS reads four token batches 16 percent faster. Single token generation is unchanged. Same output.
+
+- **LLMs: an 8-bit KV cache and several requests at once on 8-bit models are faster on Radeon Pro Vega and Radeon VII.** Qwen3-4B with a q8_0 KV cache at a 4,400 token context generates 51.7 tokens a second instead of 39.0, and a Q8_0 model serving two to eight requests together produces 20 to 25 percent more. Same output.
+
+- **LLMs: follow-up messages in a chat start answering sooner with Qwen3.5, Qwen3.6, Qwen3.8 and Gemma models.** A follow-up to Qwen3.5-4B starts in 149 ms instead of 161 on a Radeon RX 6700 XT. Same output.
+
+- **Images: SD 1.5, SDXL Turbo, Flux.2 klein 4B and Qwen-Image 2.1 generate faster on AMD RDNA2 (tested on the Radeon RX 6700 XT).** SDXL Turbo takes 8.97 s instead of 10.36 s at 1024x1024, and Qwen-Image 2.1 13 percent less per step, with the same image.
+
+### Fixed
+
+- **Chat: Stop now stops the model on the card too, and an answer whose connection drops picks up where it left off.** Before, the answer stopped on screen while the engine kept generating and holding the GPU, and a dropped reply was lost.
+
+- **LLMs: stopping the server frees the card's memory in router mode.** An engine that went down could leave its loaded models running and holding VRAM with no server on.
+
+- **Images and Video: large sizes no longer fail saying there is no memory.** The AMD driver over-reports what is in use, so a large image, a 16:9 frame, an edit from a reference image or the video decoder was refused although it fit.
+
+- **Images: Qwen-Image 2.1 no longer warns about repeated compositions below 2048 pixels.** The warning used the older Qwen-Image limit.
+
+### Known issues
+
+- **LLMs: Qwen3.8 Flash Next can answer with a run of zeros after a long prompt on Radeon Pro Vega and Radeon VII.** Prompts of a few thousand tokens work; around 26,000 tokens they do not. It is under investigation.
+
+- **LLMs: Qwen3.8 Flash Next split by tensors can stop in the middle of a long answer on Radeon PRO W6800X Duo cards.** Generation stalls with a GPU timeout; it is under investigation.
+
 ## [0.87.7] - 2026-09-19
 
 ### Added

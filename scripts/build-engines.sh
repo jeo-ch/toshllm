@@ -128,9 +128,9 @@ build_engines_parallel() {
     return $failed
 }
 
-LLAMA_COMMIT="${LLAMA_COMMIT:-465e49b9c}"   # llama.cpp commit validated against the patches
+LLAMA_COMMIT="${LLAMA_COMMIT:-9575389609d6f8437de0b205561a4824d217c409}"   # llama.cpp commit validated against the patches
 WHISPER_COMMIT="${WHISPER_COMMIT:-371b5a7561823ab2bb32142d2751e35e7534727b}" # whisper.cpp v1.9.3
-SD_COMMIT="${SD_COMMIT:-97d2990}"         # stable-diffusion.cpp commit validated for image gen
+SD_COMMIT="${SD_COMMIT:-6dcb5bb}"         # stable-diffusion.cpp commit validated for image gen
 ARCH="${ARCH:-$(uname -m)}"
 DEPLOYMENT_TARGET="14.0"        # same floor as the app (Package.swift)
 if [ "$ARCH" = "universal" ]; then
@@ -203,6 +203,22 @@ retry_git() {
         echo "Git network operation failed (attempt $attempt/$max_attempts); retrying in ${delay}s..." >&2
         sleep "$delay"
         attempt=$((attempt + 1))
+    done
+}
+
+# A build-static left from before a system or Command Line Tools update keeps the old SDK and
+# compiler paths in its cache, and cmake never re-detects them: the link then fails with
+# "library 'System' not found". Drop such a cache so the next configure starts clean.
+reset_stale_cmake_cache() {
+    local cache="$1/CMakeCache.txt" key cached
+    [ -f "$cache" ] || return 0
+    for key in CMAKE_OSX_SYSROOT CMAKE_C_COMPILER CMAKE_CXX_COMPILER; do
+        cached=$(sed -n "s/^$key:[A-Z]*=//p" "$cache")
+        if [ -n "$cached" ] && [ "${cached#/}" != "$cached" ] && [ ! -e "$cached" ]; then
+            echo "stale cmake cache in $1 ($key -> $cached); reconfiguring"
+            rm -rf "$cache" "$1/CMakeFiles"
+            return 0
+        fi
     done
 }
 
@@ -280,6 +296,7 @@ build_engine() {
         fi
     done
 
+    reset_stale_cmake_cache build-static
     cmake -B build-static "${CMAKE_FLAGS[@]}"
     cmake --build build-static --config Release -j "$(sysctl -n hw.ncpu)" -t llama-server llama-bench llama-perplexity test-backend-ops
 
@@ -503,6 +520,7 @@ build_whisper_engine() {
     done
 
     local isa=("${ISA_FLAGS[@]}")
+    reset_stale_cmake_cache build-static
     cmake -B build-static \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
@@ -633,6 +651,12 @@ build_image_engine() {
     # Cast an f16 weight to f32 before adding a LoRA diff: the diff is f32, Metal wants both
     # operands in one type, and a weight in private VRAM cannot fall back to the CPU for the add.
     git apply -p1 "$ROOT/patches/image/0053-image-lora-f16-weight-cast.patch"
+    # Report free VRAM from what this backend holds: the AMD driver's own figure counts
+    # buffers it has not reclaimed yet, and the engine then refuses work that fits.
+    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0055-image-metal-live-vram-report.patch"
+    # Half partials as an opt-in: float stays the default because some models overflow half,
+    # and the app sets TOSH_MM_ACC_HALF only for the models checked with it.
+    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0056-image-metal-half-partials.patch"
     echo "applied ggml-metal hunks of 0001 + 0003 + core fallback 0004 + ext wave64 0008 to stable-diffusion.cpp"
 
     # This ggml is on a different commit, so an ambiguous hunk can land on the wrong
@@ -650,6 +674,7 @@ build_image_engine() {
     fi
 
     local isa=("${ISA_FLAGS[@]}")
+    reset_stale_cmake_cache build-static
     cmake -B build-static \
         -DCMAKE_BUILD_TYPE=Release \
         -DSD_METAL=ON \
