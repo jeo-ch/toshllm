@@ -21,9 +21,21 @@ actor ToshMCPService {
     private var legacyReady: [UUID: CheckedContinuation<URL, Error>] = [:]
     private var legacyResponses: [UUID: [Int: CheckedContinuation<WireResponse, Error>]] = [:]
 
+    /// Tool discovery ran before every request — a connect plus a tools/list
+    /// round trip per server, sitting between the user's send and the first
+    /// token. The result only changes when the server config does, so it is
+    /// cached: the cache misses as soon as the enabled set differs.
+    private var toolCache: (servers: [MCPServer], at: Date, tools: [BuiltinToolInfo])?
+    private static let toolCacheTTL: TimeInterval = 30
+
     func discoverTools() async -> [BuiltinToolInfo] {
+        let servers = MCPServerStore.load().filter(\.enabled)
+        if let hit = toolCache, hit.servers == servers,
+           Date().timeIntervalSince(hit.at) < Self.toolCacheTTL {
+            return hit.tools
+        }
         var output: [BuiltinToolInfo] = []
-        for server in MCPServerStore.load() where server.enabled {
+        for server in servers {
             do {
                 try await connect(server)
                 let result = try await request(serverID: server.id, method: "tools/list", params: [:])
@@ -48,6 +60,10 @@ actor ToshMCPService {
                 AppLog.chat.error("MCP \(server.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
+        // A config with tools that all failed is not cached, so the next turn
+        // can still try; an empty-but-healthy set is a real answer.
+        if !servers.isEmpty && output.isEmpty { return output }
+        toolCache = (servers: servers, at: Date(), tools: output)
         return output
     }
 

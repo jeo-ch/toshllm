@@ -456,7 +456,10 @@ struct QueueFeedView: View {
             } else {
                 queueToolbar
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
+                    // Lazy: up to 60 results at once, each keeping a decoded
+                    // full-size NSImage — materializing all of them up front is
+                    // hundreds of MB the scroll position never reaches.
+                    LazyVStack(alignment: .leading, spacing: 12) {
                         if !pool.queue.isEmpty {
                             queueSectionTitle(loc.t("Pendientes", "Pending"),
                                               count: pool.queue.count,

@@ -18,7 +18,7 @@ enum PresentedLogLevel: Int, Sendable {
     }
 }
 
-struct PresentedLogLine: Identifiable, Sendable {
+struct PresentedLogLine: Identifiable, Sendable, Equatable {
     let id: Int
     let time: String
     let level: PresentedLogLevel

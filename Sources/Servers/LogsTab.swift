@@ -70,7 +70,13 @@ struct ServerLogView: View {
         }
     }
     private var parseToken: String {
-        "\(logSource)|\(rawLog.utf8.count)|\(rawLog.suffix(48))"
+        // Only read from the parse loop now: it used to be the `id` of a task,
+        // which meant every view body walked the whole log to answer this.
+        switch logSource {
+        case "images": "images|\(imageLog.utf8.count)|\(imageLog.suffix(48))"
+        case "video": "video|\(videoLog.utf8.count)|\(videoLog.suffix(48))"
+        default: "server|\(server.logBuffer.generation)"
+        }
     }
     private var matchingLines: [PresentedLogLine] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -93,7 +99,7 @@ struct ServerLogView: View {
         }
         .background(WorkspaceStyle.canvas)
         .task(id: logSource) { await pollExternalLog() }
-        .task(id: parseToken) { await parseCurrentLog() }
+        .task { await parseCurrentLogLoop() }
         .sheet(isPresented: .constant(checker.running)) { engineCheckSheet }
         .alert(loc.t("Comprobación del motor", "Engine check"),
                isPresented: Binding(get: { checkVerdict != nil }, set: { if !$0 { checkVerdict = nil } })) {
@@ -370,12 +376,31 @@ struct ServerLogView: View {
         }
     }
 
+    /// Reparses at most five times a second. This used to be
+    /// `.task(id: parseToken)`, so every 100 ms log publish cancelled the task
+    /// and reparsed the entire buffer (up to 120 KB) — a permanent ~10 % of a
+    /// core while the engine streams, plus a full table rebuild each time.
+    private func parseCurrentLogLoop() async {
+        var lastToken = parseToken
+        await parseCurrentLog()
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            let token = parseToken
+            guard token != lastToken else { continue }
+            lastToken = token
+            await parseCurrentLog()
+        }
+    }
+
     private func parseCurrentLog() async {
         let snapshot = rawLog
         let source = logSource == "server" ? "Engine" : (logSource == "images" ? "Image" : "Video")
         let parsed = await Task.detached(priority: .utility) { LogPresentationParser.parse(snapshot, fallbackSource: source) }.value
         guard !Task.isCancelled else { return }
-        lines = parsed
+        // Republishing an identical array would rebuild the table for nothing
+        // (a half-written line reparse often comes back equal).
+        if lines != parsed { lines = parsed }
     }
 
     private func pollExternalLog() async {

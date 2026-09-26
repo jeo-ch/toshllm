@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Before anything is torn down: a debounced conversation write would not
         // get its chance to run and the last exchange would be lost.
         ChatStore.flushPendingSave()
+        ImageGenPool.flushPendingSave()
         ServerManager.shared.stopAllImmediately()
         SpeechDictationController.shared.shutdown()
         AppleSpeechDictationController.shared.shutdown()

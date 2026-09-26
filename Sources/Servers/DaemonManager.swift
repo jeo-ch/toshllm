@@ -118,7 +118,12 @@ final class DaemonManager: ObservableObject {
             
             status = .running
             startedAt = Date()
-            restartCount = 0
+            // Auto-recovery re-enters start() with isRestarting set; only an
+            // explicit user start may clear the counter, otherwise maxRestarts
+            // could never stop a daemon that exits right after launching.
+            if !isRestarting {
+                restartCount = 0
+            }
             
         } catch {
             status = .error
@@ -128,24 +133,32 @@ final class DaemonManager: ObservableObject {
     }
     
     /// Stop the daemon process.
-    func stop() {
+    func stop() async {
         healthCheckTask?.cancel()
         healthCheckTask = nil
         
-        if let process = process {
-            // Send SIGTERM for graceful shutdown
-            process.terminate()
+        if let process {
+            // Nothing consumes the pipe after this point, so drop the handler
+            // along with the process.
+            (process.standardOutput as? Pipe)?.fileHandleForReading.readabilityHandler = nil
             
-            // Wait for process to exit (max 5 seconds) using non-blocking approach
-            let deadline = Date().addingTimeInterval(5)
-            while process.isRunning && Date() < deadline {
-                // Use RunLoop to avoid blocking main thread
-                RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
-            }
-            
-            // Force kill if still running
             if process.isRunning {
-                process.interrupt()
+                // Send SIGTERM for graceful shutdown
+                process.terminate()
+                
+                // Wait for process to exit (max 5 seconds). Yielding with a
+                // sleep keeps the main actor responsive instead of spinning
+                // the run loop like the old busy-wait did.
+                let deadline = Date().addingTimeInterval(5)
+                while process.isRunning && Date() < deadline {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                
+                // Force kill if still running; never signal a process that
+                // already exited.
+                if process.isRunning {
+                    process.interrupt()
+                }
             }
         }
         
@@ -160,7 +173,7 @@ final class DaemonManager: ObservableObject {
     
     /// Restart the daemon process.
     func restart() async throws {
-        stop()
+        await stop()
         try await Task.sleep(for: .seconds(1))
         try await start()
     }
@@ -239,9 +252,16 @@ final class DaemonManager: ObservableObject {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
+        // Something has to drain the pipe: with no reader the kernel buffer
+        // (~64KB) fills up and the daemon blocks forever on its next write.
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            _ = handle.availableData
+        }
         
         // Set up termination handler
-        process.terminationHandler = { [weak self] process in
+        process.terminationHandler = { [weak self, pipe] process in
+            // Output ends with the process; no reader needed any more.
+            pipe.fileHandleForReading.readabilityHandler = nil
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 

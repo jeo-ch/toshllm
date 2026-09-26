@@ -102,7 +102,15 @@ final class ChunkedPrefillManager: ObservableObject {
     
     /// Configure chunked prefill settings.
     func configure(_ config: Configuration) {
-        configuration = config
+        // Clamp instead of asserting: overlap >= chunkSize would make chunk
+        // advancement stall, and a misconfigured caller shouldn't crash the app.
+        let chunkSize = max(1, config.chunkSize)
+        configuration = Configuration(
+            chunkSize: chunkSize,
+            enabled: config.enabled,
+            minLength: config.minLength,
+            overlapTokens: min(max(0, config.overlapTokens), chunkSize - 1)
+        )
     }
     
     /// Process a long prompt with chunked prefill.
@@ -125,6 +133,7 @@ final class ChunkedPrefillManager: ObservableObject {
         var processedChunks: [PromptChunk] = []
         var firstTokenLatency: TimeInterval?
         var totalTokens = 0
+        var firstError: Error?
         
         for (index, chunk) in chunks.enumerated() {
             guard !Task.isCancelled else { break }
@@ -173,7 +182,12 @@ final class ChunkedPrefillManager: ObservableObject {
                 updatedChunk.status = .failed
                 updatedChunk.endTime = Date()
                 currentChunks[index] = updatedChunk
-                processedChunks.append(updatedChunk)
+                // Remember the first failure but keep the failed chunk out of
+                // processedChunks, so chunksProcessed counts successes only.
+                // The error is rethrown below instead of being swallowed.
+                if firstError == nil {
+                    firstError = error
+                }
             }
         }
         
@@ -191,6 +205,13 @@ final class ChunkedPrefillManager: ObservableObject {
         
         self.stats = stats
         isProcessing = false
+        
+        // processPrompt is `throws`: surface the first chunk failure to the
+        // caller rather than reporting a silent success with partial work.
+        if let firstError {
+            throw firstError
+        }
+        
         onCompletion?(stats)
         
         return stats
@@ -275,8 +296,11 @@ final class ChunkedPrefillManager: ObservableObject {
             chunks.append(chunk)
             chunkIndex += 1
             
-            // Move to next chunk with overlap
-            startIndex = endIndex - overlap
+            // Move to next chunk with overlap. Step by at least one word so the
+            // loop always makes progress: with overlap >= chunkSize the old
+            // `endIndex - overlap` never advanced and spun forever.
+            let step = max(1, chunkSize - overlap)
+            startIndex += step
             if startIndex >= words.count { break }
         }
         

@@ -106,6 +106,10 @@ final class ContinuousBatchScheduler: ObservableObject {
     /// Request handler closure.
     private var requestHandler: ((String, UUID?) async throws -> String)?
     
+    /// Completed-request history cap; each entry carries the full prompt, so
+    /// an unbounded array would grow for the lifetime of a long session.
+    private static let maxCompletedHistory = 200
+    
     // MARK: - Initialization
     
     init(maxConcurrent: Int = 1, maxQueueSize: Int = 100, targetTPS: Double = 20) {
@@ -212,10 +216,15 @@ final class ContinuousBatchScheduler: ObservableObject {
             while !Task.isCancelled {
                 // Backpressure: if current TPS exceeds target, hold back new requests
                 if self._estimatedTPS > self.targetTPS * 1.2 {
-                    // Hold back: don't dequeue new request, let current finish
+                    // Hold back: don't dequeue new request, let current finish.
+                    // Exit once the queue drains, and sleep instead of spinning:
+                    // this class is @MainActor, so a bare `continue` here would
+                    // peg the main thread.
+                    guard !self.pendingRequests.isEmpty else { break }
                     await MainActor.run {
                         self.isProcessing = !self.pendingRequests.isEmpty
                     }
+                    try? await Task.sleep(for: .milliseconds(50))
                     continue
                 }
                 
@@ -226,9 +235,9 @@ final class ContinuousBatchScheduler: ObservableObject {
                 
                 // Priority scheduling with preemption:
                 // Compare the highest-priority pending request against the lowest-priority processing request
-                if let lowestProcessing = self.processingRequests.min(by: { $0.priority.rawValue < $1.priority.rawValue }),
+                if let lowestPriorityProcessing = self.processingRequests.max(by: { $0.priority.rawValue < $1.priority.rawValue }),
                    let highestPending = self.pendingRequests.min(by: { $0.priority.rawValue < $1.priority.rawValue }),
-                   highestPending.priority.rawValue < lowestProcessing.priority.rawValue {
+                   highestPending.priority.rawValue < lowestPriorityProcessing.priority.rawValue {
                     // Preempt lowest priority processing request
                     if let lowestIdx = self.processingRequests.enumerated()
                         .max(by: { $0.element.priority.rawValue > $1.element.priority.rawValue })?.offset {
@@ -291,28 +300,44 @@ final class ContinuousBatchScheduler: ObservableObject {
             
             guard !Task.isCancelled else { return }
             
-            processingRequests[index].status = .completed
-            processingRequests[index].result = result
-            processingRequests[index].completedAt = Date()
+            // The await above gave cancelRequest()/stop() a chance to mutate
+            // processingRequests, so the cached index may be stale or out of
+            // range; re-locate the request by id before writing to the array.
+            guard let resultIndex = processingRequests.firstIndex(where: { $0.id == request.id }) else { return }
+            processingRequests[resultIndex].status = .completed
+            processingRequests[resultIndex].result = result
+            processingRequests[resultIndex].completedAt = Date()
             
             // Move to completed
-            let completed = processingRequests.remove(at: index)
-            completedRequests.append(completed)
+            let completed = processingRequests.remove(at: resultIndex)
+            recordCompleted(completed)
             
         } catch {
             guard !Task.isCancelled else { return }
             
-            processingRequests[index].status = .failed
-            processingRequests[index].error = error.localizedDescription
-            processingRequests[index].completedAt = Date()
+            // Same re-locate after the await: the index taken before it can
+            // point at a different request (or past the end) by now.
+            guard let errorIndex = processingRequests.firstIndex(where: { $0.id == request.id }) else { return }
+            processingRequests[errorIndex].status = .failed
+            processingRequests[errorIndex].error = error.localizedDescription
+            processingRequests[errorIndex].completedAt = Date()
             
             // Move to completed
-            let completed = processingRequests.remove(at: index)
-            completedRequests.append(completed)
+            let completed = processingRequests.remove(at: errorIndex)
+            recordCompleted(completed)
         }
         
         // Continue processing next request
         startProcessingIfNeeded()
+    }
+    
+    /// Record a finished request, trimming the history so long sessions don't
+    /// accumulate unbounded prompt strings in memory.
+    private func recordCompleted(_ request: ScheduledRequest) {
+        completedRequests.append(request)
+        if completedRequests.count > Self.maxCompletedHistory {
+            completedRequests.removeFirst(completedRequests.count - Self.maxCompletedHistory)
+        }
     }
     
     private func averageWaitTime() -> TimeInterval {

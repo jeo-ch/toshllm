@@ -837,7 +837,10 @@ final class ChatStore: ObservableObject {
                     throw resumeError ?? StreamError(message: "The response stream ended before completion")
                 }
             } catch {
-                if error is CancellationError {
+                if error is CancellationError || (error as? URLError)?.code == .cancelled {
+                    // Stop sends a DELETE to the engine, which tears the URL
+                    // stream down: that is a cancellation, not an engine error,
+                    // so it must not raise the "engine interrupted" banner.
                     cancelled = true
                 } else {
                     reportedError = true

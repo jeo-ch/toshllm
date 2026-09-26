@@ -1119,7 +1119,7 @@ struct GeneratedImage: Identifiable {
 /// There is always at least one instance.
 @MainActor
 final class ImageGenPool: ObservableObject {
-    @Published var configs: [ImageInstanceConfig] { didSet { save() } }
+    @Published var configs: [ImageInstanceConfig] { didSet { scheduleSave() } }
     /// Pending prompts; the scheduler feeds them to idle instances.
     @Published var queue: [QueuedPrompt] = []
     /// While true, finished instances pull the next queued prompt automatically.
@@ -1130,8 +1130,18 @@ final class ImageGenPool: ObservableObject {
     weak var modelStore: ModelStore?
     private var generators: [UUID: ImageGenerator] = [:]
     private var forwards: [UUID: AnyCancellable] = [:]
+    /// Debounced write of `configs`: it used to run on every keystroke in the
+    /// prompt field (encode the whole array + UserDefaults), so it is batched
+    /// with a 1s ceiling — a steady stream of edits still reaches disk.
+    private var configSaveTask: Task<Void, Never>?
+    private var configSaveSince: Date?
+    private var configSaveDirty = false
+    /// The pool the UI owns, so the quit path can flush a pending write
+    /// (same pattern as `ChatStore.live`).
+    private(set) static weak var live: ImageGenPool?
 
     init() {
+        Self.live = self
         if let data = UserDefaults.standard.data(forKey: SettingsKeys.imagenInstances),
            let c = try? JSONDecoder().decode([ImageInstanceConfig].self, from: data),
            !c.isEmpty {
@@ -1333,8 +1343,37 @@ final class ImageGenPool: ObservableObject {
     }
 
     private func save() {
+        configSaveDirty = false
         UserDefaults.standard.set(try? JSONEncoder().encode(configs),
                                   forKey: SettingsKeys.imagenInstances)
+    }
+
+    private func scheduleSave() {
+        configSaveDirty = true
+        let now = Date()
+        let since = configSaveSince ?? now
+        configSaveSince = since
+        let delay = max(0, min(0.3, 1.0 - now.timeIntervalSince(since)))
+        configSaveTask?.cancel()
+        configSaveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
+            guard !Task.isCancelled else { return }
+            self?.configSaveSince = nil
+            self?.save()
+        }
+    }
+
+    /// Runs a pending instance-config write immediately. Quit calls it, otherwise
+    /// up to a second of edits (prompt, steps, model choice) never hits disk.
+    nonisolated static func flushPendingSave() {
+        guard let pool = live else { return }
+        MainActor.assumeIsolated {
+            guard pool.configSaveDirty else { return }
+            pool.configSaveTask?.cancel()
+            pool.configSaveTask = nil
+            pool.configSaveSince = nil
+            pool.save()
+        }
     }
 }
 

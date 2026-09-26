@@ -43,6 +43,21 @@ final class AsyncPipeline: ObservableObject {
         to destination: URL,
         progress: @escaping @MainActor (Double) -> Void
     ) async throws -> URL {
+        // A fresh download must not inherit bytes from a previous attempt.
+        try? FileManager.default.removeItem(at: destination.appendingPathExtension("partial"))
+        return try await downloadWithResume(from: url, to: destination, progress: progress)
+    }
+    
+    /// Download with resumption support.
+    /// Bytes always land in a `.partial` file next to `destination`; only a
+    /// completed transfer is moved onto the final path, so an interrupted
+    /// download never leaves a truncated file where a real model is expected.
+    func downloadWithResume(
+        from url: URL,
+        to destination: URL,
+        existingBytes: Int64 = 0,
+        progress: @escaping @MainActor (Double) -> Void
+    ) async throws -> URL {
         let taskID = UUID()
         currentTaskID = taskID
         
@@ -58,68 +73,68 @@ final class AsyncPipeline: ObservableObject {
             }
         }
         
-        // Reuse shared session for connection pooling
-        let session = NetworkManager.session
+        let fileManager = FileManager.default
+        let partialURL = destination.appendingPathExtension("partial")
         
-        let (tempURL, response) = try await session.download(from: url)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            throw PipelineError.downloadFailed("Invalid response")
-        }
-        
-        // Move to destination
-        try FileManager.default.moveItem(at: tempURL, to: destination)
-        
-        await progress(1.0)
-        return destination
-    }
-    
-    /// Download with resumption support.
-    func downloadWithResume(
-        from url: URL,
-        to destination: URL,
-        existingBytes: Int64 = 0,
-        progress: @escaping @MainActor (Double) -> Void
-    ) async throws -> URL {
-        let taskID = UUID()
-        currentTaskID = taskID
-        
-        status = .downloading
-        currentOperation = "Downloading \(url.lastPathComponent)"
-        
-        defer {
-            if currentTaskID == taskID {
-                status = .idle
-                self.progress = 0
-                currentOperation = ""
-            }
-        }
+        // Resume from what is actually on disk, not from a caller-supplied
+        // count: the partial file is the single source of truth for how many
+        // bytes can be continued from.
+        let partialSize = (try? fileManager.attributesOfItem(atPath: partialURL.path))?[.size] as? Int64 ?? 0
+        let resumeFrom = existingBytes > 0 ? partialSize : 0
         
         // Create resumable download request
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         
-        if existingBytes > 0 {
-            request.setValue("bytes=\(existingBytes)-", forHTTPHeaderField: "Range")
+        if resumeFrom > 0 {
+            request.setValue("bytes=\(resumeFrom)-", forHTTPHeaderField: "Range")
         }
         
-        let (data, response) = try await NetworkManager.session.data(for: request)
+        // `bytes(for:)` streams instead of pulling the whole (GB-sized) model
+        // into memory the way `data(for:)` did.
+        let (bytes, response) = try await NetworkManager.session.bytes(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
             throw PipelineError.downloadFailed("Invalid response")
         }
         
-        // Append or write data
-        if existingBytes > 0, FileManager.default.fileExists(atPath: destination.path) {
-            let fileHandle = try FileHandle(forWritingTo: destination)
-            defer { fileHandle.closeFile() }
-            fileHandle.seekToEndOfFile()
-            fileHandle.write(data)
-        } else {
-            try data.write(to: destination)
+        // A 206 means the server honored the Range and we append; anything
+        // else restarts the file from zero, so truncate the partial bytes.
+        let appending = resumeFrom > 0 && httpResponse.statusCode == 206
+        if !appending || !fileManager.fileExists(atPath: partialURL.path) {
+            fileManager.createFile(atPath: partialURL.path, contents: nil)
         }
+        let fileHandle = try FileHandle(forWritingTo: partialURL)
+        defer { try? fileHandle.close() }
+        if appending {
+            fileHandle.seekToEndOfFile()
+        }
+        
+        // expectedContentLength is the remaining size on a 206 response.
+        let remaining = httpResponse.expectedContentLength
+        let totalBytes = remaining > 0 ? remaining + (appending ? resumeFrom : 0) : -1
+        var writtenBytes = appending ? resumeFrom : 0
+        var lastReported = -1.0
+        
+        for try await chunk in bytes {
+            try fileHandle.write(contentsOf: chunk)
+            writtenBytes += Int64(chunk.count)
+            
+            // Report progress as bytes land instead of only at 100%.
+            guard totalBytes > 0 else { continue }
+            let fraction = min(1.0, Double(writtenBytes) / Double(totalBytes))
+            if fraction - lastReported >= 0.01 {
+                lastReported = fraction
+                await progress(fraction)
+            }
+        }
+        
+        // Replace the destination only now that every byte arrived.
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        try fileManager.moveItem(at: partialURL, to: destination)
         
         await progress(1.0)
         return destination
@@ -128,10 +143,16 @@ final class AsyncPipeline: ObservableObject {
     // MARK: - Inference Pipeline
     
     /// Send inference request with streaming support.
+    /// - Parameters:
+    ///   - maxTokens: Generation cap for the reply; kept separate from
+    ///     `contextLength`, which only bounds how much can fit in the prompt.
+    ///   - port: Server port, defaulting to the one in Settings.
     func infer(
         prompt: String,
         modelPath: String,
         contextLength: Int,
+        maxTokens: Int = 2048,
+        port: Int = ServerSettings.fromDefaults().port,
         stream: @escaping @MainActor (String) -> Void
     ) async throws -> String {
         let taskID = UUID()
@@ -153,7 +174,9 @@ final class AsyncPipeline: ObservableObject {
         let request = try buildInferenceRequest(
             prompt: prompt,
             modelPath: modelPath,
-            contextLength: contextLength
+            contextLength: contextLength,
+            maxTokens: maxTokens,
+            port: port
         )
         
         // Execute with streaming
@@ -186,7 +209,9 @@ final class AsyncPipeline: ObservableObject {
     private func buildInferenceRequest(
         prompt: String,
         modelPath: String,
-        contextLength: Int
+        contextLength: Int,
+        maxTokens: Int,
+        port: Int
     ) throws -> URLRequest {
         // Build OpenAI-compatible request
         let body: [String: Any] = [
@@ -194,7 +219,9 @@ final class AsyncPipeline: ObservableObject {
             "messages": [
                 ["role": "user", "content": prompt]
             ],
-            "max_tokens": contextLength,
+            // The context length is the prompt budget, not a generation cap:
+            // it only upper-bounds how many tokens may be requested.
+            "max_tokens": min(maxTokens, contextLength),
             "stream": false
         ]
         
@@ -202,7 +229,7 @@ final class AsyncPipeline: ObservableObject {
             throw PipelineError.requestBuildFailed
         }
         
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:8080/v1/chat/completions")!)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/chat/completions")!)
         request.httpMethod = "POST"
         request.httpBody = jsonData
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

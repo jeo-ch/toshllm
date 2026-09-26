@@ -1778,11 +1778,15 @@ final class ServerLogBuffer: ObservableObject {
     private(set) var backend: String?
     /// Tail of the last chunk, so "vulkan" split across two chunks still matches.
     private var scanTail = ""
+    /// Bumped on every write: a cheap "did the log change" token for the log
+    /// console, which otherwise had to walk the whole buffer to notice.
+    private(set) var generation = 0
     private var notificationPending = false
 
     func set(_ value: String) {
         text = value
         charCount = value.count
+        generation += 1
         // A replacement is a whole new log: parse it once, in full, and start over.
         backend = Self.backendName(in: value)
         scanTail = String(value.suffix(16))
@@ -1792,6 +1796,7 @@ final class ServerLogBuffer: ObservableObject {
     func append(_ value: String, limit: Int = 120_000, retained: Int = 80_000) {
         text += value
         charCount += value.count
+        generation += 1
         if charCount > limit {
             // Trimming is rare, so re-measure exactly here rather than per chunk.
             text = String(text.suffix(retained))
@@ -2025,7 +2030,11 @@ final class ServerController: ObservableObject {
 
     /// Header at the top of the server log: version, engine, model, GPUs and the
     /// resolved settings, so a pasted log is debuggable without round-trips.
-    nonisolated static func startupBanner(settings: ServerSettings) -> String {
+    /// `args` and `env` come from the caller: `ServerSettings.arguments` and
+    /// `.environment` each walk the model directory and stat several files, and
+    /// this used to make launch recompute both after already building the process.
+    nonisolated static func startupBanner(settings: ServerSettings, args: [String],
+                                          env: [String: String]) -> String {
         func redact(_ items: [String]) -> [String] {
             var out = items
             if let i = out.firstIndex(of: "--api-key"), i + 1 < out.count { out[i + 1] = "***" }
@@ -2051,7 +2060,6 @@ final class ServerController: ObservableObject {
                        "TOSH_MOE_HOT_MAP_OUT", "TOSH_MOE_HOT_MAP_K",
                        "GGML_METAL_NCB",
                        "TOSH_MGPU_PEER", "TOSH_MGPU_PEER_DISABLE", "TOSH_MGPU_EVENTS"]
-        let env = settings.environment
         // Include user-provided environment variables in diagnostic logs.
         let userKeys = settings.extraArgTokens.env.keys.filter { !envKeys.contains($0) }.sorted()
         let envLine = (envKeys + userKeys)
@@ -2076,7 +2084,7 @@ final class ServerController: ObservableObject {
          settings: ngl=\(settings.ngl) \(moeLine) ctx=\(settings.ctx) fa=\(settings.flashAttn) ctk=\(settings.cacheTypeK) ctv=\(settings.cacheTypeV) cacheRAM=\(settings.cacheRAM)
          dflash : \(settings.routerMode ? "per-model router plan" : settings.dflashPlanSummary)
          env: \(envLine)
-         args: \(redact(settings.arguments).joined(separator: " "))
+         args: \(redact(args).joined(separator: " "))
         ========================================================
 
         """
@@ -2100,12 +2108,16 @@ final class ServerController: ObservableObject {
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: settings.serverBinary)
-        var args = settings.arguments
+        // Both resolve by walking the model directory and statting files, so they
+        // are computed once here and reused by the process and the log banner.
+        let rawArgs = settings.arguments
+        let env = settings.environment
+        var args = rawArgs
         if retryWithoutMmproj, let i = args.firstIndex(of: "--mmproj") {
             args.removeSubrange(i ..< min(i + 2, args.count))   // drop "--mmproj <path>"
         }
         p.arguments = args
-        p.environment = settings.environment
+        p.environment = env
         launchedSettings = settings
         activeDflashModelPath = args.contains("draft-dflash") ? settings.modelPath : nil
         dflashAcceptance = nil
@@ -2160,7 +2172,7 @@ final class ServerController: ObservableObject {
         }
 
         fileLog.startSession()   // new timestamped per-session file, prunes old ones
-        consume(Self.startupBanner(settings: settings))
+        consume(Self.startupBanner(settings: settings, args: rawArgs, env: env))
         do {
             try p.run()
             process = p

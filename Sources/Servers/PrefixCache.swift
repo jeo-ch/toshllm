@@ -199,9 +199,18 @@ final class PrefixCache {
         lock.lock()
         defer { lock.unlock() }
         
-        // Evict if necessary
-        while stats.totalSizeBytes + key.estimatedSizeBytes > maxSizeBytes, !cache.isEmpty {
-            evictLRU()
+        // A re-insert replaces the old entry for the same key, so its size has
+        // to come off the books first; otherwise every replace inflates the
+        // tracked total and evicts live entries early.
+        if let replaced = cache.removeValue(forKey: key) {
+            stats.totalSizeBytes -= replaced.sizeBytes
+        }
+        
+        // Evict if necessary. The LRU order is computed once and consumed in
+        // sequence; re-scanning for the oldest entry on every pass is O(n²).
+        var evictionOrder = cache.values.sorted { $0.lastAccessed < $1.lastAccessed }
+        while stats.totalSizeBytes + key.estimatedSizeBytes > maxSizeBytes, !evictionOrder.isEmpty {
+            evictLRU(&evictionOrder)
         }
         
         let entry = CacheEntry(key: key, slotFile: slotFile)
@@ -248,17 +257,31 @@ final class PrefixCache {
     
 /// Estimate current cache usage in bytes.
     func currentUsageBytes() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        
         // Return the tracked total size
         return max(0, stats.totalSizeBytes)
     }
     
-    /// Evict the least recently used entry.
-    private func evictLRU() {
-        guard let oldestKey = cache.min(by: { $0.value.lastAccessed < $1.value.lastAccessed })?.key else {
+    /// Snapshot of the statistics, taken under the lock so concurrent
+    /// insert/evict mutations can't tear the values being read.
+    func snapshotStats() -> Stats {
+        lock.lock()
+        defer { lock.unlock() }
+        
+        return stats
+    }
+    
+    /// Evict the least recently used entry from a precomputed LRU order
+    /// (oldest `lastAccessed` first), which is what eviction semantics were.
+    private func evictLRU(_ order: inout [CacheEntry]) {
+        guard let oldest = order.first else {
             return
         }
+        order.removeFirst()
         
-        if let entry = cache.removeValue(forKey: oldestKey) {
+        if let entry = cache.removeValue(forKey: oldest.key) {
             stats.totalSizeBytes -= entry.sizeBytes
             stats.evictions += 1
         }
@@ -320,6 +343,6 @@ final class PrefixCacheManager: ObservableObject {
     
     /// Get current cache statistics.
     func currentStats() -> PrefixCache.Stats {
-        cache.stats
+        cache.snapshotStats()
     }
 }
