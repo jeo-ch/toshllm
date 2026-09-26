@@ -102,6 +102,17 @@ enum ChatToolsService {
     }
 
     static func list(port: Int) async throws -> [BuiltinToolInfo] {
+        // The engine's tool set changes with the engine, not with the turn, yet
+        // this ran before every request started (one HTTP round trip plus a JSON
+        // parse), sitting between the user's send and the first token.
+        listLock.lock()
+        if let hit = listCache, hit.port == port,
+           Date().timeIntervalSince(hit.at) < Self.listTTL {
+            let cached = hit.tools
+            listLock.unlock()
+            return cached
+        }
+        listLock.unlock()
         guard let url = URL(string: "http://127.0.0.1:\(port)/tools") else { return [] }
         var request = URLRequest(url: url)
         authorize(&request)
@@ -110,8 +121,18 @@ enum ChatToolsService {
         guard let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             throw ChatToolsError.invalidResponse
         }
-        return rows.compactMap(BuiltinToolInfo.init(json:))
+        let tools = rows.compactMap(BuiltinToolInfo.init(json:))
+        listLock.lock()
+        listCache = (port: port, at: Date(), tools: tools)
+        listLock.unlock()
+        return tools
     }
+
+    /// 30s is long enough to cover a burst of turns and short enough that an
+    /// engine restart with a different tool set is picked up on the next try.
+    private static let listTTL: TimeInterval = 30
+    private static let listLock = NSLock()
+    private static var listCache: (port: Int, at: Date, tools: [BuiltinToolInfo])?
 
     static func execute(name: String, arguments: [String: Any], port: Int,
                         workingDirectory: String? = nil) async throws -> ToolExecutionResult {
@@ -161,6 +182,7 @@ enum ChatToolsService {
             throw ChatToolsError.server(status: status, message: detail)
         }
         var output = ""
+        var lastPublish = Date.distantPast
         for try await line in bytes.lines {
             try Task.checkCancellation()
             guard line.hasPrefix("data: "),
@@ -169,7 +191,14 @@ enum ChatToolsService {
             else { continue }
             if let chunk = event["chunk"] as? String {
                 output += chunk
-                await onUpdate(output)
+                // The callback republishes the whole output, so at chunk rate this is
+                // O(n²) copying plus one full UI invalidation per chunk. Capped at
+                // five a second; the caller writes the final text when the tool ends.
+                let now = Date()
+                if now.timeIntervalSince(lastPublish) > 0.2 {
+                    lastPublish = now
+                    await onUpdate(output)
+                }
             }
             if (event["done"] as? Bool) == true {
                 if let error = event["error"] as? String, !error.isEmpty {

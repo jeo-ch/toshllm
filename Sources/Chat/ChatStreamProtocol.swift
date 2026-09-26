@@ -14,6 +14,9 @@ struct ChatStreamEvent {
 struct ChatStreamAccumulator {
     var reasoning = ""
     var visible = ""
+    /// Length of `visible` as it grows. The flush cadence reads it on every
+    /// event and `visible.count` walks the whole answer each time.
+    private(set) var visibleCount = 0
     var usage: (prompt: Int, completion: Int)?
     var timings: ChatTimings?
     var mtpAccept: Double?
@@ -64,6 +67,7 @@ struct ChatStreamAccumulator {
             }
             if let text = delta["content"] as? String, !text.isEmpty {
                 visible += text
+                visibleCount += text.count
                 event.receivedContent = true
             }
             if let fragments = delta["tool_calls"] as? [[String: Any]] {

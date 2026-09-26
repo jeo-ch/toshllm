@@ -38,6 +38,9 @@ final class VRAMMonitor: ObservableObject {
     private var timer: Timer?
     private var polls = 0
     private var rescanNext = false
+    /// True while a sample is being read off the devices, so ticks during a slow
+    /// read are skipped instead of piling up tasks.
+    private var inFlight = false
 
     var gpus: [GPUStat] { sample.gpus }
     var memoryUsedMB: Double { sample.memoryUsedMB }
@@ -64,11 +67,15 @@ final class VRAMMonitor: ObservableObject {
     func refreshDevices() { rescanNext = true; poll() }
 
     private func poll() {
+        // A slow sample must not queue behind the next tick: overlapping polls
+        // let an older reading land after a newer one and roll the numbers back.
+        guard !inFlight else { return }
         polls += 1
         // Enumerating Metal devices can take a multi-GPU Mac Pro down, so it runs
         // once and only again when the user asks for it.
         let rescan = polls == 1 || rescanNext
         rescanNext = false
+        inFlight = true
         Task.detached(priority: .utility) {
             let stats = Self.readAllGPUs(rescanDevices: rescan)
             let memory = Self.readSystemMemory()
@@ -76,9 +83,11 @@ final class VRAMMonitor: ObservableObject {
                                              memoryUsedMB: memory.used,
                                              memoryTotalMB: memory.total)
             await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.inFlight = false
                 // Publishing an identical sample would invalidate every view that
                 // draws a VRAM bar, three times a minute, for nothing.
-                guard let self, self.sample != next else { return }
+                guard self.sample != next else { return }
                 self.sample = next
             }
         }
@@ -138,17 +147,21 @@ final class VRAMMonitor: ObservableObject {
     /// pages that macOS can reclaim immediately.
     nonisolated private static func readSystemMemory() -> (used: Double, total: Double) {
         let total = Double(ProcessInfo.processInfo.physicalMemory) / 1_048_576
+        // mach_host_self() hands out a send right on every call; it is released
+        // here so the two calls below do not leak one reference per sample.
+        let host = mach_host_self()
+        defer { mach_port_deallocate(mach_task_self_, host) }
         var info = vm_statistics64()
         var count = mach_msg_type_number_t(
             MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
         let result = withUnsafeMutablePointer(to: &info) { pointer in
             pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+                host_statistics64(host, HOST_VM_INFO64, $0, &count)
             }
         }
         guard result == KERN_SUCCESS else { return (0, total) }
         var pageSize: vm_size_t = 0
-        host_page_size(mach_host_self(), &pageSize)
+        host_page_size(host, &pageSize)
         let pages = UInt64(info.active_count) + UInt64(info.wire_count)
             + UInt64(info.compressor_page_count)
         return (Double(pages * UInt64(pageSize)) / 1_048_576, total)

@@ -1768,17 +1768,45 @@ final class ServerManager: ObservableObject {
 @MainActor
 final class ServerLogBuffer: ObservableObject {
     private(set) var text = ""
+    /// Character length of `text`, counted as it arrives. `String.count` walks
+    /// every grapheme in the buffer, and this runs on each output chunk, so the
+    /// length is kept beside the text instead of recomputed.
+    private var charCount = 0
+    /// Engine backend, read once from the bytes that arrive. View bodies that
+    /// draw a web-chat button used to case-fold-scan the whole buffer (up to
+    /// 120 KB) on every publish to answer this.
+    private(set) var backend: String?
+    /// Tail of the last chunk, so "vulkan" split across two chunks still matches.
+    private var scanTail = ""
     private var notificationPending = false
 
     func set(_ value: String) {
         text = value
+        charCount = value.count
+        // A replacement is a whole new log: parse it once, in full, and start over.
+        backend = Self.backendName(in: value)
+        scanTail = String(value.suffix(16))
         scheduleNotification()
     }
 
     func append(_ value: String, limit: Int = 120_000, retained: Int = 80_000) {
         text += value
-        if text.count > limit { text = String(text.suffix(retained)) }
+        charCount += value.count
+        if charCount > limit {
+            // Trimming is rare, so re-measure exactly here rather than per chunk.
+            text = String(text.suffix(retained))
+            charCount = text.count
+        }
+        if backend == nil, let name = Self.backendName(in: scanTail + value) {
+            backend = name
+        }
+        if backend == nil { scanTail = String(value.suffix(16)) }
         scheduleNotification()
+    }
+
+    /// "Vulkan" only when the log says so; nil while it is still unknown.
+    private static func backendName(in s: String) -> String? {
+        s.range(of: "vulkan", options: .caseInsensitive) != nil ? "Vulkan" : nil
     }
 
     private func scheduleNotification() {
@@ -1869,7 +1897,8 @@ final class ServerController: ObservableObject {
         }
         // Real inference backend, read from the engine's startup log (a custom
         // external build may use Vulkan instead of the bundled Metal engine).
-        let backend = log.range(of: "vulkan", options: .caseInsensitive) != nil ? "Vulkan" : "Metal"
+        // Parsed once as the log arrives: this runs in view bodies.
+        let backend = logBuffer.backend ?? "Metal"
         items.append(URLQueryItem(name: "backend", value: backend))
         comps.queryItems = items
         return comps.url ?? URL(string: "http://127.0.0.1:\(currentPort)/")!

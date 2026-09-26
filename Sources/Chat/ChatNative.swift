@@ -66,7 +66,10 @@ final class LiveStream: ObservableObject {
     /// Tail of the reasoning as one flowing line, capped to recent chars at a
     /// word boundary, so the peek scrolls continuously instead of jumping lines.
     private static func tailSnippet(_ s: String, limit: Int = 200) -> String {
-        let flat = s.split(whereSeparator: \.isNewline)
+        // Only the recent tail can appear: flattening a multi-thousand-char
+        // reasoning block every tick is work the limit throws away anyway.
+        let window = s.count > 4000 ? String(s.suffix(4000)) : s
+        let flat = window.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .joined(separator: "  ")
@@ -206,6 +209,10 @@ final class ChatStore: ObservableObject {
     }
 
     private var task: Task<Void, Never>?
+    /// Generation of the stream currently owning the store. A run that is stopped
+    /// (or that stalls) can still unwind seconds later; this stops its late
+    /// `finish()` from cancelling the task and watchdog of the run that replaced it.
+    private var runSeq = 0
     private var watchdog: Task<Void, Never>?
     /// Where the running reply is streamed from, so Stop can cancel it on the engine too.
     private var activeStream: (port: Int, identity: String)?
@@ -537,6 +544,8 @@ final class ChatStore: ObservableObject {
                         agentRun: AgentRunContext? = nil) {
         generating = true
         generatingConvID = conversations[i].id
+        runSeq += 1
+        let myRun = runSeq
         live.reset()
         startWatchdog(port: port)
         // The user can switch or delete conversations mid-stream; the result
@@ -630,7 +639,7 @@ final class ChatStore: ObservableObject {
             func flush() {
                 let now = Date()
                 let interval: TimeInterval = {
-                    let n = accumulator.visible.count
+                    let n = accumulator.visibleCount
                     return n > 12000 ? 0.6 : n > 6000 ? 0.35 : n > 2500 ? 0.18 : 0.08
                 }()
                 guard now.timeIntervalSince(lastFlush) > interval else { return }
@@ -661,6 +670,11 @@ final class ChatStore: ObservableObject {
                         nTokens += 1
                         stamps.append(now)
                         flush()
+                    } else if event.receivedToolCall {
+                        // A tool call streams arguments with no content at all, and a long
+                        // one can pass 30s without text: without this heartbeat the
+                        // watchdog reads silence, stops the engine and drops the call.
+                        await self?.noteStreamActivity()
                     }
                     if event.completed { return true }
                 }
@@ -837,7 +851,10 @@ final class ChatStore: ObservableObject {
                     let message = rejected
                         ? "Este modelo escribe mal las llamadas a herramientas y el motor cortó la respuesta; se le han desactivado, vuelve a enviar / this model writes tool calls in the wrong shape and the engine stopped the answer; they are now off for it, send again"
                         : raw
-                    await MainActor.run { store?.lastError = message }
+                    await MainActor.run {
+                        guard store?.runSeq == myRun else { return }
+                        store?.lastError = message
+                    }
                 }
             }
 
@@ -872,6 +889,9 @@ final class ChatStore: ObservableObject {
                 tools: availableTools, workingDirectory: toolCwd)
             let store = self
             let shouldDeliverQueued: Bool = await MainActor.run {
+                // This run lost the store to a newer one (Stop, then a fresh send):
+                // publishing here would clear the new stream's state and watchdog.
+                guard store?.runSeq == myRun else { return false }
                 if !wasCancelled && !didReportError && hadReasoning && !hasVisibleAnswer
                     && finalToolCalls.isEmpty {
                     store?.lastError = Self.emptyResponseMessage(finishReason: finalFinishReason)
@@ -893,7 +913,8 @@ final class ChatStore: ObservableObject {
             }
             // Persist the conversation's KV after a real answer, so reopening it
             // (or restarting the engine) skips re-prefilling the history.
-            if !wasCancelled && !didReportError && hasVisibleAnswer {
+            if !wasCancelled && !didReportError && hasVisibleAnswer,
+               await MainActor.run({ self?.runSeq == myRun }) == true {
                 await self?.saveSlot(convID: convID, port: port)
             }
             if shouldDeliverQueued {
@@ -1781,11 +1802,30 @@ final class ChatStore: ObservableObject {
     // since the full history JSON grows with use and would cause hitches.
     private static let saveQueue = DispatchQueue(label: "dev.engel.toshllm.chat-save", qos: .utility)
     private static var saveWork: DispatchWorkItem?
+    /// When the write that is still pending was first asked for, and the lock that
+    /// guards it: the debounce must not postpone a save for ever while calls keep
+    /// arriving (the last exchange would then never reach disk).
+    private static var savePendingSince: Date?
+    private static let saveLock = NSLock()
+
+    /// Runs a pending save right now instead of waiting out its debounce. Quit
+    /// paths call it; without it the final exchange is silently dropped.
+    nonisolated static func flushPendingSave() {
+        saveLock.lock()
+        let work = saveWork
+        saveWork = nil
+        savePendingSince = nil
+        saveLock.unlock()
+        guard let work else { return }
+        work.cancel()
+        saveQueue.sync { work.perform() }
+    }
 
     func save() {
-        // Debounce: cancel previous pending save and schedule a new one after 150ms.
-        // This collapses rapid successive calls (delete, rename, new conversation)
-        // into a single disk write.
+        // Debounce: cancel previous pending save and schedule a new one after 150ms,
+        // so rapid successive calls (delete, rename, new conversation) collapse into
+        // a single disk write. The delay has a 1s ceiling (see below) so a steady
+        // stream of calls still reaches the disk.
         Self.saveWork?.cancel()
         for i in conversations.indices {
             guard let active = conversations[i].activeBranchID,
@@ -1799,6 +1839,9 @@ final class ChatStore: ObservableObject {
         let bkURL = backupURL
         let bkPURL = backupProjectsURL
         let work = DispatchWorkItem { [oldWork = Self.saveWork] in
+            ChatStore.saveLock.lock()
+            ChatStore.savePendingSince = nil
+            ChatStore.saveLock.unlock()
             // Snapshot previous version as backup before overwriting
             let fm = FileManager.default
             if fm.fileExists(atPath: url.path) {
@@ -1836,8 +1879,20 @@ final class ChatStore: ObservableObject {
                 AppLog.chat.error("ChatStore: failed to encode projects")
             }
         }
+        // Debounce with a ceiling: successive calls collapse into one write, but
+        // never more than 1s after the first of them asked for it.
+        Self.saveLock.lock()
+        let now = Date()
+        let delay: TimeInterval
+        if let since = Self.savePendingSince {
+            delay = max(0, min(0.15, 1.0 - now.timeIntervalSince(since)))
+        } else {
+            Self.savePendingSince = now
+            delay = 0.15
+        }
         Self.saveWork = work
-        Self.saveQueue.asyncAfter(deadline: .now() + 0.15, execute: work)
+        Self.saveLock.unlock()
+        Self.saveQueue.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     func exportText(_ c: Conversation, _ loc: Localizer) -> String {

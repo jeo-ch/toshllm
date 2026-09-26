@@ -30,6 +30,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Before anything is torn down: a debounced conversation write would not
+        // get its chance to run and the last exchange would be lost.
+        ChatStore.flushPendingSave()
         ServerManager.shared.stopAllImmediately()
         SpeechDictationController.shared.shutdown()
         AppleSpeechDictationController.shared.shutdown()

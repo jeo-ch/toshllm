@@ -1784,10 +1784,23 @@ struct NativeChatView: View {
                   : loc.t("No compatible con el modelo seleccionado", "Not supported by the selected model"))
     }
 
+    /// Decoded images are handed to the body on every keystroke while one sits in
+    /// the composer or a message; decoding base64 + the bitmap each time is the
+    /// single most expensive thing a render can do here.
+    private static let imageCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 32
+        return cache
+    }()
+
     static func nsImage(fromDataURI uri: String) -> NSImage? {
+        let key = uri as NSString
+        if let hit = imageCache.object(forKey: key) { return hit }
         guard let comma = uri.firstIndex(of: ","),
-              let data = Data(base64Encoded: String(uri[uri.index(after: comma)...])) else { return nil }
-        return NSImage(data: data)
+              let data = Data(base64Encoded: String(uri[uri.index(after: comma)...])),
+              let image = NSImage(data: data) else { return nil }
+        imageCache.setObject(image, forKey: key)
+        return image
     }
 
     private var imageChips: some View {
