@@ -1143,7 +1143,6 @@ final class ImageGenPool: ObservableObject {
     nonisolated(unsafe) private(set) static weak var live: ImageGenPool?
 
     init() {
-        Self.live = self
         if let data = UserDefaults.standard.data(forKey: SettingsKeys.imagenInstances),
            let c = try? JSONDecoder().decode([ImageInstanceConfig].self, from: data),
            !c.isEmpty {
@@ -1151,6 +1150,9 @@ final class ImageGenPool: ObservableObject {
         } else {
             configs = [Self.legacyConfig()]
         }
+        // Published last: `self` cannot be handed to `live` while a stored
+        // property (`configs`) is still uninitialised.
+        Self.live = self
     }
 
     /// Seed instance 1 from the pre-multi-instance per-key settings, so an

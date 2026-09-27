@@ -917,8 +917,8 @@ final class ChatStore: ObservableObject {
             // Persist the conversation's KV after a real answer, so reopening it
             // (or restarting the engine) skips re-prefilling the history.
             if !wasCancelled && !didReportError && hasVisibleAnswer,
-               await MainActor.run(body: { self?.runSeq == myRun }) == true {
-                await self?.saveSlot(convID: convID, port: port)
+               await MainActor.run(body: { store?.runSeq == myRun }) == true {
+                await store?.saveSlot(convID: convID, port: port)
             }
             if shouldDeliverQueued {
                 await MainActor.run {
