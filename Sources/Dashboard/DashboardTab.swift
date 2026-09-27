@@ -664,7 +664,7 @@ struct GPUsCard: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                         .font(.system(size: 10))
-                        .help(loc.t("VRAM casi llena — cierra apps oreduce ctx",
+                        .help(loc.t("VRAM casi llena — cierra apps o reduce ctx",
                                     "VRAM nearly full — close apps or reduce ctx"))
                 } else if isWarning {
                     Image(systemName: "exclamationmark.triangle")
