@@ -15,7 +15,12 @@ private func fnv1aHash(_ s: String) -> String {
     var hash: UInt64 = 14695981039346656037
     for byte in s.utf8 {
         hash ^= UInt64(byte)
-        hash *= 1099511628211
+        // FNV-1a multiplies modulo 2^64, so this has to wrap. `*=` traps on
+        // overflow in a debug build — which is what `swift test` compiles — and
+        // the first multiply already overflows, killing the test process the
+        // moment two models collide on an alias. Release builds wrapped silently,
+        // so the app never showed it.
+        hash = hash &* 1099511628211
     }
     return String(hash, radix: 16, uppercase: false)
 }
