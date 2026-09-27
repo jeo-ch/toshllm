@@ -116,19 +116,29 @@ final class AsyncPipeline: ObservableObject {
         let totalBytes = remaining > 0 ? remaining + (appending ? resumeFrom : 0) : -1
         var writtenBytes = appending ? resumeFrom : 0
         var lastReported = -1.0
-        
-        for try await chunk in bytes {
-            try fileHandle.write(contentsOf: chunk)
-            writtenBytes += Int64(chunk.count)
-            
+        // `AsyncBytes` yields single bytes, so they are batched: one write per
+        // 64 KB instead of one `FileHandle` call per byte.
+        var buffer = Data()
+        func flushBuffer() async throws {
+            guard !buffer.isEmpty else { return }
+            try fileHandle.write(contentsOf: buffer)
+            writtenBytes += Int64(buffer.count)
+            buffer.removeAll(keepingCapacity: true)
+
             // Report progress as bytes land instead of only at 100%.
-            guard totalBytes > 0 else { continue }
+            guard totalBytes > 0 else { return }
             let fraction = min(1.0, Double(writtenBytes) / Double(totalBytes))
             if fraction - lastReported >= 0.01 {
                 lastReported = fraction
                 await progress(fraction)
             }
         }
+
+        for try await byte in bytes {
+            buffer.append(byte)
+            if buffer.count >= 65_536 { try await flushBuffer() }
+        }
+        try await flushBuffer()
         
         // Replace the destination only now that every byte arrived.
         if fileManager.fileExists(atPath: destination.path) {

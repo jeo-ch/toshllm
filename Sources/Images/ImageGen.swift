@@ -1137,8 +1137,10 @@ final class ImageGenPool: ObservableObject {
     private var configSaveSince: Date?
     private var configSaveDirty = false
     /// The pool the UI owns, so the quit path can flush a pending write
-    /// (same pattern as `ChatStore.live`).
-    private(set) static weak var live: ImageGenPool?
+    /// (same pattern as `ChatStore.live`). `nonisolated(unsafe)` because the
+    /// flush runs in the nonisolated quit path; the pointer itself is only ever
+    /// set on the main actor.
+    nonisolated(unsafe) private(set) static weak var live: ImageGenPool?
 
     init() {
         Self.live = self

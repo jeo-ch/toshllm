@@ -917,7 +917,7 @@ final class ChatStore: ObservableObject {
             // Persist the conversation's KV after a real answer, so reopening it
             // (or restarting the engine) skips re-prefilling the history.
             if !wasCancelled && !didReportError && hasVisibleAnswer,
-               await MainActor.run({ self?.runSeq == myRun }) == true {
+               await MainActor.run(body: { self?.runSeq == myRun }) == true {
                 await self?.saveSlot(convID: convID, port: port)
             }
             if shouldDeliverQueued {
@@ -1803,13 +1803,15 @@ final class ChatStore: ObservableObject {
 
     // Serial queue: keeps writes ordered while encoding off the main thread,
     // since the full history JSON grows with use and would cause hitches.
-    private static let saveQueue = DispatchQueue(label: "dev.engel.toshllm.chat-save", qos: .utility)
-    private static var saveWork: DispatchWorkItem?
+    // `nonisolated(unsafe)`: the quit path reads these from a nonisolated
+    // context, and every access is already serialised by `saveLock`.
+    nonisolated(unsafe) private static let saveQueue = DispatchQueue(label: "dev.engel.toshllm.chat-save", qos: .utility)
+    nonisolated(unsafe) private static var saveWork: DispatchWorkItem?
     /// When the write that is still pending was first asked for, and the lock that
     /// guards it: the debounce must not postpone a save for ever while calls keep
     /// arriving (the last exchange would then never reach disk).
-    private static var savePendingSince: Date?
-    private static let saveLock = NSLock()
+    nonisolated(unsafe) private static var savePendingSince: Date?
+    nonisolated(unsafe) private static let saveLock = NSLock()
 
     /// Runs a pending save right now instead of waiting out its debounce. Quit
     /// paths call it; without it the final exchange is silently dropped.

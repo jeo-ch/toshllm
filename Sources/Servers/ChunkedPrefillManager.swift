@@ -144,7 +144,7 @@ final class ChunkedPrefillManager: ObservableObject {
             currentChunks[index] = updatedChunk
             
             do {
-                let result = try await handler(
+                _ = try await handler(
                     chunk.tokens,
                     chunk.startTokenIndex,
                     chunk.endTokenIndex

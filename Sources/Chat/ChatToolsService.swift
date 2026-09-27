@@ -105,14 +105,7 @@ enum ChatToolsService {
         // The engine's tool set changes with the engine, not with the turn, yet
         // this ran before every request started (one HTTP round trip plus a JSON
         // parse), sitting between the user's send and the first token.
-        listLock.lock()
-        if let hit = listCache, hit.port == port,
-           Date().timeIntervalSince(hit.at) < Self.listTTL {
-            let cached = hit.tools
-            listLock.unlock()
-            return cached
-        }
-        listLock.unlock()
+        if let cached = cachedList(port: port) { return cached }
         guard let url = URL(string: "http://127.0.0.1:\(port)/tools") else { return [] }
         var request = URLRequest(url: url)
         authorize(&request)
@@ -122,17 +115,25 @@ enum ChatToolsService {
             throw ChatToolsError.invalidResponse
         }
         let tools = rows.compactMap(BuiltinToolInfo.init(json:))
-        listLock.lock()
-        listCache = (port: port, at: Date(), tools: tools)
-        listLock.unlock()
+        listCacheQueue.sync { listCache = (port: port, at: Date(), tools: tools) }
         return tools
+    }
+
+    private static func cachedList(port: Int) -> [BuiltinToolInfo]? {
+        // A serial queue rather than NSLock: `lock()` is `noasync`, and this runs
+        // in an async context.
+        listCacheQueue.sync {
+            guard let hit = listCache, hit.port == port,
+                  Date().timeIntervalSince(hit.at) < listTTL else { return nil }
+            return hit.tools
+        }
     }
 
     /// 30s is long enough to cover a burst of turns and short enough that an
     /// engine restart with a different tool set is picked up on the next try.
     private static let listTTL: TimeInterval = 30
-    private static let listLock = NSLock()
-    private static var listCache: (port: Int, at: Date, tools: [BuiltinToolInfo])?
+    private static let listCacheQueue = DispatchQueue(label: "dev.engel.toshllm.tools-list-cache")
+    nonisolated(unsafe) private static var listCache: (port: Int, at: Date, tools: [BuiltinToolInfo])?
 
     static func execute(name: String, arguments: [String: Any], port: Int,
                         workingDirectory: String? = nil) async throws -> ToolExecutionResult {
