@@ -3,6 +3,36 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.11] - 2026-09-28
+
+### Added
+
+- **LLMs: Dynamic MoE, an experimental mode for Mixture-of-Experts models that do not fit in VRAM, off by default.** Turn it on in Settings → Performance & Memory. On a Radeon RX 6700 XT, Qwen3.6-35B-A3B reads prompts at 581 tokens a second instead of 311 and generates at 43.8 instead of 29.0, keeping its MTP head.
+
+- **LLMs: with little free RAM, Dynamic MoE keeps only part of the expert bank in memory and reads the rest from the model file.** With 8 GB taken by other apps, Qwen3.6-35B-A3B runs in 13 GB of RAM instead of 22, reading a prompt at 366 tokens a second and generating at 31.
+
+### Improved
+
+- **LLMs: the context menus offer 128k, 256k, 512k and 1M when the model supports them.** The choices stop at the context each model was trained for, which the model details and the server page now show.
+
+- **Images: Qwen-Image 2.1 edits with reference images take about a quarter of the time.** On a Radeon RX 6700 XT at 1024x1024, a 25-step edit with two references takes under 5 minutes instead of about 19; cards with 8 GB keep the previous speed.
+
+- **Images: Qwen-Image 2.1 generates from text about 40% faster.** On a Radeon RX 6700 XT at 1024x1024 a 25-step image takes 182 seconds instead of 314: each step goes from 11.6 to 6.6 seconds, and cards with 12 GB or more decode the result in larger tiles, 12.2 seconds instead of 19.9.
+
+### Fixed
+
+- **LLMs: when no safe memory plan exists, Dynamic MoE does not load the model and says what it needed and what was free.** Before, the engine fell back to its default layout, could fill the GPU and stop answering, as Gemma 4 26B-A4B did on a Mac short of free memory.
+
+- **LLMs: with Dynamic MoE, long chats no longer push the model into swap.** The plan now leaves room for the conversation state the server keeps in memory: Gemma 4 26B-A4B on a 32 GB Mac wrote 2 GB to swap during a long chat and now writes none.
+
+- **LLMs: FirePro and other GCN cards before Vega join Q4_0, Q5_0 and Q8_0 data correctly.** The 48 concatenation cases that failed on those cards in the engine's own tests now pass.
+
+### Known issues
+
+- **LLMs: with little free RAM, Dynamic MoE reads prompts slower.** Below a coverage of about 1.25 (shown in the plan) prompts can take twice as long as with the whole bank in RAM; generation drops less.
+
+- **LLMs: Dynamic MoE's prompt speed is limited by moving experts to the GPU.** Up to a third of the time goes to that copy; overlapping it with computation is future work.
+
 ## [0.87.10] - 2026-09-25
 
 ### Improved

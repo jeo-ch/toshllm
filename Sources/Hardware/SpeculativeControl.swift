@@ -147,11 +147,3 @@ struct SpeculativeControl: View {
                     "MTP uses the embedded MTP head or external draft for faster decoding."))
     }
 }
-
-// MARK: - Preview
-
-#Preview {
-    SpeculativeControl(modelPath: "/path/to/model.gguf", layout: .inline)
-        .environmentObject(Localizer())
-        .environmentObject(ServerController())
-}

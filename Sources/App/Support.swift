@@ -111,10 +111,13 @@ enum SettingsKeys {
     static let prefetchExperts = "prefetchExperts"
     /// Micro-batch size (--ubatch-size). 0 keeps the engine default of 512.
     static let ubatch = "ubatch"
-    static let dynamicMoe = "dynamicMoe"
-    static let dynamicMoeSlots = "dynamicMoeSlots"
-    static let dynamicMoePrefetch = "dynamicMoePrefetch"
-    static let dynamicMoePolicy = "dynamicMoePolicy"
+    /// Opt-in: the engine plans MoE memory with Dynamic MoE (--dynamic-moe on): full GPU, experts
+    /// in VRAM and RAM, or expert offload, plus the KV type and batch. Off keeps the standard offload.
+    static let dynamicMoeEnabled = "dynamicMoeEnabled"
+    /// auto | full | dmoe | legacy
+    static let executionMode = "executionMode"
+    /// auto | f16 | q8_0 | turbo4
+    static let autoKVMode = "autoKVMode"
     static let routerMode = "routerMode"
     static let routerModelsMax = "routerModelsMax"
     static let serverConfigurationAdvanced = "serverConfigurationAdvanced"
@@ -266,7 +269,7 @@ enum SettingsKeys {
         memoryToolsEnabled, toolsUnsupportedModels, mcpServers, uiMcpProxy,
         cacheTypeK, cacheTypeV, mlock, cacheRAM,
         parallelSlots, reasoningInline, specMTP, mtpDisabledModels, faAmd, prefetchExperts, ubatch,
-        dynamicMoe, dynamicMoeSlots, dynamicMoePrefetch, dynamicMoePolicy, routerMode, routerModelsMax,
+        dynamicMoeEnabled, routerMode, routerModelsMax,
         pagedAttention,
         persistCache, multiGPU, multiGPUCount, splitMode, splitGroupSize, mgpuEvents, mgpuPeer,
         forcePrivateBuffers, cacheReuse, apiKeyEnabled, localNetworkDiscovery,

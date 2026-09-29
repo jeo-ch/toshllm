@@ -174,6 +174,9 @@ struct ImageGenModel: Identifiable {
 
     /// Extra sd-cli flags this model needs (e.g. Flux 2 samples with euler).
     var extraArgs: [String] = []
+    /// VAE tile (px) that replaces the `--vae-tile-size` in `extraArgs` on cards with 12 GB
+    /// or more: fewer, larger tiles decode faster but need a bigger VAE buffer.
+    var largeVAETile: Int? = nil
 
     var id: String { name }
     var totalGB: Double { components.reduce(0) { $0 + $1.sizeGB } }
@@ -370,7 +373,9 @@ enum ImageGenCatalog {
             maxLongEdge: 2048, displayMaxLongEdge: 1920, nativeLongEdge: 2048,
             halfPartials: true,
             maxReferenceImages: 16,
-            extraArgs: ["--sampling-method", "euler", "--scheduler", "simple"])
+            // 384 px VAE tiles: 256 pays per tile and 512 grows the mid-block attention faster than it saves.
+            extraArgs: ["--sampling-method", "euler", "--scheduler", "simple", "--vae-tile-size", "384"],
+            largeVAETile: 640)
     }
 
     static let qwenImage21Q3 = qwenImage21(
@@ -492,6 +497,13 @@ enum ImageGenLimits {
         return streamsAttention(gpuName: name, extraArgs: extra)
     }
 
+    /// Working set (GB) Metal allows on the selected card.
+    static func workingSetGB(gpuIndex: Int) -> Double {
+        let devices = MTLCopyAllDevices()
+        let dev = (gpuIndex >= 0 && gpuIndex < devices.count) ? devices[gpuIndex] : MTLCreateSystemDefaultDevice()
+        return Double(dev?.recommendedMaxWorkingSetSize ?? 0) / 1_073_741_824
+    }
+
     /// Whether the selected card draws the desktop (not headless).
     static func drivesDisplay(gpuIndex: Int) -> Bool {
         let devices = MTLCopyAllDevices()
@@ -602,9 +614,9 @@ enum ImageFormat: String, CaseIterable, Identifiable {
 }
 
 /// Step caching in the sampler: a cached step reuses the previous output instead of running
-/// the model. Faster, at the cost of detail. Measured on Qwen-Image 2.1 at 1024x1024 and ten
-/// steps against no cache: cache-dit 1.13x (PSNR 31.4 dB), spectrum 1.45x (30.6 dB),
-/// easycache 1.69x (28.5 dB).
+/// the model. Faster, at the cost of detail. Measured on Qwen-Image 2.1 at 1024x1024 and 25
+/// steps against no cache: cache-dit 1.46x (PSNR 30.6 dB), spectrum 1.91x (30.6 dB),
+/// easycache 2.06x (31.6 dB).
 enum ImageFastMode: String, CaseIterable, Identifiable {
     case off, cacheDit = "cache-dit", spectrum, easycache
     var id: String { rawValue }
@@ -825,6 +837,10 @@ final class ImageGenerator: ObservableObject {
         let split = auxGPUIndex >= 0 && auxGPUIndex != gpuIndex && gpuIndex >= 0
             && MTLCopyAllDevices().count > 1
         var extra = model.extraArgs
+        if let tile = model.largeVAETile, let i = extra.firstIndex(of: "--vae-tile-size"), i + 1 < extra.count,
+           ImageGenLimits.workingSetGB(gpuIndex: gpuIndex) >= 11.5 {
+            extra[i + 1] = String(tile)
+        }
         if split {
             // Merge the split assignment with the model's own --backend (e.g.
             // qwen-image forces vae=cpu), which wins per module.

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import Foundation
+import CryptoKit
 import Metal
 
 extension Notification.Name {
@@ -40,47 +41,6 @@ struct GPUDevice: Identifiable, Hashable {
     var id: Int { index }
     /// Rounded, since Metal reports a working set a little off the nominal size.
     var vramGB: Int { Int((Double(vramMB) / 1024).rounded()) }
-}
-
-enum DynamicMoeAutoRoute: Equatable {
-    case cache
-    case normalDense
-    case normalFitsVRAM
-    case normalInsufficientRAM
-    case normalUnsupportedGPU
-    case normalMissingModel
-    case normalSplitOrRouter
-    case normalMissingMetadata
-    case normalInsufficientVRAM
-    case normalNoCacheBenefit
-    case normalOversizedHostBank
-}
-
-struct DynamicMoeModelInfo: Equatable {
-    let layerCount: Int
-    let expertCount: Int
-    let activeExpertCount: Int
-}
-
-struct DynamicMoeSlotPlan: Equatable {
-    let model: DynamicMoeModelInfo
-    /// Smallest cache that can hold every expert selected by one decoded token.
-    let minimumSlots: Int
-    /// Largest valid K for this architecture, regardless of memory pressure.
-    let maximumSlots: Int
-    /// Largest K estimated to fit after fixed weights, runtime and transfer buffers.
-    let recommendedMaximumSlots: Int
-    let automaticSlots: Int
-    let estimatedBytesPerSlot: UInt64
-    let estimatedFixedVRAMBytes: UInt64
-
-    func clamped(_ slots: Int) -> Int {
-        min(max(slots, minimumSlots), maximumSlots)
-    }
-
-    func estimatedVRAMBytes(slots: Int) -> UInt64 {
-        estimatedFixedVRAMBytes + UInt64(clamped(slots)) * estimatedBytesPerSlot
-    }
 }
 
 struct ServerSettings {
@@ -142,10 +102,6 @@ struct ServerSettings {
     var ubatch: Int = 0
     /// Experimental bounded-VRAM expert cache. Compiled into the bundled engine,
     /// but completely inert unless this persisted user choice is enabled.
-    var dynamicMoe: Bool = false
-    var dynamicMoeSlots: Int = 8
-    var dynamicMoePrefetch: Int = 4
-    var dynamicMoePolicy: String = "cache" // cache | auto
     /// Router mode (`--models-preset`): one process auto-loads/unloads whichever
     /// model a request's "model" field names, instead of the fixed `modelPath`.
     var routerMode: Bool = false
@@ -213,6 +169,16 @@ struct ServerSettings {
     var benchPP: Int = 512
     var benchTG: Int = 128
     var benchDepth: Int = 0
+    /// Dynamic MoE: the engine plans MoE memory for the requested context (see AutoMemoryPlan).
+    var dynamicMoeEnabled: Bool = false
+    var executionMode: String = "auto"
+    var autoKVMode: String = "auto"
+    /// Set by the controller from the preview before launch; nil until then.
+    var plannedMode: String? = nil
+    /// The retry after Dynamic MoE could not lock its expert bank plans without it.
+    var planWithoutDMoE: Bool = false
+    /// The plan a llama-bench run follows under Dynamic MoE; llama-bench does not plan itself.
+    var benchmarkPlan: AutoMemoryPlan? = nil
 
     /// One model served across several GPUs, either by the all/N toggle or by an
     /// explicit selection of at least two cards.
@@ -327,7 +293,6 @@ struct ServerSettings {
     }
 
     static let defaultFaAmd = true
-    static let dynamicMoeTensorOverride = #"\.ffn_(up|down|gate|gate_up)_(ch|)exps=MTL0"#
     static let kvCacheTypes = ["f16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl", "turbo4", "turbo3"]
 
     var usesTurboKV: Bool {
@@ -357,13 +322,13 @@ struct ServerSettings {
             "--host", localNetworkDiscovery ? "0.0.0.0" : "127.0.0.1",
             "--port", String(port),
         ]
-        if !effectiveDynamicMoe && ncmoe > 0 { args += ["--n-cpu-moe", String(ncmoe)] }
-        if let ub = effectiveUbatch { args += ["--ubatch-size", String(ub), "--batch-size", String(ub)] }
-        let mode = effectiveDynamicMoe ? "mlock" : Self.loadMode(noMmap: noMmap, mlock: mlock)
+        // under the plan the engine picks offload and batch; by hand, Full GPU offloads nothing
+        let planOwnsMemory = usesAutoPlan || manualFullGPU
+        if ncmoe > 0 && !planOwnsMemory { args += ["--n-cpu-moe", String(ncmoe)] }
+        if !usesAutoPlan, let ub = effectiveUbatch { args += ["--ubatch-size", String(ub), "--batch-size", String(ub)] }
+        if usesAutoPlan { args += ["--dynamic-moe", "on"] }
+        let mode = Self.loadMode(noMmap: noMmap, mlock: mlock)
         if let mode { args += ["--load-mode", mode] }
-        if effectiveDynamicMoe {
-            args += ["-ot", Self.dynamicMoeTensorOverride]
-        }
         // A sibling projector lets the model read images, and needs --jinja.
         let mmproj = loadVision ? Self.mmprojPath(forModel: modelPath) : nil
         if let mmproj {
@@ -372,8 +337,10 @@ struct ServerSettings {
             if imageMaxTokens > 0 { args += ["--image-max-tokens", String(imageMaxTokens)] }
         }
         if jinja || mmproj != nil { args.append("--jinja") }
-        if cacheTypeK != "f16" { args += ["-ctk", cacheTypeK] }
-        if cacheTypeV != "f16" { args += ["-ctv", cacheTypeV] }
+        if !usesAutoPlan {
+            if launchKV.k != "f16" { args += ["-ctk", launchKV.k] }
+            if launchKV.v != "f16" { args += ["-ctv", launchKV.v] }
+        }
         // localhost-only endpoint; feeds the speculative-decoding readout in Diagnostics
         args.append("--metrics")
         args += ["--cache-ram", String(cacheRAM)]
@@ -403,22 +370,21 @@ struct ServerSettings {
         if reasoningInline { args += ["--reasoning-format", "none"] }
         if apiKeyEnabled { args += ["--api-key", Keychain.apiKey()] }
         // A compatible downloaded DFlash draft takes precedence over embedded MTP.
-        // Speculation decodes several tokens at once and the expert cache only has slots
-        // for one token's experts, so the two cannot run together.
-        if !effectiveDynamicMoe {
-            if let selection = dflashSelection(modelPath: modelPath, ncmoe: ncmoe) {
-                // Quantize the draft's KV cache: it doubles KV pressure at high ctx, and
-                // q8_0 halves that footprint at no measurable quality cost for a draft.
-                args += ["-md", selection.draft, "--spec-type", "draft-dflash",
-                         "-ngld", String(selection.ngld),
-                         "-ctkd", "q8_0", "-ctvd", "q8_0"]
-            } else if Self.mtpEnabled(forModel: modelPath), let draft = Self.mtpDraftPath(forModel: modelPath) {
-                args += ["-md", draft, "--spec-type", "draft-mtp"]
-                args += Self.mtpDraftWidthArgs(forModel: modelPath, gpuArchitecture: selectedGPUArchitecture)
-            } else if Self.mtpEnabled(forModel: modelPath), Self.modelHasMTP(at: modelPath) {
-                args += ["--spec-type", "draft-mtp"]
-                args += Self.mtpDraftWidthArgs(forModel: modelPath, gpuArchitecture: selectedGPUArchitecture)
-            }
+        // Dynamic MoE plans memory without a separate draft model, so DFlash only joins a
+        // full-GPU plan; the embedded MTP head is part of the model and the plan counts it.
+        let draftAllowed = !usesAutoPlan || plannedMode == "full_gpu"
+        if draftAllowed, let selection = dflashSelection(modelPath: modelPath, ncmoe: ncmoe) {
+            // Quantize the draft's KV cache: it doubles KV pressure at high ctx, and
+            // q8_0 halves that footprint at no measurable quality cost for a draft.
+            args += ["-md", selection.draft, "--spec-type", "draft-dflash",
+                     "-ngld", String(selection.ngld),
+                     "-ctkd", "q8_0", "-ctvd", "q8_0"]
+        } else if draftAllowed, Self.mtpEnabled(forModel: modelPath), let draft = Self.mtpDraftPath(forModel: modelPath) {
+            args += ["-md", draft, "--spec-type", "draft-mtp"]
+            args += Self.mtpDraftWidthArgs(forModel: modelPath, gpuArchitecture: selectedGPUArchitecture)
+        } else if Self.mtpEnabled(forModel: modelPath), Self.modelHasMTP(at: modelPath) {
+            args += ["--spec-type", "draft-mtp"]
+            args += Self.mtpDraftWidthArgs(forModel: modelPath, gpuArchitecture: selectedGPUArchitecture)
         }
         if let ui = Self.chatUIPath { args += ["--path", ui] }
         args += extraArgTokens.cli
@@ -514,7 +480,7 @@ struct ServerSettings {
                                           reserveMB: vramReserveMB)
             var lines = ["[\(alias)]", "model = \(path)", "n-gpu-layers = \(ngl)",
                          "ctx-size = \(modelCtx)", "threads = \(threads)", "flash-attn = \(faValue)"]
-            if !effectiveDynamicMoe, let ncmoe = ncmoeByPath[path], ncmoe > 0 { lines.append("n-cpu-moe = \(ncmoe)") }
+            if let ncmoe = ncmoeByPath[path], ncmoe > 0 { lines.append("n-cpu-moe = \(ncmoe)") }
             if let mode = Self.loadMode(noMmap: noMmap, mlock: mlock) { lines.append("load-mode = \(mode)") }
             let mmproj = loadVision ? Self.mmprojPath(forModel: path) : nil
             if let mmproj {
@@ -537,9 +503,7 @@ struct ServerSettings {
                 lines.append("slot-save-path = \(slotDir.path)")
             }
             if reasoningInline { lines.append("reasoning-format = none") }
-            if effectiveDynamicMoe {
-                // see the speculation note in arguments(): it does not mix with the cache
-            } else if let selection = dflashSelection(modelPath: path, ncmoe: ncmoeByPath[path] ?? 0) {
+            if let selection = dflashSelection(modelPath: path, ncmoe: ncmoeByPath[path] ?? 0) {
                 lines.append("model-draft = \(selection.draft)")
                 lines.append("spec-type = draft-dflash")
                 lines.append("gpu-layers-draft = \(selection.ngld)")
@@ -587,17 +551,17 @@ struct ServerSettings {
     /// Arguments for `llama-bench`: separate from the server's because server-only
     /// flags are invalid here, but every option affecting speed must carry over.
     var benchmarkArguments: [String] {
+        if usesAutoPlan, let plan = benchmarkPlan { return dynamicMoeBenchmarkArguments(plan) }
         // Same load mode as the server, or the numbers are not the ones the app
         // delivers: with experts on the CPU, locking the model is worth most of
         // the prompt speed.
         var args = ["-m", modelPath, "-ngl", String(ngl), "-r", "2",
                     "-p", String(benchPPClamped), "-n", String(benchTGClamped)]
-        let mode = effectiveDynamicMoe ? "mlock" : Self.loadMode(noMmap: noMmap, mlock: mlock)
+        let mode = Self.loadMode(noMmap: noMmap, mlock: mlock)
         if let mode { args += ["--load-mode", mode] }
         if benchDepthClamped > 0 { args += ["-d", String(benchDepthClamped)] }
-        if !effectiveDynamicMoe && ncmoe > 0 { args += ["-ncmoe", String(ncmoe)] }
+        if ncmoe > 0 { args += ["-ncmoe", String(ncmoe)] }
         if let ub = effectiveUbatch { args += ["-ub", String(ub), "-b", String(ub)] }
-        if effectiveDynamicMoe { args += ["-ot", Self.dynamicMoeTensorOverride] }
         if cacheTypeK != "f16" { args += ["-ctk", cacheTypeK] }
         if cacheTypeV != "f16" { args += ["-ctv", cacheTypeV] }
         if kvNeedsFlashAttention || flashAttn == "on" {
@@ -623,6 +587,59 @@ struct ServerSettings {
             }
         }
         return args
+    }
+
+    /// Context sizes to offer for a model: powers of two up to what it was trained for (1M when the
+    /// file does not say), plus that exact size when it is not a power of two.
+    static func contextChoices(modelPath: String, from lowest: Int = 4096) -> [Int] {
+        let trained = GGUFMetadataCache.metadata(at: modelPath)?.trainedContext
+        var choices = [4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
+            .filter { $0 >= lowest && $0 <= (trained ?? 1048576) }
+        if let trained, trained > (choices.last ?? 0) { choices.append(trained) }
+        return choices.isEmpty ? [lowest] : choices
+    }
+
+    static func contextLabel(_ tokens: Int) -> String {
+        tokens >= 1048576 && tokens % 1048576 == 0 ? "\(tokens / 1048576)M" : "\(tokens / 1024)k"
+    }
+
+    /// The layout the engine's plan applies in llama-server, spelled out for llama-bench.
+    private func dynamicMoeBenchmarkArguments(_ plan: AutoMemoryPlan) -> [String] {
+        var args = ["-m", modelPath, "-ngl", "99", "-r", "2", "-fa", "1",
+                    "-p", String(benchPPClamped), "-n", String(benchTGClamped),
+                    "-ub", String(plan.ubatch), "-b", String(max(plan.ubatch, 2048))]
+        if benchDepthClamped > 0 { args += ["-d", String(benchDepthClamped)] }
+        switch plan.mode {
+        case "dmoe": args += ["-ot", Self.expertsOnHostOverride, "--load-mode", "mlock"]
+        case "dmoe_bounded": args += ["-ot", Self.expertsOnHostOverride, "--load-mode", "none"]
+        case "legacy_offload": args += ["-ncmoe", String(plan.ncmoe), "--load-mode", "none"]
+        default: break
+        }
+        if plan.kv != "f16" { args += ["-ctk", plan.kv, "-ctv", plan.kv] }
+        return args
+    }
+
+    static let expertsOnHostOverride = #"\.ffn_(up|down|gate|gate_up)_exps\.weight=CPU"#
+
+    /// Environment for llama-bench: under Dynamic MoE, what the plan sets in the engine.
+    var benchmarkEnvironment: [String: String] {
+        var env = environment
+        guard usesAutoPlan, let plan = benchmarkPlan else { return env }
+        env["GGML_SCHED_PREFETCH_EXPERTS"] = "1"
+        env["GGML_CPU_NO_REPACK"] = "1"
+        guard plan.usesDynamicMoE else { return env }
+        env["TOSH_DMOE_CACHE_MIB"] = "auto"
+        env["TOSH_DMOE_RESERVE_MIB"] = String(Int(plan.reserveMib))
+        env["TOSH_DMOE_MIN_ARENA_MIB"] = String(Int(plan.minArenaMib))
+        env["TOSH_DMOE_RARE_ROWS"] = "auto"
+        env["TOSH_DMOE_RARE_TAIL"] = "0"
+        if plan.mode == "dmoe_bounded", let warm = plan.product?.dmoe.warmBytes, warm > 0 {
+            env["TOSH_DMOE_HOST_CACHE_MIB"] = String(warm / 1_048_576)
+            // batches of up to 8 tokens stay in mixed execution; the bank has no bytes for the CPU backend
+            env["GGML_OP_OFFLOAD_MIN_BATCH"] = "9"
+            env["TOSH_DMOE_HOST_WARMUP_FILL_MIB"] = "max"
+        }
+        return env
     }
 
     /// Workload sizes kept within what llama-bench accepts and a Mac can finish.
@@ -712,37 +729,18 @@ struct ServerSettings {
         // A DFlash draft runs its selector over the target's logits, so a head split by
         // vocabulary leaves no card holding a whole row and the engine aborts. Keep the head
         // on every card for that pairing; it costs its size per card and nothing otherwise.
-        if isSplitting, effectiveSplitMode == "tensor", !effectiveDynamicMoe,
+        if isSplitting, effectiveSplitMode == "tensor",
            dflashSelection(modelPath: modelPath, ncmoe: ncmoe) != nil {
             env["TOSH_MIRROR_OUTPUT_HEAD"] = "1"
         }
         // Router mode has no single ncmoe (it's per-model, in the INI); the envs are
         // no-ops for dense models anyway.
-        if effectiveDynamicMoe {
-            env["TOSH_MOE_MODE"] = "cache"
-            if dynamicMoePolicy == "auto" { env["TOSH_MOE_AUTO"] = "1" }
-            env["TOSH_MOE_SLOTS"] = String(effectiveDynamicMoeSlots)
-            env["TOSH_MOE_CPU_BANK"] = "1"
-            env["GGML_SCHED_PREFETCH_EXPERTS"] = String(effectiveDynamicMoePrefetch)
-            env["GGML_METAL_NCB"] = "8"
-            if dynamicMoeExecutionRoute == .split {
-                let profile = dynamicMoeOptimizationProfile
-                env["TOSH_MOE_SPLIT_BANK"] = "1"
-                env["TOSH_MOE_SLOTS"] = String(dynamicMoeSlotSplit.fixed)
-                env["TOSH_MOE_SPLIT_RING"] = String(dynamicMoeSlotSplit.ring)
-                env["TOSH_MOE_BOUNDED_STAGE"] = "1"
-                env["TOSH_MOE_BOUNDED_STAGE_FORCE"] = "1"
-                env["TOSH_MOE_DOUBLE_BUFFER"] = "1"
-                if let mapPath = profile?.hotMapPath,
-                   FileManager.default.fileExists(atPath: mapPath) {
-                    env["TOSH_MOE_HOT_MAP"] = mapPath
-                    env["TOSH_MOE_HOT_MAP_OUT"] = mapPath
-                    if let experts = dynamicMoeModelInfo?.expertCount {
-                        env["TOSH_MOE_HOT_MAP_K"] = String(experts)
-                    }
-                }
-            }
-        } else if prefetchExperts && (ncmoe > 0 || routerMode) {
+        if usesAutoPlan {
+            // --dynamic-moe runs the plan; a forced mode or the retry without it rides on TOSH_AUTO
+            if planWithoutDMoE { env["TOSH_AUTO"] = "nodmoe" } else if executionMode == "dmoe" { env["TOSH_AUTO"] = "dmoe" }
+            env["TOSH_AUTO_KV"] = autoKVMode
+            env["TOSH_AUTO_PLAN_FILE"] = AutoMemoryPlan.planURL(port: port).path
+        } else if prefetchExperts && ((ncmoe > 0 && !manualFullGPU) || routerMode) {
             // At/above the measured cliff the prefetch overlap collapses and stalls the
             // GPU, so stay below it. Router mode has no single ncmoe to compare.
             let cliff = Self.recalledPrefetchCliff(forModel: modelPath)
@@ -767,13 +765,6 @@ struct ServerSettings {
         // KEY=VALUE tokens from Extra arguments become env vars (e.g. the GCN/Vega
         // wave64 safe-mode flag). Applied last so the user can override the above.
         for (k, v) in extraArgTokens.env { env[k] = v }
-        // K is structural: a value larger than the GGUF's expert dimension makes
-        // the backend skip cache creation. Keep the model-derived/clamped value even
-        // when an old Extra arguments recipe still contains TOSH_MOE_SLOTS.
-        if effectiveDynamicMoe {
-            env["TOSH_MOE_SLOTS"] = String(dynamicMoeExecutionRoute == .split
-                ? dynamicMoeSlotSplit.fixed : effectiveDynamicMoeSlots)
-        }
         return env.compactMapValues { $0 }
     }
 
@@ -872,10 +863,6 @@ struct ServerSettings {
             faAmd: bool(SettingsKeys.faAmd, defaultFaAmd),
             prefetchExperts: bool(SettingsKeys.prefetchExperts, true),
             ubatch: int(SettingsKeys.ubatch, 0),
-            dynamicMoe: bool(SettingsKeys.dynamicMoe, false),
-            dynamicMoeSlots: int(SettingsKeys.dynamicMoeSlots, 8),
-            dynamicMoePrefetch: int(SettingsKeys.dynamicMoePrefetch, 4),
-            dynamicMoePolicy: d.string(forKey: SettingsKeys.dynamicMoePolicy) ?? "cache",
             routerMode: bool(SettingsKeys.routerMode, false),
             routerModelsMax: int(SettingsKeys.routerModelsMax, 1),
             persistCache: bool(SettingsKeys.persistCache, false),
@@ -891,7 +878,10 @@ struct ServerSettings {
             imageMaxTokens: int(SettingsKeys.imageMaxTokens, 0),
             benchPP: int(SettingsKeys.benchPP, 512),
             benchTG: int(SettingsKeys.benchTG, 128),
-            benchDepth: int(SettingsKeys.benchDepth, 0))
+            benchDepth: int(SettingsKeys.benchDepth, 0),
+            dynamicMoeEnabled: bool(SettingsKeys.dynamicMoeEnabled, false),
+            executionMode: d.string(forKey: SettingsKeys.executionMode) ?? "auto",
+            autoKVMode: d.string(forKey: SettingsKeys.autoKVMode) ?? "auto")
     }
 
     /// True when the model's attention head dim exceeds 256 (Gemma 4's global layers
@@ -924,7 +914,8 @@ struct ServerSettings {
     }
 
     var kvNeedsFlashAttention: Bool {
-        cacheTypeK != "f16" || cacheTypeV != "f16"
+        // the plan may pick a quantized cache, and it was measured with flash attention on
+        usesAutoPlan || launchKV.k != "f16" || launchKV.v != "f16"
     }
 
     /// The user's AMD Flash-Attention choice. Quantized KV may still force
@@ -933,49 +924,6 @@ struct ServerSettings {
         faAmd
     }
 
-    /// Router presets load models independently and cannot carry the per-tensor
-    /// override required by this prototype, so keep the experiment fixed-model only.
-    var dynamicMoeUIUnlocked: Bool { extraArgTokens.env["TOSH_MOE_UI"] == "1" }
-    var dynamicMoeGPU: GPUDevice? {
-        let selected = ServerController.availableGPUs().filter { selectedGPUIndices.contains($0.index) }
-        return selected.max { $0.vramMB < $1.vramMB }
-    }
-    var dynamicMoeOptimizationProfile: DynamicMoeOptimizationProfile? {
-        DynamicMoeProfileStore.load(modelPath: modelPath, gpu: dynamicMoeGPU)
-    }
-    var dynamicMoeExecutionRoute: DynamicMoeExecutionRoute {
-        if dynamicMoePolicy == "auto", let profile = dynamicMoeOptimizationProfile {
-            return profile.route
-        }
-        guard let size = GGUFFile.totalSize(at: modelPath), let gpu = dynamicMoeGPU else {
-            return .direct
-        }
-        return Self.dynamicMoeHostBankFitsDirectMetal(
-            modelBytes: size, gpuVRAMMB: gpu.vramMB,
-            physicalRAMBytes: ProcessInfo.processInfo.physicalMemory) ? .direct : .split
-    }
-    var dynamicMoeAutoRoute: DynamicMoeAutoRoute {
-        guard !modelPath.isEmpty, let size = GGUFFile.totalSize(at: modelPath) else {
-            return .normalMissingModel
-        }
-        let gpu = dynamicMoeGPU
-        if dynamicMoeOptimizationProfile != nil, !isSplitting, !routerMode {
-            return .cache
-        }
-        let base = Self.resolveDynamicMoeAuto(
-            isMoE: Self.modelIsMoE(at: modelPath),
-            modelBytes: size,
-            gpuVRAMMB: gpu?.vramMB ?? 0,
-            reserveMB: vramReserveMB,
-            physicalRAMBytes: ProcessInfo.processInfo.physicalMemory,
-            hasDiscreteGPU: gpu?.isIntegrated == false,
-            splitOrRouter: isSplitting || routerMode)
-        guard base == .cache else { return base }
-        guard let info = dynamicMoeModelInfo else { return .normalMissingMetadata }
-        guard info.activeExpertCount < info.expertCount else { return .normalNoCacheBenefit }
-        guard dynamicMoeSlotPlan(prefetch: 4) != nil else { return .normalInsufficientVRAM }
-        return .cache
-    }
     /// MoE only: measured up to twice the prefill with experts on CPU (one expert
     /// upload per batch instead of per 512 tokens) and ~10% with the model whole on
     /// the card. A dense model measures slower with it, so it stays gated.
@@ -986,182 +934,20 @@ struct ServerSettings {
         guard routerMode || Self.modelIsMoE(at: modelPath) else { return nil }
         return ubatch
     }
-    var effectiveDynamicMoe: Bool {
-        guard dynamicMoe && dynamicMoeUIUnlocked,
-              Self.modelIsMoE(at: modelPath), dynamicMoeModelInfo != nil else { return false }
-        if dynamicMoePolicy == "auto" { return dynamicMoeAutoRoute == .cache }
-        return !routerMode && !isSplitting
+    /// The engine plans memory: MoE models under Auto or forced Dynamic MoE, on one GPU.
+    var usesAutoPlan: Bool {
+        dynamicMoeEnabled && (executionMode == "auto" || executionMode == "dmoe")
+            && !routerMode && !isSplitting && Self.modelIsMoE(at: modelPath)
     }
-    var effectiveDynamicMoeSlots: Int {
-        if dynamicMoePolicy == "auto" {
-            if let profile = dynamicMoeOptimizationProfile { return profile.slots }
-            return dynamicMoeSlotPlan(prefetch: 4)?.automaticSlots ?? 0
+    /// Full GPU chosen by hand: no expert offload, even where Auto would reject the headroom.
+    var manualFullGPU: Bool { dynamicMoeEnabled && executionMode == "full" }
+    /// Cache types the launch passes itself; under the plan the engine picks them.
+    var launchKV: (k: String, v: String) {
+        if manualFullGPU {
+            let kv = autoKVMode == "auto" ? "f16" : autoKVMode
+            return (kv, kv)
         }
-        if let info = dynamicMoeModelInfo {
-            let minimum = min(max(info.activeExpertCount, 1), info.expertCount)
-            return min(max(dynamicMoeSlots, minimum), info.expertCount)
-        }
-        return min(max(dynamicMoeSlots, 1), 256)
-    }
-    /// Splits the affordable slot budget between the permanently resident experts and the
-    /// LRU ring. This is a trade, not a free win: measured on a 35B-A3B at the same VRAM,
-    /// moving the budget into the ring is worth about +64% of generation and costs close to
-    /// half the prefill, so it suits chat rather than long prompts. It flattens out once only
-    /// the active experts stay fixed.
-    var dynamicMoeSlotSplit: (fixed: Int, ring: Int) {
-        let budget = effectiveDynamicMoeSlots
-        guard let info = dynamicMoeModelInfo, budget > 0 else { return (budget, 0) }
-        if let ring = dynamicMoeOptimizationProfile?.ringSlots {
-            return (max(1, budget - ring), ring)
-        }
-        // The experts left out of the slots are wrapped as one host resource and read by the
-        // fetch kernel, so they have to stay under what the card can keep resident: past it the
-        // reservation is refused outright, and just below it generation collapses.
-        var floor = 1
-        if let size = GGUFFile.totalSize(at: modelPath), let gpu = dynamicMoeGPU {
-            let mib = UInt64(1024 * 1024)
-            let shared = min(size, UInt64(Double(UInt64(1024) * mib) * 1.3))
-            let expertBytes = size > shared ? size - shared : 0
-            let ceiling = UInt64(max(0, gpu.vramMB)) * mib * 3 / 4
-            if expertBytes > ceiling {
-                floor = Int((Double(info.expertCount) *
-                    (1.0 - Double(ceiling)/Double(expertBytes))).rounded(.up))
-            }
-        }
-        var fixed = min(max(max(info.activeExpertCount, floor), 1), budget)
-        // A batch is served on the device only when its routing fits the ring; past it the whole
-        // logical bank is reassembled layer by layer. The unit is ids, not experts, so a decode
-        // step of a few tokens already needs several times the active count. Measured on a 35B
-        // A3B: a ring of 8 dropped generation to 17.6 t/s against 49.7, at the same prefill.
-        // The cold bank ceiling still wins, since `floor` is what makes the model start at all.
-        let ringWanted = info.activeExpertCount * 8
-        if budget - fixed < ringWanted {
-            fixed = max(min(fixed, budget - ringWanted), max(floor, 1))
-        }
-        return (fixed, max(0, budget - fixed))
-    }
-
-    var effectiveDynamicMoePrefetch: Int {
-        if dynamicMoePolicy == "auto", let profile = dynamicMoeOptimizationProfile {
-            return profile.prefetch
-        }
-        return dynamicMoePolicy == "auto" ? 4 : min(max(dynamicMoePrefetch, 0), 16)
-    }
-
-    var dynamicMoeModelInfo: DynamicMoeModelInfo? {
-        let layers = Int(Self.ggufUInt32("block_count", at: modelPath) ?? 0)
-        let experts = Int(Self.ggufUInt32("expert_count", at: modelPath) ?? 0)
-        let active = Int(Self.ggufUInt32("expert_used_count", at: modelPath) ?? 0)
-        guard layers > 0, experts > 0, active > 0, active <= experts else { return nil }
-        return DynamicMoeModelInfo(layerCount: layers, expertCount: experts,
-                                   activeExpertCount: active)
-    }
-
-    func dynamicMoeSlotPlan(prefetch: Int? = nil) -> DynamicMoeSlotPlan? {
-        guard let info = dynamicMoeModelInfo,
-              let size = GGUFFile.totalSize(at: modelPath) else {
-            return nil
-        }
-        let selected = ServerController.availableGPUs().filter { selectedGPUIndices.contains($0.index) }
-        guard let gpu = selected.max(by: { $0.vramMB < $1.vramMB }), !gpu.isIntegrated else { return nil }
-        return Self.resolveDynamicMoeSlots(
-            modelBytes: size, model: info, gpuVRAMMB: gpu.vramMB,
-            reserveMB: vramReserveMB, prefetch: prefetch ?? effectiveDynamicMoePrefetch,
-            ubatch: effectiveUbatch ?? 512)
-    }
-
-    static func resolveDynamicMoeSlots(
-        modelBytes: UInt64,
-        model: DynamicMoeModelInfo,
-        gpuVRAMMB: Int,
-        reserveMB: Int,
-        prefetch: Int,
-        ubatch: Int = 512
-    ) -> DynamicMoeSlotPlan? {
-        guard modelBytes > 0, model.layerCount > 0, model.expertCount > 0,
-              model.activeExpertCount > 0, model.activeExpertCount <= model.expertCount,
-              gpuVRAMMB > reserveMB else { return nil }
-
-        let mib = UInt64(1024 * 1024)
-        let gib = UInt64(1024) * mib
-        // The 1.3 GiB shared/non-MoE estimate is the same conservative split used by
-        // ToshLLM's ncmoe planner. The remainder is the quantized expert pool.
-        let sharedBytes = min(modelBytes, UInt64(Double(gib) * 1.3))
-        let expertBytes = modelBytes - sharedBytes
-        guard expertBytes > 0 else { return nil }
-        let bytesPerSlot = max(UInt64(1),
-            UInt64(ceil(Double(expertBytes) / Double(model.expertCount))))
-
-        // One full widest bank is staging; each prefetch slot can hold another. A
-        // gate_up bank is approximately 2/3 of one layer's three expert matrices.
-        let widestBankBytes = UInt64(ceil(
-            Double(expertBytes) / Double(model.layerCount) * (2.0 / 3.0)))
-        let transferBuffers = widestBankBytes * UInt64(max(0, min(prefetch, 16)) + 1)
-        // A wider prefill micro-batch buys a lot of prompt speed but its compute buffers
-        // come out of the same VRAM as the slots: measured about 640 MiB per extra 512
-        // tokens on a 35B A3B.
-        let extraUbatch = max(0, ubatch - 512)/512
-        let runtimeBytes = UInt64(512) * mib + UInt64(extraUbatch) * UInt64(640) * mib
-        let fixedBytes = sharedBytes + runtimeBytes + transferBuffers
-        let availableBytes = UInt64(max(0, gpuVRAMMB - reserveMB)) * mib
-        let budgetSlots = availableBytes > fixedBytes
-            ? Int((availableBytes - fixedBytes) / bytesPerSlot) : 0
-        let recommendedMaximum = min(model.expertCount, max(0, budgetSlots))
-        guard recommendedMaximum >= model.activeExpertCount else { return nil }
-
-        return DynamicMoeSlotPlan(
-            model: model,
-            minimumSlots: model.activeExpertCount,
-            maximumSlots: model.expertCount,
-            recommendedMaximumSlots: recommendedMaximum,
-            automaticSlots: model.activeExpertCount,
-            estimatedBytesPerSlot: bytesPerSlot,
-            estimatedFixedVRAMBytes: fixedBytes)
-    }
-
-    static func resolveDynamicMoeAuto(
-        isMoE: Bool,
-        modelBytes: UInt64,
-        gpuVRAMMB: Int,
-        reserveMB: Int,
-        physicalRAMBytes: UInt64,
-        hasDiscreteGPU: Bool,
-        splitOrRouter: Bool
-    ) -> DynamicMoeAutoRoute {
-        guard !splitOrRouter else { return .normalSplitOrRouter }
-        guard isMoE else { return .normalDense }
-        guard modelBytes > 0 else { return .normalMissingModel }
-        guard hasDiscreteGPU, gpuVRAMMB > 0 else { return .normalUnsupportedGPU }
-
-        // Besides the user's reserve, leave 512 MiB for compute/KV allocations. A GGUF
-        // that fits below this line gains nothing from duplicating its expert bank in RAM.
-        let mib = UInt64(1024 * 1024)
-        let usableVRAM = UInt64(max(0, gpuVRAMMB - reserveMB - 512)) * mib
-        guard modelBytes > usableVRAM else { return .normalFitsVRAM }
-
-        // Dynamic MoE pins the quantized expert bank. Keep the model plus 25% and 4 GiB
-        // for the OS/app/KV; if total RAM cannot provide that, normal ncmoe is safer.
-        let ramHeadroom = max(modelBytes / 4, UInt64(4) * 1024 * 1024 * 1024)
-        guard physicalRAMBytes >= modelBytes + ramHeadroom else { return .normalInsufficientRAM }
-        return .cache
-    }
-
-    /// The current decode kernel directly binds the complete host expert pool to Metal. On a
-    /// discrete GPU, measured banks larger than the device working set can stall the driver even
-    /// when system RAM and swap are healthy. Auto stays on the validated side of that boundary;
-    /// private Manual mode remains available for developing a bounded staging implementation.
-    /// Direct mode wraps the whole expert bank as host memory, and Metal wires those pages, so
-    /// what bounds it is system RAM rather than the card: the slots the graph reads are what
-    /// lives in VRAM. Measured on a 32 GiB machine, a 9.6 GiB bank runs fine while 12.7 and
-    /// 16.9 GiB starve the compositor, because wired pages cannot be evicted and swap is
-    /// capped. A third of physical RAM is the line those three points draw.
-    static func dynamicMoeHostBankFitsDirectMetal(modelBytes: UInt64, gpuVRAMMB: Int,
-                                                  physicalRAMBytes: UInt64) -> Bool {
-        guard modelBytes > 0, gpuVRAMMB > 0, physicalRAMBytes > 0 else { return false }
-        let mib = UInt64(1024 * 1024)
-        let sharedBytes = min(modelBytes, UInt64(Double(UInt64(1024) * mib) * 1.3))
-        let estimatedExpertBytes = modelBytes - sharedBytes
-        return estimatedExpertBytes <= physicalRAMBytes / 3
+        return (cacheTypeK, cacheTypeV)
     }
 
     /// Resolves DFlash against the same physical GPU selection and memory reserve
@@ -1867,6 +1653,13 @@ final class ServerController: ObservableObject {
     /// Model whose running engine actually has DFlash engaged, nil otherwise.
     @Published private(set) var activeDflashModelPath: String?
     @Published var dflashAcceptance: Double?
+    /// The engine's memory plan for this launch (preview), then what it really did.
+    @Published var autoPlan: AutoMemoryPlan?
+    @Published var autoRuntime: AutoMemoryRuntime?
+    @Published var autoActual: AutoMemoryActual?
+    @Published var autoPlanNote: String?
+    /// A starved host executor leaves the backend unusable; one restart per launch recovers it.
+    private var recoveredFromExecutorFailure = false
 
     private var process: Process?
     private var healthTask: Task<Void, Never>?
@@ -2016,13 +1809,83 @@ final class ServerController: ObservableObject {
         // holds the port meanwhile, so wait for the previous PID before binding.
         let previousPID = lastStoppedPID
         lastStoppedPID = nil
+        autoPlan = nil
+        autoRuntime = nil
+        autoPlanNote = nil
         Task { [weak self] in
             if let pid = previousPID {
                 for _ in 0..<24 where kill(pid, 0) == 0 {
                     try? await Task.sleep(for: .milliseconds(250))
                 }
             }
-            self?.launch(settings)
+            var planned = settings
+            if settings.usesAutoPlan {
+                guard let plan = await AutoMemoryPlan.preview(settings: settings) else {
+                    self?.failAutoPlan(nil)
+                    return
+                }
+                guard !plan.isUnsupported else {
+                    self?.failAutoPlan(plan)
+                    return
+                }
+                planned.plannedMode = plan.mode
+                self?.autoPlan = plan
+            }
+            self?.launch(planned)
+        }
+    }
+
+    private func restartAfterFailure(_ settings: ServerSettings) {
+        stop()
+        Task { [weak self] in
+            for _ in 0..<40 {
+                guard let self else { return }
+                if self.state == .stopped || self.isFailed {
+                    let note = self.autoPlanNote
+                    self.start(settings)
+                    self.autoPlanNote = note
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+    }
+
+    private func failAutoPlan(_ plan: AutoMemoryPlan?) {
+        guard state == .starting else { return }
+        autoPlan = plan
+        let lang = UserDefaults.standard.string(forKey: SettingsKeys.language) ?? "en"
+        state = .failed(plan.map { AutoMemoryText.reason($0) } ?? (lang == "es"
+            ? "El motor no pudo planificar la memoria para este modelo; revisa el registro."
+            : "The engine could not plan memory for this model; check the log."))
+    }
+
+    /// The preview is a projection; the engine's runtime file says what really started. A planned
+    /// Dynamic MoE that did not start (its bank could not be locked) relaunches on the next plan.
+    private func confirmAutoRuntime(_ settings: ServerSettings) {
+        guard settings.usesAutoPlan else { return }
+        let plan = AutoMemoryPlan.readPlan(port: settings.port) ?? autoPlan
+        autoPlan = plan
+        let runtime = AutoMemoryRuntime.read(port: settings.port)
+        autoRuntime = runtime
+        autoActual = AutoMemoryActual.read(port: settings.port)
+        guard let plan, plan.usesDynamicMoE else { return }
+        if runtime?.isOn == true { return }
+        let problem = runtime.flatMap(AutoMemoryText.runtimeProblem)
+        autoPlanNote = problem
+        guard !settings.planWithoutDMoE else { return }
+        consume("\n[ToshLLM] \(problem ?? "Dynamic MoE did not start") — replanning without it\n")
+        var retry = settings
+        retry.planWithoutDMoE = true
+        stop()
+        Task { [weak self] in
+            for _ in 0..<40 {
+                guard let self, self.state == .stopped || self.isFailed else {
+                    try? await Task.sleep(for: .milliseconds(250)); continue
+                }
+                self.start(retry)
+                return
+            }
         }
     }
 
@@ -2035,6 +1898,14 @@ final class ServerController: ObservableObject {
 
     /// Header at the top of the server log: version, engine, model, GPUs and the
     /// resolved settings, so a pasted log is debuggable without round-trips.
+    /// Short id of the precompiled kernels next to the engine; the engine refuses them itself
+    /// when they were built from other sources.
+    nonisolated static func kernelFingerprint(binary: String) -> String {
+        let url = URL(fileURLWithPath: binary).deletingLastPathComponent().appendingPathComponent("kernels/fingerprint")
+        guard let data = try? Data(contentsOf: url) else { return "embedded" }
+        return SHA256.hash(data: data).prefix(6).map { String(format: "%02x", $0) }.joined()
+    }
+
     /// `args` and `env` come from the caller: `ServerSettings.arguments` and
     /// `.environment` each walk the model directory and stat several files, and
     /// this used to make launch recompute both after already building the process.
@@ -2055,14 +1926,10 @@ final class ServerController: ObservableObject {
                 : " · peer group \($0.peerGroupID) (\($0.peerCount) GPUs)"
             return "    [\($0.index)] \($0.name) · \($0.vramGB) GB\(peer)\($0.isExternal ? " · EXTERNAL/eGPU" : "")\($0.isIntegrated ? " · iGPU (not auto-selected)" : "")"
         }.joined(separator: "\n")
-        let envKeys = ["GGML_METAL_VRAM_RESERVE_MB",
+        let envKeys = ["TOSH_AUTO", "TOSH_AUTO_KV", "GGML_METAL_VRAM_RESERVE_MB",
                        "GGML_METAL_DEVICE_INDEX", "GGML_METAL_DEVICES", "GGML_METAL_DEVICE_LIST",
                        "GGML_METAL_SHARED_BUFFERS_DISABLE", "TOSH_FA_AMD",
                        "GGML_SCHED_PREFETCH_EXPERTS", "GGML_CPU_NO_REPACK",
-                       "TOSH_MOE_UI", "TOSH_MOE_MODE", "TOSH_MOE_SLOTS", "TOSH_MOE_CPU_BANK",
-                       "TOSH_MOE_SPLIT_BANK", "TOSH_MOE_SPLIT_RING", "TOSH_MOE_BOUNDED_STAGE",
-                       "TOSH_MOE_BOUNDED_STAGE_FORCE", "TOSH_MOE_DOUBLE_BUFFER", "TOSH_MOE_HOT_MAP",
-                       "TOSH_MOE_HOT_MAP_OUT", "TOSH_MOE_HOT_MAP_K",
                        "GGML_METAL_NCB",
                        "TOSH_MGPU_PEER", "TOSH_MGPU_PEER_DISABLE", "TOSH_MGPU_EVENTS"]
         // Include user-provided environment variables in diagnostic logs.
@@ -2070,8 +1937,9 @@ final class ServerController: ObservableObject {
         let envLine = (envKeys + userKeys)
             .compactMap { k in env[k].map { "\(k)=\($0)" } }
             .joined(separator: " ")
-        let moeLine = settings.effectiveDynamicMoe
-            ? "ncmoe=0 dynamic-moe=K\(settings.effectiveDynamicMoeSlots)"
+        let moeLine = settings.usesAutoPlan
+            ? "memory=auto-plan (\(settings.executionMode), kv \(settings.autoKVMode))"
+            : settings.manualFullGPU ? "memory=full-gpu (manual)"
             : "ncmoe=\(settings.ncmoe)"
         var gpuSel = settings.multiGPU ? "split-all" : (settings.gpuIndex >= 0 ? "index \(settings.gpuIndex)" : "default (macOS picks)")
         if settings.isSplitting { gpuSel += " · split-mode \(settings.effectiveSplitMode)" }
@@ -2081,7 +1949,7 @@ final class ServerController: ObservableObject {
         return """
         ========================================================
          ToshLLM \(AppInfo.version) — server start (\(ServerSettings.isAppleSilicon ? "arm64" : "x86_64")\(AppInfo.isNoAVX2 ? " · no-AVX2 build" : ""))
-         engine : \(engine)
+         engine : \(engine) · kernels \(kernelFingerprint(binary: settings.serverBinary))
          model  : \(settings.routerMode ? "router (autoload, max \(settings.routerModelsMax) loaded)" : (settings.modelPath as NSString).lastPathComponent)
          GPUs detected:
         \(gpus.isEmpty ? "    (none)" : gpus)
@@ -2178,6 +2046,9 @@ final class ServerController: ObservableObject {
 
         fileLog.startSession()   // new timestamped per-session file, prunes old ones
         consume(Self.startupBanner(settings: settings, args: rawArgs, env: env))
+        if let plan = autoPlan {
+            consume("[ToshLLM] memory plan: \(AutoMemoryText.summary(plan, runtime: nil)) | \(AutoMemoryText.reason(plan))\n")
+        }
         do {
             try p.run()
             process = p
@@ -2413,6 +2284,7 @@ final class ServerController: ObservableObject {
                     await MainActor.run {
                         self?.state = .running
                         self?.startedAt = Date()
+                        if let settings = self?.launchedSettings { self?.confirmAutoRuntime(settings) }
                         self?.startDiscoveryIfNeeded(port: port)
                         self?.startDflashMemoryCheck()
                     }
@@ -2535,6 +2407,14 @@ final class ServerController: ObservableObject {
         fileLog.append(text)
 
         for line in text.split(separator: "\n") {
+            if line.contains("mixed expert execution failed"), !recoveredFromExecutorFailure,
+               state == .running, let settings = launchedSettings {
+                recoveredFromExecutorFailure = true
+                autoPlanNote = (UserDefaults.standard.string(forKey: SettingsKeys.language) ?? "en") == "es"
+                    ? "El sistema dejó sin CPU a Dynamic MoE; el servidor se reinició."
+                    : "The system starved Dynamic MoE of CPU; the server was restarted."
+                restartAfterFailure(settings)
+            }
             if line.contains("draft acceptance ="),
                let m = line.range(of: #"draft acceptance = ([0-9]+\.[0-9]+)"#, options: .regularExpression) {
                 dflashAcceptance = Double(line[m].split(separator: "=")[1].trimmingCharacters(in: .whitespaces))
