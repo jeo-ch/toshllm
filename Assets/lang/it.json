@@ -1695,7 +1695,6 @@
   "Trending": "In tendenza",
   "Try again": "Riprova",
   "Tune your conversation": "Regola la conversazione",
-  "Tuning prompt processing · prefetch%@…": "Ottimizzazione dell'elaborazione del prompt · prefetch%@…",
   "Turbo Mode: apply optimal settings": "Modalità Turbo: applica le impostazioni ottimali",
   "Turbo offers the best balance; Large v3 prioritizes accuracy.": "Turbo offre il miglior compromesso; Large v3 privilegia l'accuratezza.",
   "Turbo on the keys is what costs quality, the more so the smaller the model. With keys at q8_0, values take Turbo4 with no appreciable loss at any size, and Turbo3 nearly so; Turbo on both is only worth it on large models.": "Turbo sulle chiavi è ciò che costa qualità, tanto più quanto più piccolo è il modello. Con le chiavi a q8_0, i valori prendono Turbo4 senza perdita apprezzabile a qualsiasi dimensione, e Turbo3 quasi così; Turbo su entrambe le parti vale la pena solo sui modelli grandi.",

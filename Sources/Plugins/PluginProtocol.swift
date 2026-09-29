@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import Foundation
+import os
 
 /// Plugin protocol defining the interface for all ToshLLM plugins.
 /// Inspired by deepseek-harness Cordis and openclaw plugin SDK.
@@ -130,25 +131,26 @@ enum PluginEvent: Sendable {
 
 // MARK: - Plugin Logger
 
-/// Logger for plugin output.
+/// Logger for plugin output; routes into the unified log so plugin messages
+/// show up alongside the rest of the app in Console and the session file.
 struct PluginLogger: Sendable {
     let pluginID: String
     
     func info(_ message: String) {
-        print("[\(pluginID)] INFO: \(message)")
+        AppLog.plugins.info("[\(self.pluginID, privacy: .public)] INFO: \(message, privacy: .public)")
     }
     
     func warning(_ message: String) {
-        print("[\(pluginID)] WARNING: \(message)")
+        AppLog.plugins.warning("[\(self.pluginID, privacy: .public)] WARNING: \(message, privacy: .public)")
     }
     
     func error(_ message: String) {
-        print("[\(pluginID)] ERROR: \(message)")
+        AppLog.plugins.error("[\(self.pluginID, privacy: .public)] ERROR: \(message, privacy: .public)")
     }
     
     func debug(_ message: String) {
         #if DEBUG
-        print("[\(pluginID)] DEBUG: \(message)")
+        AppLog.plugins.debug("[\(self.pluginID, privacy: .public)] DEBUG: \(message, privacy: .public)")
         #endif
     }
 }

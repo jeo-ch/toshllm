@@ -1695,7 +1695,6 @@
   "Trending": "人気",
   "Try again": "再試行",
   "Tune your conversation": "会話を調整",
-  "Tuning prompt processing · prefetch%@…": "プロンプト処理を調整中 · prefetch%@…",
   "Turbo Mode: apply optimal settings": "Turboモード：最適な設定を適用",
   "Turbo offers the best balance; Large v3 prioritizes accuracy.": "Turboが最もバランスが良く、Large v3は精度を優先します。",
   "Turbo on the keys is what costs quality, the more so the smaller the model. With keys at q8_0, values take Turbo4 with no appreciable loss at any size, and Turbo3 nearly so; Turbo on both is only worth it on large models.": "品質を落とすのはキー側のTurboで、モデルが小さいほど影響が出ます。キーをq8_0にすれば、値はどのサイズでもTurbo4で目立った劣化がなく、Turbo3もほぼ同様です。両方をTurboにするのは大きなモデルでのみ得になります。",

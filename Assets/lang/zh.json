@@ -1695,7 +1695,6 @@
   "Trending": "热门",
   "Try again": "重试",
   "Tune your conversation": "调整你的对话",
-  "Tuning prompt processing · prefetch%@…": "正在调优提示词处理 · 预取 %@…",
   "Turbo Mode: apply optimal settings": "Turbo 模式：应用最优设置",
   "Turbo offers the best balance; Large v3 prioritizes accuracy.": "Turbo 的平衡性最好；Large v3 更看重准确度。",
   "Turbo on the keys is what costs quality, the more so the smaller the model. With keys at q8_0, values take Turbo4 with no appreciable loss at any size, and Turbo3 nearly so; Turbo on both is only worth it on large models.": "把 Turbo 用在键上才是质量的代价，模型越小损失越明显。键保持 q8_0 时，值用 Turbo4 在任何规模下都没有明显损失，Turbo3 也几乎如此；两侧都用 Turbo 只有在大模型上才划算。",
