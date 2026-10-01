@@ -320,6 +320,40 @@ enum AppSupport {
     }
 }
 
+/// The `N/M ... s/it` progress line the image, video and upscale engines print.
+/// Image, video and upscale all report the same shape, so they read it here
+/// instead of each carrying its own copy of the parse.
+enum GenerationProgressLine {
+    /// One step's reading: how far along the run is, and the raw `N/M` text.
+    struct Step: Equatable {
+        let current: Int
+        let total: Int
+        var fraction: Double { total > 0 ? Double(current) / Double(total) : 0 }
+        var text: String { "\(current)/\(total)" }
+    }
+
+    /// Compiled once: this runs per output line of a live generation, and a
+    /// pattern handed to `range(of:options:)` is recompiled on every call.
+    private static let step = try! NSRegularExpression(pattern: #"(\d+)/(\d+)"#)
+
+    /// Whether the line reports the engine decoding rather than sampling.
+    static func isDecode(_ line: String) -> Bool {
+        line.lowercased().contains("decod")
+    }
+
+    /// The step a progress line reports, or nil when it is not one.
+    static func step(in line: String) -> Step? {
+        guard line.contains("s/it") else { return nil }
+        let ns = line as NSString
+        guard let m = step.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)),
+              m.numberOfRanges > 2,
+              let current = Int(ns.substring(with: m.range(at: 1))),
+              let total = Int(ns.substring(with: m.range(at: 2))),
+              total > 0 else { return nil }
+        return Step(current: current, total: total)
+    }
+}
+
 /// Rotating plain-text log for the engine output, so crashes can be diagnosed
 /// after the fact and exported from Settings.
 /// Per-session log files kept under Application Support/logs, named with the start

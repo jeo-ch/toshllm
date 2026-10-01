@@ -2421,11 +2421,20 @@ final class ServerController: ObservableObject {
         discoveryService = nil
     }
 
+    // Compiled once: `consume` runs per output chunk of a live server and walks
+    // every line in it, and a pattern handed to `range(of:options:)` is
+    // recompiled on each call.
+    private static let draftAcceptance = try! NSRegularExpression(
+        pattern: #"draft acceptance = ([0-9]+\.[0-9]+)"#)
+    private static let tokensPerSecond = try! NSRegularExpression(
+        pattern: #"([0-9]+\.[0-9]+) tokens per second"#)
+
     private func consume(_ text: String) {
         logBuffer.append(text)
         fileLog.append(text)
 
         for line in text.split(separator: "\n") {
+            let line = String(line)
             if line.contains("mixed expert execution failed"), !recoveredFromExecutorFailure,
                state == .running, let settings = launchedSettings {
                 recoveredFromExecutorFailure = true
@@ -2434,13 +2443,18 @@ final class ServerController: ObservableObject {
                     : "The system starved Dynamic MoE of CPU; the server was restarted."
                 restartAfterFailure(settings)
             }
+            let ns = line as NSString
+            let whole = NSRange(location: 0, length: ns.length)
             if line.contains("draft acceptance ="),
-               let m = line.range(of: #"draft acceptance = ([0-9]+\.[0-9]+)"#, options: .regularExpression) {
-                dflashAcceptance = Double(line[m].split(separator: "=")[1].trimmingCharacters(in: .whitespaces))
+               let m = Self.draftAcceptance.firstMatch(in: line, range: whole),
+               m.numberOfRanges > 1,
+               let value = Double(ns.substring(with: m.range(at: 1))) {
+                dflashAcceptance = value
             }
             guard line.contains("tokens per second"), line.contains("eval time") else { continue }
-            guard let match = line.range(of: #"([0-9]+\.[0-9]+) tokens per second"#, options: .regularExpression) else { continue }
-            let value = Double(line[match].split(separator: " ")[0]) ?? 0
+            guard let match = Self.tokensPerSecond.firstMatch(in: line, range: whole),
+                  match.numberOfRanges > 1,
+                  let value = Double(ns.substring(with: match.range(at: 1))) else { continue }
             if line.contains("prompt eval") {
                 promptSpeed = value
             } else {

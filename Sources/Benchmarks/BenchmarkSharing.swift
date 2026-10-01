@@ -569,12 +569,7 @@ final class BenchmarkSharing: ObservableObject {
     }
 
     private func parseSpeed(_ output: String, test: String) -> Double? {
-        for line in output.split(separator: "\n") where line.contains(" \(test) ") {
-            if let r = line.range(of: #"([0-9]+\.[0-9]+) ±"#, options: .regularExpression) {
-                return Double(line[r].split(separator: " ")[0])
-            }
-        }
-        return nil
+        BenchSpeed.parse(output, test: test)
     }
 
     private func overrideArg(_ args: inout [String], _ flag: String, _ value: String) {

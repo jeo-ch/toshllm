@@ -206,16 +206,26 @@ struct ModelName {
     ]
 
     /// Active parameters in billions from an A<n>B tag (e.g. "35B-A3B" → 3.0).
+    /// Compiled once, like the patterns above: this is reached once per model
+    /// name and `forPath` caches the result, but a fresh NSRegularExpression per
+    /// call still adds up across a catalog listing.
+    private static let activeTagPattern = try! NSRegularExpression(
+        pattern: "(?i)[-_.]a(\\d+(?:\\.\\d+)?)b(?:[-_.]|$)")
+    private static let activeTotalPattern = try! NSRegularExpression(
+        pattern: "(?i)(?:^|[-_.])(\\d+(?:\\.\\d+)?)([BM])-(\\d+(?:\\.\\d+)?)[BM](?:[-_.]|$)")
+    private static let moeActivePattern = try! NSRegularExpression(
+        pattern: "(?i)(^|[-_.])a\\d+(?:\\.\\d+)?b($|[-_.])")
+    private static let moeExpertsPattern = try! NSRegularExpression(
+        pattern: "(?i)(^|[-_.])\\d+x\\d")
+
     static func activeParamsB(_ name: String) -> Double? {
         let ns = name as NSString
-        let re = try! NSRegularExpression(pattern: "(?i)[-_.]a(\\d+(?:\\.\\d+)?)b(?:[-_.]|$)")
-        if let m = re.firstMatch(in: name, range: NSRange(location: 0, length: ns.length)),
+        let whole = NSRange(location: 0, length: ns.length)
+        if let m = activeTagPattern.firstMatch(in: name, range: whole),
            m.numberOfRanges > 1 {
             return Double(ns.substring(with: m.range(at: 1)))
         }
-        let activeTotal = try! NSRegularExpression(
-            pattern: "(?i)(?:^|[-_.])(\\d+(?:\\.\\d+)?)([BM])-(\\d+(?:\\.\\d+)?)[BM](?:[-_.]|$)")
-        guard let m = activeTotal.firstMatch(in: name, range: NSRange(location: 0, length: ns.length)),
+        guard let m = activeTotalPattern.firstMatch(in: name, range: whole),
               m.numberOfRanges > 2,
               let value = Double(ns.substring(with: m.range(at: 1))) else { return nil }
         return ns.substring(with: m.range(at: 2)).uppercased() == "M" ? value / 1000 : value
@@ -224,10 +234,11 @@ struct ModelName {
     /// Name looks like a MoE: an A<active>B tag (any active-param count), an
     /// NxM expert count, or an explicit moe/oss marker.
     static func looksMoE(_ name: String) -> Bool {
+        if name.contains("moe") || name.contains("-oss") || name.contains("gpt-oss") { return true }
         let l = name.lowercased()
-        return l.range(of: "(?i)(^|[-_.])a\\d+(?:\\.\\d+)?b($|[-_.])", options: .regularExpression) != nil
-            || l.range(of: "(?i)(^|[-_.])\\d+x\\d", options: .regularExpression) != nil
-            || l.contains("moe") || l.contains("-oss") || l.contains("gpt-oss")
+        let whole = NSRange(location: 0, length: (l as NSString).length)
+        return moeActivePattern.firstMatch(in: l, range: whole) != nil
+            || moeExpertsPattern.firstMatch(in: l, range: whole) != nil
     }
 
     /// Titles prefer useful embedded metadata. Quantization uses the header unless

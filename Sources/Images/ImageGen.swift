@@ -963,16 +963,12 @@ final class ImageGenerator: ObservableObject {
         fileLog.append(text)
         for raw in text.split(whereSeparator: \.isNewline) {
             let line = String(raw)
-            if line.lowercased().contains("decod") { stage = .decoding }
-            guard line.contains("s/it"),
-                  let r = line.range(of: #"(\d+)/(\d+)"#, options: .regularExpression) else { continue }
-            let parts = line[r].split(separator: "/")
-            if parts.count == 2, let a = Int(parts[0]), let b = Int(parts[1]), b > 0 {
-                if firstStepAt == nil { firstStepAt = Date() }
-                stage = .sampling
-                progress = Double(a) / Double(b)
-                stepText = "\(a)/\(b)"
-            }
+            if GenerationProgressLine.isDecode(line) { stage = .decoding }
+            guard let step = GenerationProgressLine.step(in: line) else { continue }
+            if firstStepAt == nil { firstStepAt = Date() }
+            stage = .sampling
+            progress = step.fraction
+            stepText = step.text
         }
     }
 
@@ -1643,13 +1639,8 @@ final class ImageUpscaler: ObservableObject {
     /// Same tile-progress line the generator prints: `N/M ... s/it`.
     private func consume(_ text: String) {
         for raw in text.split(whereSeparator: \.isNewline) {
-            let line = String(raw)
-            guard line.contains("s/it"),
-                  let r = line.range(of: #"(\d+)/(\d+)"#, options: .regularExpression) else { continue }
-            let parts = line[r].split(separator: "/")
-            if parts.count == 2, let a = Int(parts[0]), let b = Int(parts[1]), b > 0 {
-                progress = Double(a) / Double(b)
-            }
+            guard let step = GenerationProgressLine.step(in: String(raw)) else { continue }
+            progress = step.fraction
         }
     }
 }

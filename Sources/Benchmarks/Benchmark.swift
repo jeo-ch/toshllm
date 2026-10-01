@@ -4,6 +4,28 @@
 
 import Foundation
 
+/// Reads a throughput figure out of a llama-bench run. The sweep, the history
+/// reader and the sharing sheet all read the same output shape, so the parse
+/// lives here once instead of in each of them.
+enum BenchSpeed {
+    /// Compiled once: a pattern handed to `range(of:options:)` is recompiled on
+    /// every call, and a sweep reads one row per combination it tries.
+    private static let throughput = try! NSRegularExpression(pattern: #"([0-9]+\.[0-9]+) ±"#)
+
+    /// The figure the row for `test` reports, or nil when the row is absent.
+    static func parse(_ output: String, test: String) -> Double? {
+        for line in output.split(separator: "\n") where line.contains(" \(test) ") {
+            let line = String(line)
+            let ns = line as NSString
+            guard let m = throughput.firstMatch(in: line,
+                                                range: NSRange(location: 0, length: ns.length)),
+                  m.numberOfRanges > 1 else { continue }
+            return Double(ns.substring(with: m.range(at: 1)))
+        }
+        return nil
+    }
+}
+
 struct BenchResult: Codable, Identifiable {
     var id = UUID()
     let date: Date
@@ -447,12 +469,7 @@ final class BenchmarkController: ObservableObject {
         process = nil
 
         func speed(_ test: String) -> Double? {
-            for line in output.split(separator: "\n") where line.contains(" \(test) ") {
-                if let r = line.range(of: #"([0-9]+\.[0-9]+) ±"#, options: .regularExpression) {
-                    return Double(line[r].split(separator: " ")[0])
-                }
-            }
-            return nil
+            BenchSpeed.parse(output, test: test)
         }
 
         let ppTest = "pp\(settings.benchPPClamped)"
@@ -521,12 +538,7 @@ final class BenchmarkController: ObservableObject {
         fileLog.append(text)
 
         func speed(_ test: String) -> Double? {
-            for line in text.split(separator: "\n") where line.contains(" \(test) ") {
-                if let r = line.range(of: #"([0-9]+\.[0-9]+) ±"#, options: .regularExpression) {
-                    return Double(line[r].split(separator: " ")[0])
-                }
-            }
-            return nil
+            BenchSpeed.parse(text, test: test)
         }
         guard let pp = speed("pp\(settings.benchPPClamped)"),
               let tg = speed("tg\(settings.benchTGClamped)") else { return nil }

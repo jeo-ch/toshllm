@@ -18,6 +18,31 @@ private enum MDBlock: Equatable {
     case rule
 }
 
+/// The block-level patterns the parser tests once per line. Compiled up front:
+/// `range(of:options:.regularExpression)` builds a fresh `NSRegularExpression`
+/// on every call, and a re-parse walks every line of the message.
+enum MDRegex {
+    private static func compile(_ pattern: String) -> NSRegularExpression {
+        try! NSRegularExpression(pattern: pattern)
+    }
+
+    static let header = compile(#"^#{1,6} "#)
+    static let rule = compile(#"^\s*([-*_])(\s*\1){2,}\s*$"#)
+    static let bullet = compile(#"^\s*[-*+] "#)
+    static let numbered = compile(#"^\s*\d+[.)] "#)
+    static let tableSeparator = compile(#"^[\s|:\-]+$"#)
+    static let symbolMath = compile(#"^[\p{L}\p{N}\p{Sm}\p{So}\s.,;:+\-=<>()\[\]|/*!'…·]*$"#)
+
+    /// The part of `line` a pattern matches, or nil when it does not match.
+    static func range(_ pattern: NSRegularExpression, in line: String) -> Range<String.Index>? {
+        let ns = line as NSString
+        guard let m = pattern.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)),
+              let r = Range(m.range, in: line) else { return nil }
+        return r
+    }
+
+    }
+
 /// Formatted text outlives the row that shows it: a LazyVStack drops a row on
 /// the way out and rebuilds it on the way back, so formatting again there costs
 /// frames.
@@ -158,7 +183,7 @@ struct RichText: View {
                     lines = lines.dropFirst()
                 }
                 blocks.append(.code(fence.info, code.joined(separator: "\n")))
-            } else if let m = l.range(of: #"^#{1,6} "#, options: .regularExpression) {
+            } else if let m = MDRegex.range(MDRegex.header, in: l) {
                 flush()
                 let level = l[..<m.upperBound].filter { $0 == "#" }.count
                 blocks.append(.header(level, String(l[m.upperBound...])))
@@ -184,15 +209,15 @@ struct RichText: View {
                     lines = lines.dropFirst()
                 }
                 blocks.append(.table(headers, rows))
-            } else if l.range(of: #"^\s*([-*_])(\s*\1){2,}\s*$"#, options: .regularExpression) != nil {
+            } else if MDRegex.range(MDRegex.rule, in: l) != nil {
                 flush()
                 blocks.append(.rule)
-            } else if l.range(of: #"^\s*[-*+] "#, options: .regularExpression) != nil {
+            } else if let m = MDRegex.range(MDRegex.bullet, in: l) {
                 if !paragraph.isEmpty || !numbers.isEmpty { flush() }
-                bullets.append(l.replacingOccurrences(of: #"^\s*[-*+] "#, with: "", options: .regularExpression))
-            } else if l.range(of: #"^\s*\d+[.)] "#, options: .regularExpression) != nil {
+                bullets.append(String(l[m.upperBound...]))
+            } else if let m = MDRegex.range(MDRegex.numbered, in: l) {
                 if !paragraph.isEmpty || !bullets.isEmpty { flush() }
-                numbers.append(l.replacingOccurrences(of: #"^\s*\d+[.)] "#, with: "", options: .regularExpression))
+                numbers.append(String(l[m.upperBound...]))
             } else if l.trimmingCharacters(in: .whitespaces).isEmpty {
                 flush()
             } else {
@@ -243,7 +268,7 @@ struct RichText: View {
     private static func isTableSeparator(_ line: String) -> Bool {
         let t = line.trimmingCharacters(in: .whitespaces)
         return t.contains("-") && t.contains("|")
-            && t.range(of: #"^[\s|:\-]+$"#, options: .regularExpression) != nil
+            && MDRegex.range(MDRegex.tableSeparator, in: t) != nil
     }
 
     static func inline(_ s: String) -> AttributedString {
@@ -324,8 +349,7 @@ struct RichText: View {
                     text.replaceSubrange(r, with: glyph)
                 }
                 guard known, text != body,
-                      text.range(of: #"^[\p{L}\p{N}\p{Sm}\p{So}\s.,;:+\-=<>()\[\]|/*!'…·]*$"#,
-                                 options: .regularExpression) != nil
+                      MDRegex.range(MDRegex.symbolMath, in: text) != nil
                 else { continue }
                 out.replaceSubrange(whole, with: text)
             }

@@ -262,9 +262,18 @@ final class ChatStore: ObservableObject {
         pruneOrphanSlots()
         // A fresh engine has empty KV slots: forget which conversation slot 0
         // held, so the next turn restores the active one's persisted cache.
-        NotificationCenter.default.addObserver(forName: .engineDidStart, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.slotConvID = nil }
-        }
+        engineObserver = NotificationCenter.default.addObserver(
+            forName: .engineDidStart, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.slotConvID = nil }
+            }
+    }
+
+    /// Block-based observers stay registered with the center until the token is
+    /// passed to `removeObserver`, and nothing else holds this store alive, so
+    /// without this the registration would outlive it. `live` is weak, so it
+    /// clears itself and needs no work here.
+    deinit {
+        if let engineObserver { NotificationCenter.default.removeObserver(engineObserver) }
     }
 
     var currentIndex: Int? { conversations.firstIndex { $0.id == currentID } }
@@ -309,6 +318,8 @@ final class ChatStore: ObservableObject {
     /// The live store, so the settings window (which has no access to the chat
     /// window's instance) can reach it.
     private(set) static weak var live: ChatStore?
+    /// Registration held so `deinit` can hand it back to the center.
+    private var engineObserver: NSObjectProtocol?
 
     /// Erases the stored conversations without a store: the settings window can
     /// outlive the chat window, and then nothing holds them in memory.
