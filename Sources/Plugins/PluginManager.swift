@@ -70,7 +70,7 @@ final class PluginManager: ObservableObject, PluginManagerProtocol {
             guard plugins[index].state == .registered else { continue }
             
             do {
-                await loadPlugin(at: index)
+                try await loadPlugin(at: index)
             } catch {
                 plugins[index].state = .error
                 plugins[index].error = error.localizedDescription
@@ -81,7 +81,7 @@ final class PluginManager: ObservableObject, PluginManagerProtocol {
     }
     
     /// Load a specific plugin.
-    private func loadPlugin(at index: Int) async {
+    private func loadPlugin(at index: Int) async throws {
         let plugin = plugins[index].plugin
         plugins[index].state = .loading
         
@@ -91,14 +91,11 @@ final class PluginManager: ObservableObject, PluginManagerProtocol {
             logger: PluginLogger(pluginID: plugin.id)
         )
         
-        do {
-            try await plugin.initialize(context: context)
-            plugins[index].state = .loaded
-            plugins[index].loadedAt = Date()
-        } catch {
-            plugins[index].state = .error
-            plugins[index].error = error.localizedDescription
-        }
+        // The failure state is recorded by the caller (`loadAll`), which owns the
+        // loop's index bookkeeping.
+        try await plugin.initialize(context: context)
+        plugins[index].state = .loaded
+        plugins[index].loadedAt = Date()
     }
     
     /// Activate a plugin.
@@ -183,13 +180,10 @@ final class PluginManager: ObservableObject, PluginManagerProtocol {
     
     /// Discover plugins from a directory.
     func discoverPlugins(from directory: URL) throws -> [any Plugin] {
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
-            return []
-        }
-        
-        // In production, this would load the plugin bundle
-        // For now, return empty
+        // Bundle loading is not implemented yet; the directory probe stays so a
+        // missing folder keeps being reported as an empty result rather than a
+        // hard failure once loading lands.
+        _ = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
         return []
     }
     
@@ -231,7 +225,7 @@ extension PluginManager {
 // MARK: - Example Inference Backend Plugin
 
 /// Example plugin demonstrating inference backend integration.
-private class InferenceBackendPlugin: BasePlugin {
+private final class InferenceBackendPlugin: BasePlugin, @unchecked Sendable {
     init() {
         super.init(
             id: "com.toshllm.inference.llamacpp",
@@ -257,7 +251,7 @@ private class InferenceBackendPlugin: BasePlugin {
 // MARK: - Example Model Source Plugin
 
 /// Example plugin demonstrating model source integration.
-private class ModelSourcePlugin: BasePlugin {
+private final class ModelSourcePlugin: BasePlugin, @unchecked Sendable {
     init() {
         super.init(
             id: "com.toshllm.modelsource.local",

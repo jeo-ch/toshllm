@@ -307,6 +307,7 @@ enum AppLog {
     static let chat = Logger(subsystem: subsystem, category: "chat")
     static let app = Logger(subsystem: subsystem, category: "app")
     static let models = Logger(subsystem: subsystem, category: "models")
+    static let updates = Logger(subsystem: subsystem, category: "updates")
     static let plugins = Logger(subsystem: subsystem, category: "plugins")
 }
 

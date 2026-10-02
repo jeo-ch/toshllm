@@ -362,10 +362,7 @@ struct AudioCanvas: View {
     }
 
     private func pickMedia() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.audio, .movie, .audiovisualContent]
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let url = FileImport.chooseAudioOrVideo() else { return }
         studio.select(url)
     }
 

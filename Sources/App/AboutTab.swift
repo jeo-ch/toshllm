@@ -84,7 +84,7 @@ struct AboutView: View {
                         .glassButton()
                         .popover(isPresented: $showNotes, arrowEdge: .bottom) { ReleaseNotesPopover() }
                     }
-                    if let error = updates.installError {
+                    if let error = updates.installError ?? updates.checkError {
                         Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
                     }
                 }
@@ -105,6 +105,14 @@ struct AboutView: View {
                 .padding(.horizontal, 8).padding(.vertical, 3)
                 .foregroundStyle(.orange)
                 .background(Color.orange.opacity(0.12), in: Capsule())
+        } else if updates.checkError != nil {
+            // The check failed, so we do not know: a green "Latest" would claim
+            // something the last request never established.
+            Text(loc.t("Sin comprobar", "Not checked"))
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .foregroundStyle(.secondary)
+                .background(Color.secondary.opacity(0.12), in: Capsule())
         } else {
             Text(loc.t("Más reciente", "Latest"))
                 .font(.caption.weight(.semibold))

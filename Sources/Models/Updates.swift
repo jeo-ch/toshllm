@@ -26,6 +26,9 @@ final class UpdateChecker: ObservableObject {
     @Published var checking = false
     @Published var installing = false
     @Published var installError: String?
+    /// Why the last check could not complete. Non-nil means "unknown", not
+    /// "up to date", so the UI can say so instead of showing a green badge.
+    @Published var checkError: String?
 
     private var dmgURL: URL?
     private var checksumsURL: URL?
@@ -53,11 +56,43 @@ final class UpdateChecker: ObservableObject {
         checking = true
         defer { checking = false }
 
-        guard let url = URL(string: Self.releasesAPI),
-              let (data, response) = try? await NetworkManager.session.data(from: url),
-              (response as? HTTPURLResponse)?.statusCode == 200,
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let tag = obj["tag_name"] as? String else { return }
+        // The three failure modes are reported apart: "no update" and "could not
+        // ask" look identical otherwise, and a broken check used to read as
+        // "you are on the latest version".
+        guard let url = URL(string: Self.releasesAPI) else {
+            return failCheck("URL de consulta inválido / invalid check URL")
+        }
+        let data: Data, response: URLResponse
+        do {
+            (data, response) = try await NetworkManager.session.data(from: url)
+        } catch {
+            AppLog.updates.error("update check request failed: \(error.localizedDescription, privacy: .public)")
+            return failCheck("No se pudo contactar con GitHub / could not reach GitHub: \(error.localizedDescription)")
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            AppLog.updates.error("update check returned HTTP \(status)")
+            // 403/429 are GitHub's rate limit, the usual cause here.
+            return failCheck(status == 403 || status == 429
+                ? "GitHub limitó las consultas; reintenta más tarde / GitHub rate-limited the check, try again later"
+                : "GitHub respondió HTTP \(status) / GitHub answered HTTP \(status)")
+        }
+        let obj: [String: Any]
+        do {
+            guard let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                AppLog.updates.error("update check payload was not a JSON object")
+                return failCheck("Respuesta inesperada de GitHub / unexpected reply from GitHub")
+            }
+            obj = parsed
+        } catch {
+            AppLog.updates.error("update check payload unreadable: \(error.localizedDescription, privacy: .public)")
+            return failCheck("Respuesta ilegible de GitHub / unreadable reply from GitHub")
+        }
+        guard let tag = obj["tag_name"] as? String else {
+            AppLog.updates.error("update check payload has no tag_name")
+            return failCheck("Respuesta sin número de versión / reply carried no version")
+        }
+        checkError = nil
 
         let remote = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
         if Self.isVersion(remote, newerThan: AppInfo.version) {
@@ -77,6 +112,12 @@ final class UpdateChecker: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Records a failed check. `latestVersion` is left alone so a previous
+    /// successful result stays visible; only the error surfaces.
+    private func failCheck(_ message: String) {
+        checkError = message
     }
 
     /// Downloads the release DMG to ~/Downloads, verifies it against the

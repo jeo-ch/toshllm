@@ -340,16 +340,21 @@ struct SettingsView: View {
     }
 
     private func exportSettings() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "ToshLLM Settings.json"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let data: Data
         do {
-            try SettingsArchive.exportData().write(to: url, options: .atomic)
-            settingsTransferMessage = loc.t("Ajustes exportados correctamente.",
-                                            "Settings exported successfully.")
+            data = try SettingsArchive.exportData()
         } catch {
             settingsTransferMessage = error.localizedDescription
+            return
+        }
+        switch FileExport.write(data, suggestedName: "ToshLLM Settings.json") {
+        case .cancelled:
+            break
+        case .written:
+            settingsTransferMessage = loc.t("Ajustes exportados correctamente.",
+                                            "Settings exported successfully.")
+        case .failed(let message):
+            settingsTransferMessage = message
         }
     }
 

@@ -55,7 +55,9 @@ enum PluginCapability: String, Codable, Sendable {
 // MARK: - Plugin Context
 
 /// Context provided to plugins during initialization.
-struct PluginContext: Sendable {
+/// `@MainActor`: it hands out the main-actor-isolated plugin manager.
+@MainActor
+struct PluginContext {
     let pluginManager: PluginManagerProtocol
     let settings: PluginSettings
     let logger: PluginLogger
@@ -125,8 +127,8 @@ enum PluginEvent: Sendable {
     case modelUnloaded
     case messageReceived(content: String)
     case messageSent(content: String)
-    case toolCalled(name: String, arguments: [String: Any])
-    case custom(name: String, data: [String: Any])
+    case toolCalled(name: String, arguments: [String: AnyCodable])
+    case custom(name: String, data: [String: AnyCodable])
 }
 
 // MARK: - Plugin Logger
@@ -158,7 +160,11 @@ struct PluginLogger: Sendable {
 // MARK: - Plugin Manager Protocol
 
 /// Protocol for plugin manager services.
-protocol PluginManagerProtocol: Sendable {
+/// `@MainActor`: the only implementation is `PluginManager`, whose registry is
+/// main-actor state. Declaring the isolation here keeps conformances from
+/// crossing actor boundaries (an error under the Swift 6 language mode).
+@MainActor
+protocol PluginManagerProtocol {
     func getService<T>(_ type: T.Type) -> T?
     func registerService<T>(_ service: T, as type: T.Type)
 }
@@ -166,7 +172,9 @@ protocol PluginManagerProtocol: Sendable {
 // MARK: - Default Plugin Implementation
 
 /// Base class for plugins with default implementations.
-class BasePlugin: Plugin {
+/// `@unchecked Sendable`: every stored property is immutable except `context`,
+/// which is behind a lock — a non-final class can't get this checked.
+class BasePlugin: Plugin, @unchecked Sendable {
     let id: String
     let name: String
     let version: String
@@ -175,7 +183,12 @@ class BasePlugin: Plugin {
     let dependencies: [String]
     let capabilities: [PluginCapability]
     
-    var context: PluginContext?
+    private let contextLock = NSLock()
+    private var _context: PluginContext?
+    var context: PluginContext? {
+        get { contextLock.lock(); defer { contextLock.unlock() }; return _context }
+        set { contextLock.lock(); _context = newValue; contextLock.unlock() }
+    }
     var logger: PluginLogger { PluginLogger(pluginID: id) }
     
     init(

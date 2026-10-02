@@ -367,30 +367,41 @@ struct ConversationListView: View {
     }
 
     private func exportArchive() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "ToshLLM-conversations.json"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let data: Data
         do {
-            try chat.exportArchiveData().write(to: url, options: .atomic)
-            archiveMessage = loc.t("Historial exportado correctamente.",
-                                   "Conversation history exported successfully.")
+            data = try chat.exportArchiveData()
         } catch {
             archiveMessage = error.localizedDescription
+            return
+        }
+        switch FileExport.write(data, suggestedName: "ToshLLM-conversations.json") {
+        case .cancelled:
+            break
+        case .written:
+            archiveMessage = loc.t("Historial exportado correctamente.",
+                                   "Conversation history exported successfully.")
+        case .failed(let message):
+            archiveMessage = message
         }
     }
 
     private func exportJSONL() {
-        let panel = NSSavePanel()
-        if let jsonl = UTType(filenameExtension: "jsonl") { panel.allowedContentTypes = [jsonl] }
-        panel.nameFieldStringValue = "ToshLLM-conversations.jsonl"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let data: Data
         do {
-            try chat.exportJSONLData().write(to: url, options: .atomic)
-            archiveMessage = loc.t("Historial JSONL compatible con llama.cpp exportado correctamente.",
-                                   "llama.cpp-compatible JSONL history exported successfully.")
+            data = try chat.exportJSONLData()
         } catch {
             archiveMessage = error.localizedDescription
+            return
+        }
+        let jsonl = UTType(filenameExtension: "jsonl").map { [$0] } ?? [.json]
+        switch FileExport.write(data, suggestedName: "ToshLLM-conversations.jsonl", contentTypes: jsonl) {
+        case .cancelled:
+            break
+        case .written:
+            archiveMessage = loc.t("Historial JSONL compatible con llama.cpp exportado correctamente.",
+                                   "llama.cpp-compatible JSONL history exported successfully.")
+        case .failed(let message):
+            archiveMessage = message
         }
     }
 

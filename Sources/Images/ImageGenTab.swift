@@ -446,6 +446,9 @@ struct QueueFeedView: View {
     @State private var draftTarget: UUID? = nil
     /// img2img source for queued prompts; empty = the instance's own init image.
     @State private var draftInitImage = ""
+    /// Set when a "save a copy" fails; the panel's own error alert covers the
+    /// rest, so this is only for the case the panel cannot report itself.
+    @State private var saveError: String? = nil
     @AppStorage(SettingsKeys.imagenQueueGrid) private var grid = false
 
     var body: some View {
@@ -496,6 +499,15 @@ struct QueueFeedView: View {
                 }
             }
         }
+        .alert(loc.t("No se pudo guardar", "Could not save"), isPresented: saveErrorBinding) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(saveError ?? "")
+        }
+    }
+
+    private var saveErrorBinding: Binding<Bool> {
+        Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })
     }
 
     /// Prompt on top, send options (target, seed, image) and Add in one row,
@@ -831,11 +843,8 @@ struct QueueFeedView: View {
         pool.queueActive ? pool.stopQueue() : pool.startQueue()
     }
     private func save(_ g: GeneratedImage) {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = g.url.lastPathComponent
-        if panel.runModal() == .OK, let dest = panel.url {
-            try? FileManager.default.removeItem(at: dest)
-            try? FileManager.default.copyItem(at: g.url, to: dest)
+        if case .failed(let message) = FileExport.copy(g.url, suggestedName: g.url.lastPathComponent) {
+            saveError = message
         }
     }
 }
