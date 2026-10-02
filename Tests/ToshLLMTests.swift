@@ -325,6 +325,43 @@ final class WhisperTranscriptTests: XCTestCase {
         XCTAssertEqual(AudioVADProfile.defaultProfile, .balanced)
     }
 
+    /// Padding each side of a detected region by at least the silence gap closes
+    /// the gap the segmenter just used, so the regions merge back together. The
+    /// "sensitive" preset shipped 140 ms of pad against a 100 ms gap, which made
+    /// it produce fewer and longer subtitles than "balanced" despite its lower
+    /// threshold — the opposite of what the name promises.
+    func testNoVADProfilePadsMoreThanItsSilenceGap() {
+        for profile in [AudioVADProfile.sensitive, .balanced, .strict] {
+            let c = profile.calibration
+            XCTAssertLessThan(c.speechPadMS, c.minSilenceDurationMS,
+                              "\(profile.rawValue) pads \(c.speechPadMS) against a \(c.minSilenceDurationMS) gap")
+        }
+    }
+
+    /// The custom sliders clamp independently, so the coupling has to be restored
+    /// where the pair is combined.
+    func testCustomVADKeepsThePadUnderTheSilenceGap() {
+        let inverted = AudioVADCalibration.custom(
+            threshold: 0.5, minSpeechDurationMS: 250,
+            minSilenceDurationMS: 50, maxSpeechDurationSeconds: 30,
+            speechPadMS: 500)
+        XCTAssertLessThan(inverted.speechPadMS, inverted.minSilenceDurationMS)
+
+        // A pad that already fits is untouched.
+        let fine = AudioVADCalibration.custom(
+            threshold: 0.5, minSpeechDurationMS: 250,
+            minSilenceDurationMS: 500, maxSpeechDurationSeconds: 30,
+            speechPadMS: 120)
+        XCTAssertEqual(fine.speechPadMS, 120)
+
+        // A zero pad stays zero rather than being pushed to silence - 1.
+        let none = AudioVADCalibration.custom(
+            threshold: 0.5, minSpeechDurationMS: 250,
+            minSilenceDurationMS: 500, maxSpeechDurationSeconds: 30,
+            speechPadMS: 0)
+        XCTAssertEqual(none.speechPadMS, 0)
+    }
+
     func testCustomVADCalibrationIsClampedBeforeLaunchingWhisper() {
         let calibration = AudioVADCalibration.custom(
             threshold: 2, minSpeechDurationMS: 1,
@@ -1355,8 +1392,30 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertFalse(s.arguments.contains("--slot-save-path"))
     }
 
-    func testBenchmarkDepthArgument() {
+    /// llama-bench defaults to its own thread count, so a run without -t measures
+    /// something the server never does — while the code right above it promises
+    /// every speed-affecting option carries over. This changes published tok/s for
+    /// anyone whose thread setting is not llama-bench's default.
+    func testBenchmarkCarriesTheServerThreadCount() {
         var s = makeSettings()
+        s.threads = 6
+        let plain = s.benchmarkArguments
+        XCTAssertEqual(plain[plain.firstIndex(of: "-t")! + 1], "6")
+
+        s.threads = 12
+        let changed = s.benchmarkArguments
+        XCTAssertEqual(changed[changed.firstIndex(of: "-t")! + 1], "12")
+
+        // The Dynamic MoE path builds its own list and must do the same.
+        s.dynamicMoeEnabled = true
+        s.executionMode = "auto"
+        let json = #"{"plan_schema_version": 1, "state": "DMOE_BOUNDED_HOST", "mode": "dmoe", "reason": "r", "fallback": "", "kv": "f16", "n_ctx": 8192, "ubatch": 1024, "ncmoe": 0, "reserve_mib": 1, "arena_mib": 1, "min_arena_mib": 1, "projected_private_mib": 1, "projected_free_mib": 1, "vram_total_mib": 1, "vram_free_mib": 1, "host_required_mib": 1, "host_ram_mib": 1, "host_available_mib": 1, "host_reserve_mib": 1, "bank_mib": 1, "mlock": "required", "dispersion": "high", "candidates": []}"#
+        s.benchmarkPlan = try? XCTUnwrap(AutoMemoryPlan.decode(Data(json.utf8)))
+        let moe = s.benchmarkArguments
+        XCTAssertEqual(moe[moe.firstIndex(of: "-t")! + 1], "12")
+    }
+
+    func testBenchmarkDepthArgument() {        var s = makeSettings()
         // Depth 0 (default) must not emit -d.
         XCTAssertNil(s.benchmarkArguments.firstIndex(of: "-d"))
         s.benchDepth = 4096
@@ -2698,6 +2757,59 @@ final class BenchAndProfileTests: XCTestCase {
         s.applyPinned(p, [])
         XCTAssertEqual(s.modelPath, "/global.gguf")
     }
+
+    /// Pinning MoE has to carry the plan's own knobs. It did not: a server added
+    /// with a profile inherited the global execution mode and the global
+    /// "keep experts in RAM" switch, so a profile could not describe a server's
+    /// memory plan at all.
+    func testPinningMoECarriesThePlanKnobs() {
+        var s = ServerSettings.fromDefaults()
+        s.executionMode = "auto"
+        s.dynamicMoeLeanRAM = false
+        var p = s.makeProfile(name: "moe")
+        p.dynamicMoeEnabled = true
+        p.executionMode = "dmoe"
+        p.dynamicMoeLeanRAM = true
+
+        var pinned = s
+        pinned.applyPinned(p, [Profile.Pin.moe])
+        XCTAssertTrue(pinned.dynamicMoeEnabled)
+        XCTAssertEqual(pinned.executionMode, "dmoe")
+        XCTAssertTrue(pinned.dynamicMoeLeanRAM)
+
+        // Without the pin they keep the global value.
+        var unpinned = s
+        unpinned.applyPinned(p, [Profile.Pin.ctx])
+        XCTAssertEqual(unpinned.executionMode, "auto")
+        XCTAssertFalse(unpinned.dynamicMoeLeanRAM)
+    }
+
+    /// A profile written before these fields existed decodes them as nil, and a nil
+    /// must mean "leave the global alone" rather than reset it — otherwise every
+    /// existing profile would quietly change what its server launches with.
+    func testAnOlderProfileWithoutThePlanKnobsLeavesThemAlone() throws {
+        var s = ServerSettings.fromDefaults()
+        s.executionMode = "auto"
+        s.dynamicMoeLeanRAM = true
+        var p = s.makeProfile(name: "old")
+        p.executionMode = nil
+        p.dynamicMoeLeanRAM = nil
+
+        var pinned = s
+        pinned.applyPinned(p, [Profile.Pin.moe])
+        XCTAssertEqual(pinned.executionMode, "auto")
+        XCTAssertTrue(pinned.dynamicMoeLeanRAM)
+
+        // And it survives a round trip through JSON, which is how a real old
+        // profile arrives.
+        let decoded = try JSONDecoder().decode(Profile.self, from: JSONEncoder().encode(p))
+        XCTAssertNil(decoded.executionMode)
+        XCTAssertNil(decoded.dynamicMoeLeanRAM)
+        var viaApply = s
+        viaApply.apply(decoded)
+        XCTAssertEqual(viaApply.executionMode, "auto")
+        XCTAssertTrue(viaApply.dynamicMoeLeanRAM)
+    }
 }
 
 // MARK: - Documentation and localization
@@ -2823,6 +2935,19 @@ final class RouterModeTests: XCTestCase {
         XCTAssertTrue(args.contains("--models-preset"))
         XCTAssertTrue(args.contains("--models-autoload"))
         XCTAssertEqual(args[args.firstIndex(of: "--models-max")! + 1], "2")
+    }
+
+    /// The switch reached only the single-model path, so a router server answered
+    /// no /v1/embeddings at all while its own card still showed it on.
+    func testRouterPassesTheEmbeddingsSwitchThrough() {
+        var off = makeSettings(routerMode: true)
+        off.embeddings = false
+        XCTAssertFalse(off.arguments.contains("--embeddings"))
+
+        var on = makeSettings(routerMode: true)
+        on.embeddings = true
+        XCTAssertTrue(on.arguments.contains("--embeddings"),
+                      "a router server must serve /v1/embeddings when asked to")
     }
 
     func testNonRouterArgumentsUnaffected() {

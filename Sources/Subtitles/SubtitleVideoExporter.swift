@@ -106,13 +106,19 @@ final class SubtitleVideoExporter: ObservableObject {
     /// an HEVC source re-encoded as H.264 pays for nothing.
     nonisolated private static func preset(for composition: AVAsset,
                                            source: AVAssetTrack) async -> String {
-        let available = AVAssetExportSession.exportPresets(compatibleWith: composition)
-        guard let formats = try? await source.load(.formatDescriptions),
-              formats.contains(where: { CMFormatDescriptionGetMediaSubType($0) == kCMVideoCodecType_HEVC }),
-              available.contains(AVAssetExportPresetHEVCHighestQuality) else {
-            return AVAssetExportPresetHighestQuality
+        let hevc = AVAssetExportPresetHEVCHighestQuality
+        let h264 = AVAssetExportPresetHighestQuality
+        // Asked per preset against the file type actually written below, rather
+        // than listing what the composition supports: exportPresets(compatibleWith:)
+        // was deprecated in macOS 13 for exactly this replacement.
+        let supports = await AVAssetExportSession.compatibility(
+            ofExportPreset: hevc, with: composition, outputFileType: .mov)
+        guard supports,
+              let formats = try? await source.load(.formatDescriptions),
+              formats.contains(where: { CMFormatDescriptionGetMediaSubType($0) == kCMVideoCodecType_HEVC }) else {
+            return h264
         }
-        return AVAssetExportPresetHEVCHighestQuality
+        return hevc
     }
 
     /// Without carrying the source's colour tags across, a wide-gamut or HDR clip

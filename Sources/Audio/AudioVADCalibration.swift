@@ -26,12 +26,17 @@ struct AudioVADCalibration: Equatable, Sendable {
     static func custom(threshold: Double, minSpeechDurationMS: Double,
                        minSilenceDurationMS: Double, maxSpeechDurationSeconds: Double,
                        speechPadMS: Double) -> AudioVADCalibration {
-        AudioVADCalibration(
+        let silence = Int(min(2_000, max(50, minSilenceDurationMS)).rounded())
+        return AudioVADCalibration(
             threshold: min(0.95, max(0.1, threshold)),
             minSpeechDurationMS: Int(min(2_000, max(100, minSpeechDurationMS)).rounded()),
-            minSilenceDurationMS: Int(min(2_000, max(50, minSilenceDurationMS)).rounded()),
+            minSilenceDurationMS: silence,
             maxSpeechDurationSeconds: min(120, max(10, maxSpeechDurationSeconds)),
-            speechPadMS: Int(min(500, max(0, speechPadMS)).rounded()),
+            // Each side is padded by this much, so a pad at or above the silence
+            // gap re-closes the gap the segmenter just used and neighbouring
+            // speech merges. The two knobs are clamped independently, so the
+            // coupling has to be restored here rather than in the UI.
+            speechPadMS: min(Int(min(500, max(0, speechPadMS)).rounded()), max(0, silence - 1)),
             samplesOverlap: 0.1
         )
     }

@@ -33,6 +33,11 @@ struct Profile: Codable, Identifiable {
     var parallelSlots: Int? = nil
     var faAmd: Bool? = nil
     var dynamicMoeEnabled: Bool? = nil
+    /// Part of the MoE group: how the plan is chosen, and how much of it stays in
+    /// RAM. Both used to reach an added server only through the global settings,
+    /// so pinning MoE gave a server a plan it could not configure.
+    var executionMode: String? = nil
+    var dynamicMoeLeanRAM: Bool? = nil
     var persistCache: Bool? = nil
     var multiGPU: Bool? = nil
     // Split knobs optional for backward compatibility with profiles saved before they existed.
@@ -235,6 +240,7 @@ extension ServerSettings {
                 engine: engineTag, cacheRAM: cacheRAM, reasoningInline: reasoningInline,
                 parallelSlots: parallelSlots, faAmd: faAmd,
                 dynamicMoeEnabled: dynamicMoeEnabled,
+                executionMode: executionMode, dynamicMoeLeanRAM: dynamicMoeLeanRAM,
                 persistCache: persistCache,
                 multiGPU: multiGPU, multiGPUCount: multiGPUCount,
                 splitMode: splitMode, splitGroupSize: splitGroupSize,
@@ -292,7 +298,16 @@ extension ServerSettings {
     mutating func applyPinned(_ p: Profile, _ pinned: Set<String>) {
         port = p.port
         if pinned.contains(Profile.Pin.model) { modelPath = p.modelPath; ncmoe = p.ncmoe }
-        if pinned.contains(Profile.Pin.moe) { ncmoe = p.ncmoe }
+if pinned.contains(Profile.Pin.moe) {
+            ncmoe = p.ncmoe
+            if let v = p.dynamicMoeEnabled { dynamicMoeEnabled = v }
+        if let v = p.executionMode { executionMode = v }
+        if let v = p.dynamicMoeLeanRAM { dynamicMoeLeanRAM = v }
+            // nil in a profile saved before these existed, so an old profile
+            // keeps the global value rather than silently taking a new meaning.
+            if let v = p.executionMode { executionMode = v }
+            if let v = p.dynamicMoeLeanRAM { dynamicMoeLeanRAM = v }
+        }
         if pinned.contains(Profile.Pin.ctx) { ctx = p.ctx }
         if pinned.contains(Profile.Pin.ctx), let value = p.contextAutomatic { contextAutomatic = value }
         if pinned.contains(Profile.Pin.flashAttention) {

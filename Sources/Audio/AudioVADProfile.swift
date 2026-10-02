@@ -17,9 +17,15 @@ enum AudioVADProfile: String, CaseIterable, Identifiable {
     var calibration: AudioVADCalibration {
         switch self {
         case .sensitive:
+            // The pad has to stay under the silence gap it is measured against:
+            // padding each side by more than the gap closes it again, so two
+            // regions the segmenter had separated merge back into one cue. This
+            // preset shipped 140 against a 100 ms gap, which is why "sensitive"
+            // produced fewer, longer subtitles than "balanced" despite the lower
+            // threshold.
             AudioVADCalibration(threshold: 0.35, minSpeechDurationMS: 150,
                                 minSilenceDurationMS: 100, maxSpeechDurationSeconds: 30,
-                                speechPadMS: 140, samplesOverlap: 0.2)
+                                speechPadMS: 90, samplesOverlap: 0.2)
         case .balanced, .custom:
             AudioVADCalibration(threshold: 0.5, minSpeechDurationMS: 250,
                                 minSilenceDurationMS: 100, maxSpeechDurationSeconds: 30,

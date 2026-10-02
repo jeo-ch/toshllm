@@ -3,6 +3,47 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Downloads are checked against something.** A plain (non-LFS) GGUF publishes no
+  SHA-256, and the file was accepted unverified while the list said "Done and
+  verified". The size the server itself declares is now compared when there is no
+  digest, and a transfer with neither is labelled "Done (not verified)" instead.
+
+- **Pausing a download during its retry backoff no longer resumes by itself.** The
+  guard compared the phase against the localized cancel message, so a pause was
+  undone when the sleep ended.
+
+- **Cancelling an image, a video or an upscale cannot wedge the queue.** SIGTERM
+  alone left a process that ignored it holding its slot and VRAM for the rest of
+  the session.
+
+- **A failed download stops retrying.** Any received data cleared the failure
+  count, so a server that trickled bytes and reset looped forever.
+
+- **A server that never becomes ready fails after ten minutes, not five hours.**
+  The health check counted attempts, not time, and its requests had no timeout.
+
+- **Pinning MoE in a server profile carries the plan's knobs.** The execution
+  mode and the Save RAM switch reached an added server only through the global
+  settings, so a profile could not describe a server's memory plan.
+
+- **The "sensitive" VAD preset segments rather than merges.** It padded each side
+  of speech by 140 ms against a 100 ms silence gap, closing the gap the
+  segmenter had just used, so it produced fewer and longer subtitles than
+  "balanced". A custom pad is now held under the silence gap too.
+
+- **A router server serves /v1/embeddings when the switch is on.** The flag was
+  only emitted on the single-model path.
+
+### Changed
+
+- **Benchmark numbers now reflect the configured thread count.** `llama-bench`
+  defaulted to its own, so published tok/s did not describe what the server
+  delivers. Previously recorded results are not comparable with new ones.
+
 ## [0.87.13] - 2026-10-01
 
 ### Added

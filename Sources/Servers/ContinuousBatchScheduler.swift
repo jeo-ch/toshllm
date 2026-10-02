@@ -404,8 +404,10 @@ extension ContinuousBatchScheduler {
         // Add Flash Attention if supported
         args += ["--flash-attn"]
         
-        // Set request handler
-        setRequestHandler { [weak self] prompt, conversationID in
+        // Set request handler. No capture: this placeholder answers from the
+        // prompt alone, and capturing the scheduler weakly only to never touch it
+        // was a warning the compiler was right to raise.
+        setRequestHandler { prompt, _ in
             // This would integrate with the actual server
             // For now, return a placeholder
             return "Response for: \(prompt.prefix(50))..."

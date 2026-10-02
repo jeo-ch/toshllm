@@ -426,6 +426,10 @@ struct ServerSettings {
             "--port", String(port),
         ]
         args.append("--metrics")
+        // Was emitted only on the single-model path, so a router server silently
+        // lost /v1/embeddings while its own card still showed the switch as on.
+        // The preset supplies model paths only, so this is a server-level flag.
+        if embeddings { args.append("--embeddings") }
         if agentToolsEnabled {
             args += ["--jinja", "--tools", "all"]
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
@@ -564,6 +568,10 @@ struct ServerSettings {
         // delivers: with experts on the CPU, locking the model is worth most of
         // the prompt speed.
         var args = ["-m", modelPath, "-ngl", String(ngl), "-r", "2",
+                    // llama-bench would otherwise use its own default and report a
+                    // tok/s the server never delivers; the comment above promises
+                    // every speed-affecting option carries over.
+                    "-t", String(threads),
                     "-p", String(benchPPClamped), "-n", String(benchTGClamped)]
         let mode = Self.loadMode(noMmap: noMmap, mlock: mlock)
         if let mode { args += ["--load-mode", mode] }
@@ -629,6 +637,7 @@ struct ServerSettings {
     /// The layout the engine's plan applies in llama-server, spelled out for llama-bench.
     private func dynamicMoeBenchmarkArguments(_ plan: AutoMemoryPlan) -> [String] {
         var args = ["-m", modelPath, "-ngl", "99", "-r", "2", "-fa", "1",
+                    "-t", String(threads),
                     "-p", String(benchPPClamped), "-n", String(benchTGClamped),
                     "-ub", String(plan.ubatch), "-b", String(max(plan.ubatch, 2048))]
         if benchDepthClamped > 0 { args += ["-d", String(benchDepthClamped)] }
