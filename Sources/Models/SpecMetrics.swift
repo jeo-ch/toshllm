@@ -17,7 +17,10 @@ struct SpecDecodeMetrics: Equatable, Sendable {
     var ran: Bool { drafts > 0 && draftTokens > 0 }
 
     var acceptance: Double? {
-        draftTokens > 0 ? Double(acceptedTokens) / Double(draftTokens) : nil
+        guard draftTokens > 0 else { return nil }
+        // Clamped: a counter that accepted more than it drafted would otherwise
+        // render as 150%.
+        return min(1, Double(acceptedTokens) / Double(draftTokens))
     }
 
     /// Mean tokens accepted per verification step, the figure that decides whether
@@ -45,8 +48,12 @@ struct SpecDecodeMetrics: Equatable, Sendable {
             guard !line.hasPrefix("#"), line.hasPrefix(prefix) else { continue }
             guard let space = line.lastIndex(of: " ") else { continue }
             let name = line[line.startIndex..<space].trimmingCharacters(in: .whitespaces)
-            guard let value = Int(line[line.index(after: space)...].trimmingCharacters(in: .whitespaces))
-            else { continue }
+            // Prometheus writes any float here — "1.0", "1e+03", "+Inf", "NaN".
+            // Int() rejected all of those, so a single counter emitted as 337.0
+            // read as absent and the panel hid itself as "speculation was off".
+            let parsed = Double(line[line.index(after: space)...].trimmingCharacters(in: .whitespaces))
+            guard let parsed, parsed.isFinite, parsed >= 0, parsed < Double(Int32.max) else { continue }
+            let value = Int(parsed)
 
             switch name {
             case prefix + "num_draft_tokens_total":    out.draftTokens = value
@@ -59,11 +66,17 @@ struct SpecDecodeMetrics: Equatable, Sendable {
             }
         }
 
-        if let highest = byPosition.keys.max() {
+        if let highest = byPosition.keys.max(), highest >= 0, highest < Self.maxDraftPositions {
+            // The guard matters: 0...highest traps when highest is negative, and
+            // the label is a number off the wire with nothing constraining it.
             out.acceptedPerPosition = (0...highest).map { byPosition[$0] ?? 0 }
         }
         return out
     }
+
+    /// Ceiling on the position label, so a malformed metric cannot ask for a very
+    /// large array. Well past any real draft depth.
+    private static let maxDraftPositions = 1024
 
     private static func positionLabel(in name: String) -> Int? {
         guard let open = name.firstIndex(of: "{"), let close = name.lastIndex(of: "}") else { return nil }

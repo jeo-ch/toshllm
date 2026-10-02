@@ -1238,7 +1238,18 @@ final class ChatStore: ObservableObject {
             }
             req.httpBody = body
             do {
-                _ = try await NetworkManager.session.data(for: req)
+                let (_, response) = try await NetworkManager.session.data(for: req)
+                // The response was being discarded, so a 500 from the engine —
+                // slot unsupported, KV type mismatch, filename rejected — took the
+                // same path as success. The caller then marked the slot as holding
+                // this conversation, and the conversation never regained its KV
+                // reuse again: every turn re-prefilled from scratch, with the
+                // cache switch visibly on and nothing said.
+                if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                    AppLog.chat.warning("slot \(action) attempt \(attempt) for \(convID.uuidString): HTTP \(http.statusCode)")
+                    if attempt < 3 { try? await Task.sleep(for: .milliseconds(200)) }
+                    continue
+                }
                 if attempt > 1 {
                     AppLog.chat.info("slot \(action) succeeded on attempt \(attempt) for \(convID.uuidString)")
                 }
@@ -1664,7 +1675,11 @@ final class ChatStore: ObservableObject {
     }
 
     nonisolated static func streamedError(from object: [String: Any]) -> String? {
-        guard let error = object["error"] else { return nil }
+        // JSONSerialization hands back NSNull for an explicit `"error": null`,
+        // which is not nil — every branch below would fall through to the generic
+        // message and throw, so a chunk that merely reports no error ended the
+        // whole stream. JavaScriptSandboxService already guards this way.
+        guard let error = object["error"], !(error is NSNull) else { return nil }
         if let details = error as? [String: Any],
            let message = details["message"] as? String, !message.isEmpty {
             return message

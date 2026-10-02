@@ -23,6 +23,10 @@ struct ChatStreamAccumulator {
     var finishReason: String?
     private(set) var toolCalls: [ChatToolCall] = []
 
+    /// Ceiling on parallel tool calls in one turn. Well above anything the agent
+    /// loop issues, and low enough that a malformed index cannot allocate.
+    private static let maxParallelToolCalls = 64
+
     mutating func consume(_ line: String) throws -> ChatStreamEvent? {
         guard line.hasPrefix("data: ") else { return nil }
         let payload = line.dropFirst(6)
@@ -83,6 +87,11 @@ struct ChatStreamAccumulator {
     private mutating func mergeToolCalls(_ fragments: [[String: Any]]) {
         for fragment in fragments {
             let index = (fragment["index"] as? NSNumber)?.intValue ?? toolCalls.count
+            // Bounded on both ends. A negative index skipped the growth loop and
+            // then indexed out of range; a huge one asked for that many empty
+            // tool calls. The endpoint is unauthenticated unless the user turned
+            // the API key on, so the field is not necessarily well-behaved.
+            guard index >= 0, index < Self.maxParallelToolCalls else { continue }
             while toolCalls.count <= index {
                 toolCalls.append(ChatToolCall(name: "", arguments: ""))
             }

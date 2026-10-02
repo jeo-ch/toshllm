@@ -48,7 +48,16 @@ struct SubtitleCue: Identifiable, Hashable, Codable, Sendable {
     }
 
     static func timestamp(_ seconds: TimeInterval, decimal: String) -> String {
-        let milliseconds = max(0, Int((seconds * 1_000).rounded()))
+        // Int(Double) traps on NaN, on infinity and on anything past Int64 — and a
+        // cue's start/end come straight out of a project file with no validation,
+        // so "start": 1e17 was enough to crash the export. Anything not finite or
+        // not a real duration collapses to zero rather than taking the app down.
+        let milliseconds: Int
+        if seconds.isFinite, seconds > 0, seconds < 3_600_000 {
+            milliseconds = Int((seconds * 1_000).rounded())
+        } else {
+            milliseconds = 0
+        }
         return "\(pad(milliseconds / 3_600_000, width: 2)):\(pad((milliseconds / 60_000) % 60, width: 2)):\(pad((milliseconds / 1_000) % 60, width: 2))\(decimal)\(pad(milliseconds % 1_000, width: 3))"
     }
 

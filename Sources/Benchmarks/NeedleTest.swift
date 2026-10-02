@@ -118,11 +118,7 @@ final class NeedleTest: ObservableObject {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let key = ServerSettings.activeAPIKey() { req.setValue("Bearer " + key, forHTTPHeaderField: "Authorization") }
-        let body: [String: Any] = [
-            "messages": [["role": "user", "content": prompt]],
-            "max_tokens": 32, "temperature": 0, "cache_prompt": false,
-            "chat_template_kwargs": ["enable_thinking": false],
-        ]
+        let body: [String: Any] = requestBody(prompt: prompt)
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: req)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
@@ -131,9 +127,31 @@ final class NeedleTest: ObservableObject {
         }
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let message = ((json?["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])
-        let answer = (message?["content"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        var answer = (message?["content"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        // Some templates put the answer in reasoning_content even with thinking
+        // off, and a needle run that read nothing there scored as "the model
+        // forgot", which is the one conclusion this card must not draw wrongly.
+        if answer.isEmpty, let reasoning = message?["reasoning_content"] as? String {
+            answer = reasoning.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         let usage = json?["usage"] as? [String: Any]
-        return (answer, usage?["prompt_tokens"] as? Int)
+        return (answer, (usage?["prompt_tokens"] as? NSNumber)?.intValue)
+    }
+
+    /// The request the recall check sends.
+    ///
+    /// Both switches are needed, and the reason is the same as in chat: a template
+    /// that ignores `enable_thinking` (Qwen3.6 still prefills `<think>`) spends the
+    /// whole 32-token budget on reasoning and returns an empty content, which the
+    /// grid then reported as a failed recall. Sending only the first switch made
+    /// every reasoning model look like it had lost its context.
+    static func requestBody(prompt: String) -> [String: Any] {
+        [
+            "messages": [["role": "user", "content": prompt]],
+            "max_tokens": 32, "temperature": 0, "cache_prompt": false,
+            "chat_template_kwargs": ["enable_thinking": false],
+            "thinking_budget_tokens": 0,
+        ]
     }
 }
 

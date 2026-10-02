@@ -1016,7 +1016,12 @@ final class AudioStudioController: ObservableObject {
     }
 
     private func normalizeCueIDs() {
-        let translationByID = Dictionary(uniqueKeysWithValues: translatedCues.map { ($0.id, $0.text) })
+        // Not uniqueKeysWithValues: that traps on a repeated id, and ids come
+        // straight out of a project file. Two cues claiming the same id used to
+        // crash the first delete, merge or split. First one wins, matching the
+        // bilingual export below and the rest of the file.
+        let translationByID = Dictionary(translatedCues.map { ($0.id, $0.text) },
+                                         uniquingKeysWith: { first, _ in first })
         let pairs = originalCues.enumerated().map { offset, cue in
             (SubtitleCue(id: offset + 1, start: cue.start, end: cue.end, text: cue.text),
              translationByID[cue.id])

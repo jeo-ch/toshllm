@@ -257,15 +257,29 @@ struct NativeChatView: View {
 
     private func reasoningEffortLabel(_ level: String) -> String {
         switch level {
-        case "none", "no_think": loc.t("Sin razonamiento", "No reasoning")
-        case "minimal": loc.t("Mínimo · sin presupuesto", "Minimal · no budget")
-        case "low": loc.t("Bajo · 512 tokens", "Low · 512 tokens")
-        case "medium": loc.t("Medio · 2.048 tokens", "Medium · 2,048 tokens")
-        case "high": loc.t("Alto · 8.192 tokens", "High · 8,192 tokens")
-        case "xhigh": loc.t("Muy alto · sin presupuesto", "Very high · no budget")
-        case "max": loc.t("Máximo · sin presupuesto", "Maximum · no budget")
-        default: level
+        case "none", "no_think": return loc.t("Sin razonamiento", "No reasoning")
+        case "minimal": return effortLabel(level, es: "Mínimo", en: "Minimal")
+        case "low": return effortLabel(level, es: "Bajo", en: "Low")
+        case "medium": return effortLabel(level, es: "Medio", en: "Medium")
+        case "high": return effortLabel(level, es: "Alto", en: "High")
+        case "xhigh": return loc.t("Muy alto · sin presupuesto", "Very high · no budget")
+        case "max": return loc.t("Máximo · sin presupuesto", "Maximum · no budget")
+        default: return level
         }
+    }
+
+    /// The level's name with the budget that will actually be sent.
+    ///
+    /// The number comes from `reasoningBudget(for:)`, which is what the request
+    /// uses, rather than a second copy of the table here — "minimal" claimed "no
+    /// budget" while 128 was sent, which reads as a much larger allowance than it
+    /// is and gives the model almost no room to think.
+    private func effortLabel(_ level: String, es: String, en: String) -> String {
+        guard let budget = ChatStore.reasoningBudget(for: level) else {
+            return loc.t("\(es) · sin presupuesto", "\(en) · no budget")
+        }
+        let grouped = budget.formatted(.number.grouping(.automatic))
+        return loc.t("\(es) · \(grouped) tokens", "\(en) · \(grouped) tokens")
     }
 
     private var samplingSettings: ChatSamplingSettings {

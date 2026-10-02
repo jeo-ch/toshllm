@@ -2016,8 +2016,16 @@ final class ServerController: ObservableObject {
     nonisolated static func startupBanner(settings: ServerSettings, args: [String],
                                           env: [String: String]) -> String {
         func redact(_ items: [String]) -> [String] {
+            // Both spellings, and every occurrence. llama.cpp accepts
+            // `--api-key=x` as well as `--api-key x`, and the joined form is the
+            // natural thing to type in Extra arguments — so the banner ended up
+            // carrying the real key into the rotating log and the Logs tab, which
+            // has a copy button.
             var out = items
-            if let i = out.firstIndex(of: "--api-key"), i + 1 < out.count { out[i + 1] = "***" }
+            for i in out.indices {
+                if out[i] == "--api-key", i + 1 < out.count { out[i + 1] = "***" }
+                if out[i].hasPrefix("--api-key=") { out[i] = "--api-key=***" }
+            }
             return out
         }
         let engine: String
@@ -2039,7 +2047,14 @@ final class ServerController: ObservableObject {
         // Include user-provided environment variables in diagnostic logs.
         let userKeys = settings.extraArgTokens.env.keys.filter { !envKeys.contains($0) }.sorted()
         let envLine = (envKeys + userKeys)
-            .compactMap { k in env[k].map { "\(k)=\($0)" } }
+            .compactMap { k -> String? in
+                guard let value = env[k] else { return nil }
+                // The app's own variables are engine tuning and safe to print. The
+                // user's are whatever they typed into Extra arguments, which for a
+                // gated model is HF_TOKEN=…, OPENAI_API_KEY=… — a credential
+                // printed verbatim into a log the user is invited to paste.
+                return "\(k)=\(envKeys.contains(k) ? value : "***")"
+            }
             .joined(separator: " ")
         let moeLine = settings.usesAutoPlan
             ? "memory=auto-plan (\(settings.executionMode), kv \(settings.autoKVMode))"
