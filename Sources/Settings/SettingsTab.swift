@@ -59,10 +59,13 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.imageMaxTokens) private var imageMaxTokens = 0
     @AppStorage(SettingsKeys.parallelSlots) private var parallelSlots = 1
     @AppStorage(SettingsKeys.reasoningInline) private var reasoningInline = false
+    @AppStorage(SettingsKeys.serverDefaultReasoning) private var serverDefaultReasoning = "model"
+    @AppStorage(SettingsKeys.serverDefaultMaxTokens) private var serverDefaultMaxTokens = 0
     @AppStorage(SettingsKeys.modelPath) private var modelPath = ""
     @AppStorage(SettingsKeys.dynamicMoeEnabled) private var dynamicMoeEnabled = false
     @AppStorage(SettingsKeys.executionMode) private var executionMode = "auto"
     @AppStorage(SettingsKeys.autoKVMode) private var autoKVMode = "auto"
+    @AppStorage(SettingsKeys.dynamicMoeLeanRAM) private var dynamicMoeLeanRAM = false
     @AppStorage(SettingsKeys.modelsDir) private var modelsDir = ""
     @AppStorage(SettingsKeys.menuBarIcon) private var menuBarIcon = true
     @AppStorage(SettingsKeys.updateAutoCheck) private var updateAutoCheck = true
@@ -711,6 +714,10 @@ struct SettingsView: View {
                     .settingsGlyph("key")
                     .infoTip(loc.t("Auto usa F16 y pasa a Q8 solo cuando libera memoria que de verdad importa (Q8 no cambia la calidad de forma medible). Turbo4 ahorra más memoria a cambio de algo de velocidad y calidad; nunca se elige solo.",
                                 "Auto uses F16 and moves to Q8 only when that frees memory that really matters (Q8 has no measurable quality cost). Turbo4 saves more memory at some speed and quality cost; it is never chosen automatically."))
+                    Toggle(loc.t("Ahorrar RAM", "Save RAM"), isOn: $dynamicMoeLeanRAM)
+                        .settingsGlyph("memorychip")
+                        .infoTip(loc.t("Apagado: si caben, todos los expertos se quedan en RAM, también los que ya están en VRAM. Encendido: la RAM guarda solo los que no están en VRAM y deja libre el resto para otras apps; genera más lento (entre un 11 y un 17% en un modelo de 35B) y el primer prompt tras cargar tarda más.",
+                                    "Off: when they fit, every expert stays in RAM, also the ones already in VRAM. On: RAM keeps only the ones that are not in VRAM and leaves the rest free for other apps; generation is slower (11 to 17% on a 35B model) and the first prompt after loading takes longer."))
                 }
             }
 
@@ -1113,6 +1120,29 @@ struct SettingsView: View {
                     .settingsGlyph("brain")
                     .infoTip(loc.t("Envía el razonamiento dentro de la respuesta (<think>…) en vez del campo aparte reasoning_content. Actívalo si un cliente externo (VS Code, plugins) se queda 'pensando' sin mostrar nada. El chat de la app entiende ambos formatos.",
                                 "Sends the reasoning inline in the response (<think>…) instead of the separate reasoning_content field. Enable it if an external client (VS Code, plugins) appears stuck 'thinking' showing nothing. The in-app chat understands both formats."))
+                LabeledContent(loc.t("Razonamiento por defecto", "Default reasoning")) {
+                    ToshDropdown(selection: $serverDefaultReasoning, options: [
+                        .init(value: "model", title: loc.t("El del modelo", "Model default")),
+                        .init(value: "off", title: loc.t("Desactivado", "Off")),
+                        .init(value: "low", title: loc.t("Bajo", "Low")),
+                        .init(value: "medium", title: loc.t("Medio", "Medium")),
+                        .init(value: "high", title: loc.t("Alto", "High")),
+                    ])
+                }
+                .settingsGlyph("brain.head.profile")
+                .infoTip(loc.t("Nivel de razonamiento para las peticiones que no eligen uno, como las de VS Code o muchos agentes. Una petición que lo indica siempre gana. Los niveles solo cambian algo en modelos cuya plantilla los acepta; «Desactivado» funciona en todos los que razonan.",
+                            "Reasoning level for requests that do not choose one, such as those from VS Code or many agents. A request that sets it always wins. Levels only change anything on models whose template accepts them; Off works on every reasoning model."))
+                LabeledContent(loc.t("Longitud máxima por defecto", "Default response limit")) {
+                    ToshDropdown(selection: $serverDefaultMaxTokens, options: [
+                        .init(value: 0, title: loc.t("Sin límite", "No limit")),
+                        .init(value: 2048, title: "2K"), .init(value: 4096, title: "4K"),
+                        .init(value: 8192, title: "8K"), .init(value: 16384, title: "16K"),
+                        .init(value: 32768, title: "32K"),
+                    ])
+                }
+                .settingsGlyph("text.append")
+                .infoTip(loc.t("Tokens de respuesta para las peticiones que no fijan max_tokens. Evita que un cliente sin límite deje al modelo razonando o escribiendo sin fin. El chat de la app usa su propio límite.",
+                            "Response tokens for requests that do not set max_tokens. It keeps a client without a limit from leaving the model reasoning or writing without end. The in-app chat uses its own limit."))
                 Toggle(loc.t("Plantilla de chat (--jinja)", "Chat template (--jinja)"), isOn: $jinja)
                     .infoTip(loc.t("Usa la plantilla de chat oficial del modelo (formato de mensajes, herramientas). Déjalo activado salvo problemas con un modelo concreto.",
                                 "Uses the model's official chat template (message format, tools). Keep it on unless a specific model misbehaves."))

@@ -91,6 +91,8 @@ enum SettingsKeys {
     static let agentToolsEnabled = "agentToolsEnabled"
     static let toolsRuntime = "toolsRuntime"
     static let jsSandboxEnabled = "jsSandboxEnabled"
+    /// Characters of a tool result that reach the model; 0 sends it whole.
+    static let toolResultLimit = "toolResultLimit"
     /// memory_list / memory_archive / memory_recall. Off for setups where an
     /// external memory server already covers the job and the model mixes the two.
     static let memoryToolsEnabled = "memoryToolsEnabled"
@@ -106,6 +108,10 @@ enum SettingsKeys {
     static let cacheRAM = "cacheRAM"
     static let parallelSlots = "parallelSlots"
     static let reasoningInline = "reasoningInline"
+    /// Reasoning level for requests that do not choose one: "model", "off", "low", "medium", "high".
+    static let serverDefaultReasoning = "serverDefaultReasoning"
+    /// Response token limit for requests that do not set one; 0 leaves it to the engine.
+    static let serverDefaultMaxTokens = "serverDefaultMaxTokens"
     static let specMTP = "specMTP"
     static let faAmd = "faAmd"
     static let prefetchExperts = "prefetchExperts"
@@ -118,6 +124,8 @@ enum SettingsKeys {
     static let executionMode = "executionMode"
     /// auto | f16 | q8_0 | turbo4
     static let autoKVMode = "autoKVMode"
+    /// Dynamic MoE keeps in RAM only the experts that are not in VRAM, even when all of them fit.
+    static let dynamicMoeLeanRAM = "dynamicMoeLeanRAM"
     static let routerMode = "routerMode"
     static let routerModelsMax = "routerModelsMax"
     static let serverConfigurationAdvanced = "serverConfigurationAdvanced"
@@ -265,11 +273,11 @@ enum SettingsKeys {
         audioGlossary, audioTranslationModel, audioVADMode,
         audioVADProfile, audioVADThreshold, audioVADMinSpeechMS,
         audioVADMinSilenceMS, audioVADMaxSpeechSeconds, audioVADSpeechPadMS,
-        extraArgs, embeddings, agentToolsEnabled, toolsRuntime, jsSandboxEnabled,
+        extraArgs, embeddings, agentToolsEnabled, toolsRuntime, jsSandboxEnabled, toolResultLimit,
         memoryToolsEnabled, toolsUnsupportedModels, mcpServers, uiMcpProxy,
         cacheTypeK, cacheTypeV, mlock, cacheRAM,
-        parallelSlots, reasoningInline, specMTP, mtpDisabledModels, faAmd, prefetchExperts, ubatch,
-        dynamicMoeEnabled, routerMode, routerModelsMax,
+parallelSlots, reasoningInline, serverDefaultReasoning, serverDefaultMaxTokens, specMTP, mtpDisabledModels, faAmd, prefetchExperts, ubatch,
+        dynamicMoeEnabled, dynamicMoeLeanRAM, routerMode, routerModelsMax,
         pagedAttention,
         persistCache, multiGPU, multiGPUCount, splitMode, splitGroupSize, mgpuEvents, mgpuPeer,
         forcePrivateBuffers, cacheReuse, apiKeyEnabled, localNetworkDiscovery,

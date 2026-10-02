@@ -312,7 +312,7 @@ build_engine() {
         if ! git apply "$patch" 2>/dev/null; then
             # The turbo3-4mag patch has a known-good inline fallback; other patches are fatal.
             case "$patch" in
-                *0114-turbo3*) apply_turbo3_4mag ;;
+                *turbo3-4mag*) apply_turbo3_4mag ;;
                 *)      echo "ERROR: failed to apply ${patch#$ROOT/patches/}" >&2; exit 1 ;;
             esac
         else

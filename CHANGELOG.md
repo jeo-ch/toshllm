@@ -3,6 +3,72 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.13] - 2026-10-01
+
+### Added
+
+- **LLMs: the details of a model show when it was published** ([#112](https://github.com/engeldlgado/toshllm/issues/112)). For a quantized file it is the date of the original model on Hugging Face.
+
+- **LLMs: a Save RAM switch for Dynamic MoE.** RAM keeps only the experts that are not in video memory: on a Radeon RX 6700 XT with 32 GB, Qwen3.6-35B-A3B locks 14.3 GB instead of 18.5 and generates 11 to 17% slower. Tables in [Dynamic MoE](docs/performance/0.87.13-dynamic-moe.md).
+
+- **LLMs: default reasoning level and response limit for requests that bring none.** In Settings, next to Reasoning as plain text: VS Code and agents that send no level or no max_tokens get these, and a request that sets its own still wins.
+
+- **LLMs: a context recall test in Benchmarks.** It hides a code at 10%, 50% and 90% of a 8K, 32K or 128K text and asks the running server for it back, to check that a quantized KV cache or a long context still remembers what it read.
+
+### Improved
+
+- **LLMs: long chats with Qwen 3.5 to 3.8 and other hybrid models use less RAM.** Over 14 turns Qwen3.6-35B-A3B grew 1.8 GB instead of 4.1, with the same answers.
+
+- **LLMs: while a server starts, its status says what it is doing and for how long.** Planning memory, loading weights, reserving RAM for the experts (when the Mac may feel slower) and preparing them, instead of a plain "Starting".
+
+- **LLMs: experts computed on the CPU unpack each block of weights once for all the tokens that use it.** It covers Q4_K, Q5_K, Q6_K, Q3_K, IQ4_XS and Q4_0, with the same result bit for bit. With MoE offload, Qwen3.6-35B-A3B reads short prompts 9% faster and generates 1 to 2% faster with its MTP head. Dynamic MoE uses them too, and its CPU part of each layer takes 4 to 7% less.
+
+- **LLMs: Dynamic MoE leaves the CPU cores to the experts it computes there.** The engine's own CPU threads had little to do and competed with them for the cores. On a Radeon RX 6700 XT with a 6-core Core i5, Qwen3.6-35B-A3B writes prose 12% faster and code 7% faster.
+
+- **LLMs: Qwen3.8-Flash-Next uses its MTP head under Dynamic MoE.** On one card of a Radeon Pro Vega II Duo it writes prose 20% faster and code 52% faster. Tables in [Dynamic MoE](docs/performance/0.87.13-dynamic-moe.md).
+
+- **LLMs: Dynamic MoE starts on cards with little video memory.** When the MTP head does not fit beside the model it is left out, instead of the server refusing to start. With the memory of a 6 GB card, Qwen3.6-35B-A3B writes prose at 38 tokens a second against 23 with expert offload.
+
+- **LLMs: Dynamic MoE starts answering short messages sooner.** On a Radeon RX 6700 XT, Qwen3.6-35B-A3B reads a 30-token follow-up in 0.4 s instead of 0.9, and on a Radeon Pro Vega II, Qwen3.8-Flash-Next in 1.0 s instead of 2.6.
+
+- **LLMs: when Dynamic MoE keeps only part of the experts in RAM, the first prompt after loading is read sooner.** On a Radeon RX 6700 XT, Qwen3.6-35B-A3B reads it at 295 tokens a second instead of 240.
+
+- **LLMs: models with an MTP head also draft from earlier text when the answer repeats it.** When a rewrite or an edit copies stretches of the prompt, a longer guess taken from that text is verified instead, only where the measured timing says it pays. On a Radeon RX 6700 XT, Qwen3.8-9B edits a file 12% faster; prose and new code keep their speed.
+
+- **LLMs: Q2_0 and PQ2_0 models, such as the GSQ-RCO quantizations and Ternary Bonsai, compute on the CPU about 9 times faster on Intel Macs with AVX2, and PTQ1_0 models 1.4 times.** This covers experts left on the CPU and Macs without a supported GPU.
+
+- **LLMs: the MTP head of Qwen 3.5 to 3.8 models scores its guesses over the 151K most common tokens instead of the whole 248K vocabulary.** On a Radeon RX 6700 XT, Qwen3.8-9B writes prose and code 3 to 5% faster.
+
+- **LLMs: with an MTP head, Dynamic MoE reads the weights of an expert once when several drafted tokens use it.** On a Mac Pro with a Radeon Pro Vega II, the CPU part of each layer takes 15% less and Qwen3.6-35B-A3B writes code 2% faster.
+
+- **LLMs: Dynamic MoE spends less time on the experts it runs on the CPU.** The host part of each layer takes about 6% less, which adds about 1% to generation speed.
+
+- **LLMs: a long tool result no longer fills the context.** The model gets the first 20,000 characters and the end, with a note of what was cut, and the tool card still shows everything. The limit is in the chat settings under Agents, and 0 turns it off. Images returned by MCP tools reach vision models as images instead of base64 text.
+
+### Fixed
+
+- **LLMs: a chat no longer forgets a file from the first message a few turns later.** With conversation memory on, a model could archive that turn while the context still had room. Archiving now waits until the context is 60% full.
+
+- **LLMs: Dynamic MoE with part of the experts in RAM no longer generates slower after a long prompt.** On a Radeon RX 6700 XT, Qwen3.6-35B-A3B writes prose at 47 tokens a second instead of 37.
+
+- **LLMs: a model that is slow to load gets 10 minutes instead of 5 before its server is stopped.** A large model split across cards could run out of time and stop with nothing in the log.
+
+- **LLMs: a model with its MTP head built in shows up in the model list when its file name says MTP.** Files such as Qwen3.6-35B-A3B-MTP-UD-Q4_K_S were hidden as if they were a head alone, and taken for the head of the same model without it.
+
+- **LLMs: a KV cache type chosen on a stopped server is the one it starts with** ([#111](https://github.com/engeldlgado/toshllm/issues/111)). The server page's Start button used the settings from before the change, so it took a second start to pick it up.
+
+- **LLMs: agents that ask for reasoning effort "minimal", "off" or "max" no longer get an error from models such as Qwen3.8-Flash-Next.** The first ones turn reasoning off and "max" means high.
+
+- **LLMs: a server whose engine stops in the middle of a session starts again on its own, once, with the cause in the log.** A second stop within ten minutes leaves it stopped, as before, so a repeating problem stays visible.
+
+- **LLMs: Dynamic MoE with an MTP head no longer runs out of video memory during an answer.** The plan now leaves room for the draft head, so the driver stops moving GPU memory into RAM. On a Radeon RX 6700 XT, Qwen3.6-35B-A3B generates code at 46 tokens a second instead of 34.
+
+- **LLMs: agents and editors no longer drop the connection while a long prompt is being read.** The server sends a keep-alive every 30 seconds from the start of the request, not only once the answer begins.
+
+- **LLMs: Dynamic MoE locks its memory a step at a time and stops if the system reports memory pressure,** instead of locking it all at once while it reads the model.
+
+- **LLMs: a system message sent in the middle of a conversation reaches the model.** Agent hooks send them, and templates such as Qwen 3.5's dropped them without a word; they now arrive as a user message in the same place.
+
 ## [0.87.12] - 2026-09-29
 
 ### Improved

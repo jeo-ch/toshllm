@@ -47,6 +47,9 @@ struct BenchmarksView: View {
             VStack(spacing: 16) {
                 compactRunCard
                 contextualStatusCard
+                if showAdvanced {
+                    NeedleTestCard()
+                }
                 if !bench.history.isEmpty {
                     bestCards
                     resultsNavigation
