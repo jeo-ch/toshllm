@@ -188,6 +188,10 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
     /// resume, Content-Length on a fresh one). Independent of the catalogue
     /// metadata, so it is available for sources that publish no digest.
     private var serverDeclaredBytes: Int64?
+    /// Whether the response was content-encoded. When it was, the declared size
+    /// describes the representation on the wire rather than the file that lands on
+    /// disk, so it can drive the progress bar but not a comparison against it.
+    private var responseIsContentEncoded = false
     private var task: URLSessionDataTask?
     private var requestedOffset: Int64 = 0
     private let sink: DownloadSink
@@ -346,6 +350,9 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
             phase = .failed("Respuesta de descarga inválida / invalid download response")
             return
         }
+        let encoding = (http.value(forHTTPHeaderField: "Content-Encoding") ?? "identity")
+            .trimmingCharacters(in: .whitespaces).lowercased()
+        responseIsContentEncoded = !encoding.isEmpty && encoding != "identity"
         let offset = requestedOffset
         let plan = ResumableDownload.responsePlan(
             statusCode: http.statusCode,
@@ -452,12 +459,16 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
         // none and used to skip the check entirely while the UI still claimed the
         // download was verified.
         //
-        // The catalogue's size comes first: it is the file's real size. The
-        // declared length is only a fallback, because it describes the
-        // representation on the wire — a mirror that negotiates a content
-        // encoding would have it differ from what lands on disk, and comparing
-        // against that would reject a perfectly good download.
-        let expectedSize = expectedBytes ?? serverDeclaredBytes
+        // The catalogue's size comes first: it is the file's real size, and it is
+        // the only source here that is not about the wire at all.
+        //
+        // The declared length is a fallback for sources that publish no metadata.
+        // It has to be dropped when the response was content-encoded: it describes
+        // the representation on the wire, so it differs from what lands on disk and
+        // comparing against it rejects a perfectly good download. Marking that
+        // case unverified is the honest answer — the alternative was a size that
+        // agrees with the wrong artifact.
+        let expectedSize = expectedBytes ?? (responseIsContentEncoded ? nil : serverDeclaredBytes)
         let staging = sink.url
         Task {
             let check: TransferCheck = await Task.detached(priority: .userInitiated) {

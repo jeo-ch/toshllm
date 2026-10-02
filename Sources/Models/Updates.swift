@@ -155,9 +155,7 @@ final class UpdateChecker: ObservableObject {
             if let checksumsURL {
                 guard let (data, _) = try? await NetworkManager.session.data(from: checksumsURL),
                       let listing = String(data: data, encoding: .utf8),
-                      let expected = listing.split(separator: "\n")
-                          .first(where: { $0.contains(dmgURL.lastPathComponent) })?
-                          .split(separator: " ").first.map(String.init)
+                      let expected = Self.checksum(in: listing, for: dmgURL.lastPathComponent)
                 else {
                     try? FileManager.default.removeItem(at: dest)
                     installError = "No se pudo verificar la descarga: falta el checksum o no se pudo leer / could not verify the download: the checksum is missing or unreadable"
@@ -237,6 +235,30 @@ final class UpdateChecker: ObservableObject {
         return target
     }
 
+    /// The digest `checksums.txt` records for `name`, or nil if it records none.
+    ///
+    /// Matched on the filename field, exactly. Matching anywhere in the line picked
+    /// whichever entry came first, so a `ToshLLM.dmg.blockmap` sharing the prefix
+    /// would supply a different file's digest and the comparison would then report
+    /// a mismatch — indistinguishable, to the user reading the message, from the
+    /// download having been tampered with.
+    nonisolated static func checksum(in listing: String, for name: String) -> String? {
+        for line in listing.split(separator: "\n") {
+            let fields = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            guard fields.count >= 2 else { continue }
+            // sha256sum writes "<digest>  <name>", with a '*' prefix in binary mode
+            // and a "./" when that is how the path was given. None of that is part
+            // of the name being looked up.
+            var recorded = fields[fields.count - 1]
+            if recorded.first == "*" { recorded = recorded.dropFirst() }
+            while recorded.first == "." { recorded = recorded.dropFirst() }
+            while recorded.first == "/" { recorded = recorded.dropFirst() }
+            guard recorded == Substring(name) else { continue }
+            return String(fields[fields.count - 2])
+        }
+        return nil
+    }
+
     nonisolated private static func copy(source: String, target: URL, verified: Bool) throws {
         _ = try run("/usr/bin/ditto", [source, target.path])
         // The app's own downloads are not quarantined, but the attribute is
@@ -279,12 +301,31 @@ final class UpdateChecker: ObservableObject {
         let pause = Process()
         pause.executableURL = URL(fileURLWithPath: "/bin/sleep")
         pause.arguments = ["1"]
-        try? pause.run()
-        let open = Process()
-        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        open.arguments = [url.path]
-        try? open.run()
-        NSApp.terminate(nil)
+        // Waited for, rather than started alongside: the two used to be launched
+        // one after the other with nothing between them, so the sleep ran
+        // concurrently with `open` and the second copy started while this one was
+        // still exiting — which is the window the pause was there to cover.
+        pause.terminationHandler = { _ in
+            // terminationHandler runs off the main actor; terminating the app and
+            // touching NSApp has to happen on it.
+            Task { @MainActor in
+                let open = Process()
+                open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                open.arguments = [url.path]
+                try? open.run()
+                NSApp.terminate(nil)
+            }
+        }
+        do {
+            try pause.run()
+        } catch {
+            // Nothing to wait for; launching immediately is better than not at all.
+            let open = Process()
+            open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            open.arguments = [url.path]
+            try? open.run()
+            NSApp.terminate(nil)
+        }
     }
 
     // MARK: release notes

@@ -42,6 +42,30 @@ final class EngineContractTests: XCTestCase {
         XCTAssertEqual(props.contextTokens, 16384)
     }
 
+    /// One value of an unexpected type in the engine's own settings object used to
+    /// fail the decode of the whole dictionary, and since that is `Props.init` it
+    /// took the modalities down too — the app then reported no context *and* no
+    /// capabilities for a model it could otherwise read fine.
+    func testOneUnusableValueDoesNotCostTheOthersTheirContext() throws {
+        let props = try decodeProps("""
+        {"default_generation_settings": {"n_ctx": 32768, "stopping_criteria": "\\\\n"}}
+        """)
+        XCTAssertEqual(props.contextTokens, 32768, "a string sibling must not cost the context")
+
+        let withModalities = try decodeProps("""
+        {"modalities": {"vision": true, "audio": false, "video": false},
+         "default_generation_settings": {"n_ctx": 16384, "template": "chatml"}}
+        """)
+        XCTAssertEqual(withModalities.contextTokens, 16384)
+        XCTAssertEqual(withModalities.modalities?.vision, true)
+    }
+
+    /// A settings object that is not an object at all must not be fatal either.
+    func testASettingsBlockOfTheWrongShapeLeavesTheContextAtTheTopLevel() throws {
+        let props = try decodeProps(#"{"n_ctx": 8192, "default_generation_settings": 5}"#)
+        XCTAssertEqual(props.contextTokens, 8192)
+    }
+
     func testAnAbsentOrUnusableContextIsNilRatherThanZero() throws {
         XCTAssertNil(try decodeProps("{}").contextTokens)
         XCTAssertNil(try decodeProps(#"{"n_ctx": null}"#).contextTokens)

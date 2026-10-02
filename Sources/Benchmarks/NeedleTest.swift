@@ -157,8 +157,22 @@ final class NeedleTest: ObservableObject {
 struct NeedleTestCard: View {
     @EnvironmentObject var server: ServerController
     @EnvironmentObject var loc: Localizer
+    // Observed rather than read on demand: ServerSettings.activeRouterModel() goes
+    // straight to UserDefaults, which by itself never re-renders this view, so
+    // without these the key below would not change when the selection does.
+    @AppStorage(SettingsKeys.routerMode) private var routerMode = false
+    @AppStorage(SettingsKeys.modelPath) private var serverModelPath = ""
+    @AppStorage(SettingsKeys.chatSelectedModel) private var chatSelectedModel = ""
     @StateObject private var test = NeedleTest()
     @State private var maxLength = 32768
+
+    /// Identifies what `/props` will be asked about. The port alone is not enough:
+    /// under the router, and on a server restarted with a different model, the port
+    /// is unchanged while the context the engine reports is not — which is exactly
+    /// the number this card turns into the lengths it offers to test.
+    private var contextKey: String {
+        "\(server.runningPort ?? 0)|\(routerMode)|\(serverModelPath)|\(chatSelectedModel)"
+    }
 
     var body: some View {
         Card(title: loc.t("Memoria de contexto", "Context recall"), icon: "text.magnifyingglass") {
@@ -207,11 +221,8 @@ struct NeedleTestCard: View {
                 if !test.cells.isEmpty { grid }
             }
         }
-        .task(id: server.runningPort) {
+        .task(id: contextKey) {
             if let port = server.runningPort {
-                // Keyed on the router's model as well as the port: the port does
-                // not change when the selected model does, and under the router
-                // the context belongs to the model.
                 await test.readContext(port: port, model: ServerSettings.activeRouterModel())
                 if let best = test.lengths(fitting: test.contextTokens).first(where: { $0 >= 32768 }) ?? test.lengths(fitting: test.contextTokens).last {
                     maxLength = best

@@ -47,15 +47,32 @@ enum ModelCapabilitiesService {
             // Numbers come through as whatever JSONSerialization or the decoder
             // chose; a context of 16384.0 is not a decoding failure.
             nCtx = Self.number(try container.decodeIfPresent(Double.self, forKey: .nCtx))
-            let settings = try container.decodeIfPresent(
-                [String: Double].self, forKey: .defaultGenerationSettings)
-            defaultGenerationSettings = settings.map { raw in
-                var out: [String: Int] = [:]
-                for (key, value) in raw {
-                    if let value = Self.number(value) { out[key] = value }
+            // Decoded one value at a time, and with a typed attempt that is
+            // allowed to fail per key. As `[String: Double]` the whole dictionary
+            // failed if any single value was not a number, and because this is
+            // `Props.init`, that took the context *and* the modalities with it —
+            // one string field the engine might add to its own settings object
+            // would leave the app unable to read either.
+            var settings: [String: Int] = [:]
+            if let raw = try? container.nestedContainer(
+                keyedBy: DynamicKey.self, forKey: .defaultGenerationSettings) {
+                for key in raw.allKeys {
+                    if let value = try? raw.decode(Double.self, forKey: key),
+                       let value = Self.number(value) {
+                        settings[key.stringValue] = value
+                    }
                 }
-                return out
             }
+            defaultGenerationSettings = settings.isEmpty ? nil : settings
+        }
+
+        /// Coding keys are not known ahead of time for a free-form object, so the
+        /// dictionary's own keys are reconstructed from their decoded form.
+        private struct DynamicKey: CodingKey {
+            var stringValue: String
+            var intValue: Int? { nil }
+            init?(stringValue: String) { self.stringValue = stringValue }
+            init?(intValue: Int) { nil }
         }
 
         private static func number(_ value: Double?) -> Int? {
