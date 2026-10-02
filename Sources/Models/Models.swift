@@ -167,7 +167,23 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
     private var requestedOffset: Int64 = 0
     private let sink: DownloadSink
     private let sessionConfiguration: URLSessionConfiguration
-    private lazy var session = URLSession(configuration: sessionConfiguration, delegate: self, delegateQueue: nil)
+    /// Created on first use: a URLSession keeps a strong reference to its
+    /// delegate, so building one in `init` would needlessly pin the item alive.
+    private var _session: URLSession?
+    private var session: URLSession {
+        if let _session { return _session }
+        let s = URLSession(configuration: sessionConfiguration, delegate: self, delegateQueue: nil)
+        _session = s
+        return s
+    }
+
+    deinit {
+        // Break the session's strong reference back to this delegate, otherwise
+        // an item that leaves `downloads` while paused leaks itself and its
+        // connection pool for the rest of the app's life.
+        _session?.invalidateAndCancel()
+        sink.close()
+    }
 
     // Speed tracking
     private var lastDataTime: CFAbsoluteTime = 0
@@ -255,7 +271,17 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
         phase = .failed("Cancelada / cancelled")
         task?.cancel()
         sink.close()
-        session.invalidateAndCancel()
+        // Only touch the session if one was ever built — invalidating it would
+        // otherwise instantiate a throwaway one just to tear it down.
+        _session?.invalidateAndCancel()
+    }
+
+    /// Drops the item out of the list and tears its transfer down. Used before a
+    /// retry replaces an item: removing it from the array alone would leave the
+    /// old session running against the same destination file.
+    func discard() {
+        cancel()
+        _session = nil
     }
 
     // MARK: URLSessionDataDelegate
@@ -494,6 +520,7 @@ final class ModelStore: ObservableObject {
 
     func retryWhisperDownload(_ item: DownloadItem) {
         let model = WhisperModel.catalog.first { $0.url(in: whisperDirectory) == item.destination }
+        item.discard()
         downloads.removeAll { $0.id == item.id }
         downloadWhisperModel(model)
     }
@@ -521,6 +548,7 @@ final class ModelStore: ObservableObject {
     }
 
     func retryWhisperVADDownload(_ item: DownloadItem) {
+        item.discard()
         downloads.removeAll { $0.id == item.id }
         downloadWhisperVAD()
     }
@@ -781,6 +809,9 @@ final class ModelStore: ObservableObject {
     /// Retry a failed download by replacing it with a fresh transfer (new session
     /// + re-fetched metadata), reusing the same source URL.
     func retry(_ item: DownloadItem) {
+        // Tear the old transfer down before dropping it, so its session stops
+        // writing to the staging file the replacement is about to reuse.
+        item.discard()
         downloads.removeAll { $0.id == item.id }
         // Preserve the saved name when it was renamed (e.g. projectors), so the
         // retry lands on the same destination instead of the generic remote name.

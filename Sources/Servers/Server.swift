@@ -798,6 +798,8 @@ struct ServerSettings {
     static var defaultBinary: String {
         // Cached: view bodies reach this through fromDefaults(), and hitting the
         // filesystem on every render shows up as lag.
+        defaultBinaryLock.lock()
+        defer { defaultBinaryLock.unlock() }
         if let resolved = cachedDefaultBinary { return resolved }
         if let bundled = Bundle.main.resourceURL?.appendingPathComponent("bin/llama-server").path,
            FileManager.default.fileExists(atPath: bundled) {
@@ -811,6 +813,7 @@ struct ServerSettings {
     }
 
     nonisolated(unsafe) private static var cachedDefaultBinary: String?
+    private nonisolated static let defaultBinaryLock = NSLock()
 
     /// The engine to launch. "bundled" resolves against the running bundle, so two
     /// installs sharing this defaults domain each use their own binary.
@@ -1677,6 +1680,9 @@ final class ServerController: ObservableObject {
     private var recoveredFromExecutorFailure = false
 
     private var process: Process?
+    /// Kept so `stop()` can detach the readability handler explicitly instead of
+    /// relying on the `Process` deallocating its pipe.
+    private var logPipe: Pipe?
     private var healthTask: Task<Void, Never>?
     private var dflashMemoryTask: Task<Void, Never>?
     private var launchedSettings: ServerSettings?
@@ -2013,11 +2019,13 @@ final class ServerController: ObservableObject {
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        let logHandle = pipe.fileHandleForReading
+        logHandle.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
             Task { @MainActor in self?.consume(text) }
         }
+        logPipe = pipe
         p.terminationHandler = { [weak self] proc in
             Task { @MainActor in
                 guard let self else { return }
@@ -2196,8 +2204,16 @@ final class ServerController: ObservableObject {
             EngineLock.remove(pid: pid)
         }
         process = nil
+        detachLogPipe()
         state = .stopped
         startedAt = nil
+    }
+
+    /// Detaches the engine's log reader so no further output is appended to a log
+    /// buffer that belongs to the stopped run.
+    private func detachLogPipe() {
+        logPipe?.fileHandleForReading.readabilityHandler = nil
+        logPipe = nil
     }
 
     /// Quitting: the engine must be signalled inline, since a detached task does
@@ -2213,7 +2229,7 @@ final class ServerController: ObservableObject {
         activeDflashModelPath = nil
         dflashAcceptance = nil
         stopDiscovery()
-        defer { process = nil; state = .stopped }
+        defer { process = nil; detachLogPipe(); state = .stopped }
         guard let p = process else {
             if let pid = lastStoppedPID { EngineLock.remove(pid: pid) }
             return

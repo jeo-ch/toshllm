@@ -104,7 +104,7 @@ struct SpeculativeControl: View {
     
     private func detailRow(decoder: SpeculativeDecoder) -> some View {
         Group {
-            if let dflashDecoder = decoder as? DFlashDecoder {
+            if decoder is DFlashDecoder {
                 DflashControl(modelPath: modelPath, layout: .detail)
             } else {
                 MTPControl(modelPath: modelPath)
@@ -116,7 +116,7 @@ struct SpeculativeControl: View {
     
     private func inlineRow(decoder: SpeculativeDecoder) -> some View {
         HStack(spacing: 8) {
-            if let dflashDecoder = decoder as? DFlashDecoder {
+            if decoder is DFlashDecoder {
                 DflashControl(modelPath: modelPath, layout: .inline)
             } else {
                 mtpInlineRow(decoder: decoder)

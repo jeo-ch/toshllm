@@ -667,6 +667,8 @@ final class ImageGenerator: ObservableObject {
     private(set) var lastHeight = 0
 
     private var process: Process?
+    /// PID of a cancelled run whose engine has not exited yet.
+    private var terminatingPID: Int32?
     private var startedAt: Date?
     private var firstStepAt: Date?
     private var previewURL: URL?
@@ -724,9 +726,44 @@ final class ImageGenerator: ObservableObject {
     }
 
     func cancel() {
-        process?.terminate()
+        guard let p = process else { return }
+        // sd-cli only receives SIGTERM now, so it can still be holding the Metal
+        // context and VRAM for a while. Remember the PID so `pump()` keeps the GPU
+        // reserved until the process is really gone.
+        terminatingPID = p.processIdentifier
+        p.terminate()
         process = nil
+        // The termination handler now bails out on the identity check above, so
+        // the run's own cleanup (latent preview temp file, timer) happens here.
+        releaseRunResources()
         if isBusy { state = .idle }
+        onFinish?()
+    }
+
+    /// True while a cancelled run's engine has not exited yet. The pool treats
+    /// this as busy: two Metal contexts on one GPU can hang the driver.
+    var isTerminating: Bool { terminatingPID != nil }
+
+    /// The GPU cannot take another run: either one is going, or a cancelled one
+    /// has not released the Metal context yet.
+    var isSlotBusy: Bool { isBusy || isTerminating }
+
+    /// Clears the reservation once the cancelled engine actually exited.
+    private func clearTermination(pid: Int32) {
+        guard terminatingPID == pid else { return }
+        terminatingPID = nil
+        // The slot just freed up, so a queued prompt may now fit.
+        onFinish?()
+    }
+
+    /// Drops the per-run preview artefacts. Shared by `finish()` and `cancel()`,
+    /// since only one of the two ever runs for a given process.
+    private func releaseRunResources() {
+        previewTimer?.invalidate()
+        previewTimer = nil
+        if let p = previewURL { try? FileManager.default.removeItem(at: p) }
+        previewURL = nil
+        previewImage = nil
     }
 
     /// sd-cli --backend spec for the encoder/VAE split: diffusion on Metal slot 0,
@@ -906,7 +943,18 @@ final class ImageGenerator: ObservableObject {
             Task { @MainActor in self?.consume(text, steps: steps) }
         }
         p.terminationHandler = { [weak self] proc in
-            Task { @MainActor in self?.finish(status: proc.terminationStatus, output: out) }
+            Task { @MainActor in
+                guard let self else { return }
+                // A cancelled or already-replaced run must not touch the new one:
+                // cancel() nils `process` and returns to .idle while sd-cli is still
+                // winding down, and that late exit would otherwise clobber the fresh
+                // run's handle, preview timer and state.
+                guard self.process === proc else {
+                    self.clearTermination(pid: proc.processIdentifier)
+                    return
+                }
+                self.finish(status: proc.terminationStatus, output: out)
+            }
         }
 
         fileLog.startSession()
@@ -974,10 +1022,7 @@ final class ImageGenerator: ObservableObject {
 
     private func finish(status: Int32, output: URL) {
         process = nil
-        previewTimer?.invalidate()
-        previewTimer = nil
-        if let p = previewURL { try? FileManager.default.removeItem(at: p) }
-        previewImage = nil
+        releaseRunResources()
         defer { onFinish?() }
         guard status == 0, let img = NSImage(contentsOf: output) else {
             // 15/SIGTERM and 2/SIGINT are user cancels, not errors.
@@ -1215,7 +1260,7 @@ final class ImageGenPool: ObservableObject {
         return "\(idx + 1) · \(configs[idx].resolvedModel(for: hardware).name)"
     }
 
-    var anyBusy: Bool { configs.contains { generator(for: $0.id).isBusy } }
+    var anyBusy: Bool { configs.contains { generator(for: $0.id).isSlotBusy } }
     var anyResult: Bool { configs.contains { generator(for: $0.id).resultImage != nil } }
 
     /// New instance as a copy of the last one, landing on a free GPU when there
@@ -1301,7 +1346,7 @@ final class ImageGenPool: ObservableObject {
         let gpuCount = hardware.gpus.count
         // A split instance occupies its encoder/VAE GPU too.
         var busyGPUs = Set<Int>()
-        for c in configs where generator(for: c.id).isBusy {
+        for c in configs where generator(for: c.id).isSlotBusy {
             busyGPUs.insert(c.gpuIndex)
             if let aux = c.auxGPU(gpuCount: gpuCount) { busyGPUs.insert(aux) }
         }
@@ -1310,7 +1355,7 @@ final class ImageGenPool: ObservableObject {
             guard !queue.isEmpty else { break }
             let gen = generator(for: c.id)
             let aux = c.auxGPU(gpuCount: gpuCount)
-            guard !gen.isBusy, !busyGPUs.contains(c.gpuIndex),
+            guard !gen.isSlotBusy, !busyGPUs.contains(c.gpuIndex),
                   aux.map({ !busyGPUs.contains($0) }) ?? true else { continue }
             guard let idx = queue.firstIndex(where: { Self.runnable($0, on: c, existingIDs: existingIDs) }) else { continue }
             let job = queue.remove(at: idx)
@@ -1577,6 +1622,9 @@ final class ImageUpscaler: ObservableObject {
         p.terminationHandler = { [weak self] proc in
             Task { @MainActor in
                 guard let self else { return }
+                // A process we already replaced (cancel → next run) must not touch
+                // the new one, or it would nil the fresh handle and requeue work.
+                guard self.process === proc else { return }
                 self.process = nil
                 guard proc.terminationStatus == 0, let img = NSImage(contentsOf: out) else {
                     if proc.terminationStatus == 15 || proc.terminationStatus == 2 {

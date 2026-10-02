@@ -1814,15 +1814,15 @@ final class ChatStore: ObservableObject {
 
     // Serial queue: keeps writes ordered while encoding off the main thread,
     // since the full history JSON grows with use and would cause hitches.
-    // `nonisolated(unsafe)`: the quit path reads these from a nonisolated
+    // `nonisolated(unsafe)`: the quit path reads `saveWork` from a nonisolated
     // context, and every access is already serialised by `saveLock`.
-    nonisolated(unsafe) private static let saveQueue = DispatchQueue(label: "dev.engel.toshllm.chat-save", qos: .utility)
+    private nonisolated static let saveQueue = DispatchQueue(label: "dev.engel.toshllm.chat-save", qos: .utility)
     nonisolated(unsafe) private static var saveWork: DispatchWorkItem?
     /// When the write that is still pending was first asked for, and the lock that
     /// guards it: the debounce must not postpone a save for ever while calls keep
     /// arriving (the last exchange would then never reach disk).
     nonisolated(unsafe) private static var savePendingSince: Date?
-    nonisolated(unsafe) private static let saveLock = NSLock()
+    private nonisolated static let saveLock = NSLock()
 
     /// Runs a pending save right now instead of waiting out its debounce. Quit
     /// paths call it; without it the final exchange is silently dropped.
@@ -1842,10 +1842,35 @@ final class ChatStore: ObservableObject {
         // so rapid successive calls (delete, rename, new conversation) collapse into
         // a single disk write. The delay has a 1s ceiling (see below) so a steady
         // stream of calls still reaches the disk.
+        // Read under the lock: `flushPendingSave()` nils it from the quit path.
+        Self.saveLock.lock()
         Self.saveWork?.cancel()
+        Self.saveLock.unlock()
         for i in conversations.indices {
             guard let active = conversations[i].activeBranchID,
                   let j = conversations[i].branches?.firstIndex(where: { $0.id == active }) else { continue }
+            conversations[i].branches?[j].messages = conversations[i].messages
+        }
+        // Copy the live transcript onto the active branch of each conversation. The
+        // lookup was a per-conversation `firstIndex` scan, which made every
+        // keystroke's save O(conversations x branches) on the main thread; with a
+        // long history that is hundreds of conversations. Branch ids are UUIDs, so
+        // one map serves the whole list — the bounds are still checked per
+        // conversation, since the index belongs to that conversation's own array.
+        var branchIndex: [UUID: Int] = [:]
+        var totalBranches = 0
+        for conversation in conversations { totalBranches += conversation.branches?.count ?? 0 }
+        // Below this size the map costs more to build than the scan saves.
+        if totalBranches > 16 {
+            for conversation in conversations {
+                for (i, branch) in (conversation.branches ?? []).enumerated() { branchIndex[branch.id] = i }
+            }
+        }
+        for i in conversations.indices {
+            guard let active = conversations[i].activeBranchID,
+                  let branches = conversations[i].branches else { continue }
+            let j = branchIndex[active] ?? branches.firstIndex(where: { $0.id == active })
+            guard let j, branches.indices.contains(j) else { continue }
             conversations[i].branches?[j].messages = conversations[i].messages
         }
         let snapshot = conversations
@@ -1854,7 +1879,7 @@ final class ChatStore: ObservableObject {
         let pURL = projectsURL
         let bkURL = backupURL
         let bkPURL = backupProjectsURL
-        let work = DispatchWorkItem { [oldWork = Self.saveWork] in
+        let work = DispatchWorkItem {
             ChatStore.saveLock.lock()
             ChatStore.savePendingSince = nil
             ChatStore.saveLock.unlock()
