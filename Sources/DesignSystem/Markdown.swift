@@ -95,10 +95,9 @@ struct RichText: View {
     var streaming = false
 
     @State private var cache = BlockCache()
-    @State private var boundary = SettledBoundary()
 
     var body: some View {
-        let (settled, tail) = streaming ? boundary.split(text) : (text, "")
+        let (settled, tail) = streaming ? Self.splitSettled(text) : (text, "")
         let blocks = cache.blocks(for: settled)
         VStack(alignment: .leading, spacing: 8) {
             // Positional identity plus Equatable: settled blocks stay frozen
@@ -115,48 +114,33 @@ struct RichText: View {
     /// Boundary is the last blank line outside an open code fence: anything
     /// after it may still change as tokens arrive.
     ///
-    /// The answer only ever moves forward. A fence that opened after a blank line
-    /// cannot make that line part of the fence, and text is only ever appended, so
-    /// once a prefix has been classified it stays classified — which lets the scan
-    /// resume where it stopped instead of re-walking the whole answer on every
-    /// tick, as it did while the block was still growing.
-    final class SettledBoundary {
-        /// Lines of `text` already examined.
-        private var scannedLines = 0
-        private var inFence = false
-        private var fenceChar: Character = "`"
-        private var fenceLength = 0
-        private var settledLines = 0
-
-        func split(_ text: String) -> (settled: String, tail: String) {
-            let lines = text.components(separatedBy: "\n")
-            if scannedLines > lines.count {
-                // The text was replaced rather than appended to; start over.
-                scannedLines = 0; inFence = false; settledLines = 0
-            }
-            if scannedLines == 0 {
-                scannedLines = 1   // line 0 was handled on the previous pass
-            }
-            var i = scannedLines
-            while i < lines.count {
-                let line = lines[i]
-                if let f = fenceInfo(line) {
-                    if !inFence {
-                        inFence = true; fenceChar = f.char; fenceLength = f.length
-                    } else if f.info.isEmpty, f.char == fenceChar, f.length >= fenceLength {
-                        inFence = false
-                    }
-                } else if !inFence, line.trimmingCharacters(in: .whitespaces).isEmpty {
-                    settledLines = i + 1
+    /// Deliberately stateless. An incremental version — remember where the last
+    /// scan stopped and resume from there — was written and then withdrawn: the
+    /// last line of a streaming answer is always incomplete, so resuming has to
+    /// replay it, and replaying a line whose fence state was already folded in
+    /// closes a fence that is still open. It took two bugs and a step-by-step
+    /// equivalence test to find, and the win was never measured. The comparison
+    /// against a reference scan is kept as a test so the rule stays pinned.
+    static func splitSettled(_ text: String) -> (settled: String, tail: String) {
+        let lines = text.components(separatedBy: "\n")
+        var inFence = false
+        var fenceChar: Character = "`"
+        var fenceLength = 0
+        var settledLines = 0
+        for (i, line) in lines.enumerated() {
+            if let f = fenceInfo(line) {
+                if !inFence {
+                    inFence = true; fenceChar = f.char; fenceLength = f.length
+                } else if f.info.isEmpty, f.char == fenceChar, f.length >= fenceLength {
+                    inFence = false
                 }
-                i += 1
+            } else if !inFence, line.trimmingCharacters(in: .whitespaces).isEmpty {
+                settledLines = i + 1
             }
-            scannedLines = max(1, lines.count)
-            let boundary = min(settledLines, lines.count)
-            let settled = lines[..<boundary].joined(separator: "\n")
-            let tail = lines[boundary...].joined(separator: "\n")
-            return (settled, tail)
         }
+        let settled = lines[..<settledLines].joined(separator: "\n")
+        let tail = lines[settledLines...].joined(separator: "\n")
+        return (settled, tail)
     }
 
     /// Re-parses only when the settled prefix changes, i.e. once per block
@@ -169,14 +153,6 @@ struct RichText: View {
             return cached
         }
     }
-
-    /// Test seam: the incremental split's correctness rests on `fenceInfo`, so the
-    /// equivalence test calls it rather than restating it.
-    static func fenceInfoForTest(_ line: String) -> (char: Character, length: Int, info: String)? {
-        fenceInfo(line)
-    }
-
-    static func settledBoundaryForTest() -> SettledBoundary { SettledBoundary() }
 
     // MARK: parser
 
@@ -278,7 +254,9 @@ struct RichText: View {
 
     /// Fence char, length and info string, or nil when the line is not a fence.
     /// Backtick info strings may not contain backticks, which rules out inline code.
-    private static func fenceInfo(_ line: String) -> (char: Character, length: Int, info: String)? {
+    /// Not private: the streaming split's test states the fence rule independently
+    /// and needs this, so the two can disagree and say so.
+    static func fenceInfo(_ line: String) -> (char: Character, length: Int, info: String)? {
         let t = line.drop(while: { $0 == " " })
         guard let first = t.first, first == "`" || first == "~" else { return nil }
         let run = t.prefix(while: { $0 == first })

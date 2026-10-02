@@ -238,6 +238,15 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
         Task { await prepare() }
     }
 
+    /// Seeds the catalogue size the catalogue lookup would have produced. Test
+    /// seam: `prepare()` only fills this from the HuggingFace tree API, so without
+    /// it the size branch cannot be exercised against a chosen transfer at all.
+    /// A nil argument leaves the real lookup in charge.
+    func seedExpectedSizeForTesting(_ bytes: Int64?) {
+        guard let bytes else { return }
+        expectedBytes = bytes
+    }
+
     /// Fetches integrity metadata, checks disk space, then starts the transfer.
     private func prepare() async {
         if let meta = await HuggingFaceAPI.fileMetadata(for: remote) {
@@ -441,8 +450,14 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
         let expected = expectedSHA256
         // The digest is only published for LFS-backed files, so a plain GGUF has
         // none and used to skip the check entirely while the UI still claimed the
-        // download was verified. Fall back to the size the server itself declared.
-        let expectedSize = serverDeclaredBytes ?? expectedBytes
+        // download was verified.
+        //
+        // The catalogue's size comes first: it is the file's real size. The
+        // declared length is only a fallback, because it describes the
+        // representation on the wire — a mirror that negotiates a content
+        // encoding would have it differ from what lands on disk, and comparing
+        // against that would reject a perfectly good download.
+        let expectedSize = expectedBytes ?? serverDeclaredBytes
         let staging = sink.url
         Task {
             let check: TransferCheck = await Task.detached(priority: .userInitiated) {

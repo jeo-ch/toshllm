@@ -814,7 +814,7 @@ final class ResumableDownloadTests: XCTestCase {
     }
 
     @MainActor
-    private func makeLyingItem() throws -> (DownloadItem, URL, URL) {
+    private func makeLyingItem(metadataSizeBytes: Int64? = nil) throws -> (DownloadItem, URL, URL) {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [LyingLengthProtocol.self]
         let dir = FileManager.default.temporaryDirectory
@@ -823,6 +823,7 @@ final class ResumableDownloadTests: XCTestCase {
         let destination = dir.appendingPathComponent("model.gguf")
         let item = DownloadItem(remote: URL(string: "https://lying.test/model.gguf")!,
                                 destination: destination, sessionConfiguration: config)
+        item.seedExpectedSizeForTesting(metadataSizeBytes)
         return (item, destination, dir)
     }
 
@@ -867,10 +868,29 @@ final class ResumableDownloadTests: XCTestCase {
         let (item, destination, dir) = try makeLyingItem()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let reached_finished = await waitUntil({ item.finished }, timeout: 5)
-        XCTAssertTrue(reached_finished)
+        let done = await waitUntil({ item.finished }, timeout: 5)
+        XCTAssertTrue(done)
         XCTAssertEqual(try Data(contentsOf: destination), LyingLengthProtocol.payload)
         XCTAssertFalse(item.integrityVerified)
+    }
+
+    /// The size a mirror declares on the wire is the size of the representation,
+    /// not of the file: a content-encoded transfer decompresses on the way in.
+    /// Comparing against that would reject a good download, so the catalogue's
+    /// figure — the file's real size — has to win. Here the protocol lies about
+    /// the total and the item is told the truth from metadata instead.
+    @MainActor
+    func testTheCatalogueSizeWinsOverTheDeclaredLength() async throws {
+        LyingLengthProtocol.reset()
+        LyingLengthProtocol.declaredTotal = 1   // nothing like the real length
+        let (item, destination, dir) = try makeLyingItem(metadataSizeBytes: Int64(LyingLengthProtocol.payload.count))
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let done = await waitUntil({ item.finished || item.error != nil }, timeout: 5)
+        XCTAssertTrue(done)
+        XCTAssertNil(item.error, "the catalogue size matched, so this must not have failed")
+        XCTAssertTrue(item.integrityVerified)
+        XCTAssertEqual(try Data(contentsOf: destination).count, LyingLengthProtocol.payload.count)
     }
 }
 
