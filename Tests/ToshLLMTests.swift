@@ -684,6 +684,64 @@ final class ResumableDownloadTests: XCTestCase {
         XCTAssertEqual(ranges[1], "bytes=65536-")
     }
 
+    /// Answers with a handful of bytes, then fails a moment later so the data
+    /// callback is guaranteed to have been processed first. This is the shape that
+    /// used to defeat the retry ceiling: receiving any data cleared the failure
+    /// count, so a server that gives a trickle and resets looped forever and the
+    /// row never reached the paused state that tells the user to switch source.
+    private final class TrickleThenFailProtocol: URLProtocol, @unchecked Sendable {
+        static let lock = NSLock()
+        nonisolated(unsafe) static var attempts = 0
+        /// How long after the data the failure is reported, so the item has
+        /// certainly handled the bytes before the error arrives.
+        static let failDelay: TimeInterval = 0.4
+
+        override class func canInit(with request: URLRequest) -> Bool {
+            request.url?.host == "trickle.test"
+        }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {
+            Self.lock.lock(); Self.attempts += 1; Self.lock.unlock()
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200,
+                                           httpVersion: "HTTP/1.1",
+                                           headerFields: ["Content-Length": "20000000"])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(repeating: 7, count: 512))
+            DispatchQueue.global().asyncAfter(deadline: .now() + Self.failDelay) { [weak self] in
+                guard let self, let client = self.client else { return }
+                client.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+            }
+        }
+        override func stopLoading() {}
+        static func reset() { lock.lock(); attempts = 0; lock.unlock() }
+        static func count() -> Int { lock.lock(); defer { lock.unlock() }; return attempts }
+    }
+
+    @MainActor
+    func testRetriesAreCappedWhenNoRealProgressArrives() async throws {
+        TrickleThenFailProtocol.reset()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [TrickleThenFailProtocol.self]
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("download-trickle-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let item = DownloadItem(remote: URL(string: "https://trickle.test/model.gguf")!,
+                                destination: dir.appendingPathComponent("model.gguf"),
+                                sessionConfiguration: config)
+
+        // The backoff is 2, 4, 8, 16, 30 s, so within this window a run that counts
+        // its failures properly has made at most three attempts: the first, one
+        // after 2 s and one after a further 4 s. A run that forgives them on every
+        // trickle retries every 2 s instead, which is six or more by now and
+        // unbounded after. Asserting the count rather than the final paused state
+        // keeps the test to seconds instead of the minute the schedule takes.
+        try? await Task.sleep(nanoseconds: 12_000_000_000)
+        XCTAssertLessThanOrEqual(TrickleThenFailProtocol.count(), 3,
+                                 "a trickle must not reset the failure count")
+        XCTAssertNotEqual(item.phase, .finished)
+    }
+
     // MARK: integrity of a finished transfer
 
     /// Declares a total that is not what it sends, so the size gate has something

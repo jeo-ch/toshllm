@@ -199,6 +199,38 @@ enum GGUFMetadataCache {
         nextNEntries = nextNEntries.filter { $0.key.path != path || $0.key == key }
     }
 
+    /// Drops entries whose file is gone.
+    ///
+    /// `removeStaleEntries` only retires an entry once the same path comes back
+    /// with a different size or date, so a model that was deleted left its parsed
+    /// header behind permanently — and nothing else in the file can reach it, so
+    /// nothing else could drop it either. `ModelTraitsCache` and `ModelName` both
+    /// have an invalidate for exactly this reason.
+    ///
+    /// `validPaths` is deliberately only a filter, never the whole truth: a models
+    /// directory can be pointed somewhere else (a profile, a second volume), and
+    /// treating "not in this scan" as "deleted" would throw away a header that is
+    /// about to be asked for again. A path is only dropped once the file system
+    /// agrees it is not there, which costs a stat per entry and only for the ones
+    /// this actually removes.
+    static func prune() {
+        lock.lock()
+        let candidates = Set(metadataEntries.keys.map(\.path))
+            .union(tensorEntries.keys.map(\.path))
+            .union(nextNEntries.keys.map(\.path))
+        lock.unlock()
+        guard !candidates.isEmpty else { return }
+
+        let gone = candidates.filter { !FileManager.default.fileExists(atPath: $0) }
+        guard !gone.isEmpty else { return }
+
+        lock.lock()
+        metadataEntries = metadataEntries.filter { !gone.contains($0.key.path) }
+        tensorEntries = tensorEntries.filter { !gone.contains($0.key.path) }
+        nextNEntries = nextNEntries.filter { !gone.contains($0.key.path) }
+        lock.unlock()
+    }
+
     private static func readPrefix(at path: String, limit: Int) -> Data? {
         let descriptor = path.withCString { Darwin.open($0, O_RDONLY) }
         guard descriptor >= 0 else { return nil }

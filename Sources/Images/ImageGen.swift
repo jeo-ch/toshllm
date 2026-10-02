@@ -730,14 +730,34 @@ final class ImageGenerator: ObservableObject {
         // sd-cli only receives SIGTERM now, so it can still be holding the Metal
         // context and VRAM for a while. Remember the PID so `pump()` keeps the GPU
         // reserved until the process is really gone.
-        terminatingPID = p.processIdentifier
+        let pid = p.processIdentifier
+        terminatingPID = pid
         p.terminate()
+        // SIGTERM is advisory: a wedged Metal kernel ignores it, and then the slot
+        // stays reserved for the rest of the session with no way back. This is the
+        // escalation Server.swift already uses for the engine.
+        Self.killIfStillRunning(pid, after: Self.terminationGraceSeconds)
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + Self.terminationGraceSeconds) {
+            // A backstop for a process that somehow never reports its exit. The
+            // guard makes this a no-op when the termination handler got there first.
+            DispatchQueue.main.async { [weak self] in self?.clearTermination(pid: pid) }
+        }
         process = nil
         // The termination handler now bails out on the identity check above, so
         // the run's own cleanup (latent preview temp file, timer) happens here.
         releaseRunResources()
         if isBusy { state = .idle }
         onFinish?()
+    }
+
+    /// How long a cancelled engine gets to exit on SIGTERM before it is killed.
+    static let terminationGraceSeconds: TimeInterval = 6
+
+    /// Sends SIGKILL to `pid` once the grace period is up, if it is still running.
+    static func killIfStillRunning(_ pid: Int32, after seconds: TimeInterval) {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) {
+            if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+        }
     }
 
     /// True while a cancelled run's engine has not exited yet. The pool treats
@@ -975,6 +995,11 @@ final class ImageGenerator: ObservableObject {
             startPreviewWatch()
         } catch {
             state = .failed(error.localizedDescription)
+            // The pool already popped this job and marked its GPU busy, and it only
+            // advances when a run reports back. Without this a missing or
+            // non-executable sd-cli left every queued prompt silently unstarted
+            // while the UI showed all slots idle. The video path already did this.
+            onFinish?()
         }
     }
 
@@ -1667,11 +1692,18 @@ final class ImageUpscaler: ObservableObject {
             process = p
         } catch {
             state = .failed(error.localizedDescription)
+            // next() advances the batch, so a launch failure has to report back or
+            // the rest of the queue is never attempted.
+            next()
         }
     }
 
     func cancel() {
         pending = []
+        if let p = process {
+            ImageGenerator.killIfStillRunning(
+                p.processIdentifier, after: ImageGenerator.terminationGraceSeconds)
+        }
         process?.terminate()
     }
 

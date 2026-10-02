@@ -135,8 +135,46 @@ final class ModelDetectionTests: XCTestCase {
         XCTAssertFalse(ServerSettings.modelIsMoE(at: url.path))
     }
 
-    func testMetadataCacheSupportsConcurrentReaders() throws {
+    /// A deleted model used to keep its parsed header for the rest of the session:
+    /// the only cleanup ran when the same path came back with a different size, and
+    /// a deleted file never comes back. prune() is what gives the cache the same
+    /// release the other two already had.
+    func testPruningDropsEntriesForDeletedFilesAndKeepsTheRest() throws {
         let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let kept = dir.appendingPathComponent("kept.gguf")
+        let removed = dir.appendingPathComponent("removed.gguf")
+        try writeGGUF(to: kept, uint32: ["qwen35moe.expert_count": 8])
+        try writeGGUF(to: removed, uint32: ["qwen35moe.expert_count": 4])
+
+        // Populate both.
+        XCTAssertTrue(ServerSettings.modelIsMoE(at: kept.path))
+        _ = ServerSettings.modelIsMoE(at: removed.path)
+
+        try FileManager.default.removeItem(at: removed)
+        GGUFMetadataCache.prune()
+
+        // The survivor still answers, and answers from cache rather than by
+        // failing: same content as before the prune.
+        XCTAssertTrue(ServerSettings.modelIsMoE(at: kept.path))
+        // The deleted one is simply unknown now.
+        XCTAssertNil(GGUFMetadataCache.metadata(at: removed.path))
+    }
+
+    /// Pruning must not throw away a header for a file that is merely outside the
+    /// folder that was last scanned — profiles and second volumes point elsewhere,
+    /// and "not in this scan" is not the same as "deleted".
+    func testPruningKeepsFilesThatStillExist() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("present.gguf")
+        try writeGGUF(to: url, uint32: ["qwen35moe.expert_count": 8])
+        XCTAssertTrue(ServerSettings.modelIsMoE(at: url.path))
+        GGUFMetadataCache.prune()
+        XCTAssertNotNil(GGUFMetadataCache.metadata(at: url.path))
+    }
+
+    func testMetadataCacheSupportsConcurrentReaders() throws {        let dir = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appendingPathComponent("concurrent.gguf")
         try writeGGUF(to: url, strings: ["general.name": "Concurrent Model"],

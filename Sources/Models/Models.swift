@@ -175,7 +175,12 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
 
     // Auto-retry on network errors
     private static let maxAutoRetries = 5
+    /// How much has to arrive in one attempt before the failure count is forgiven.
+    /// Well under a chunk, so ordinary progress clears it and a trickling failure
+    /// does not.
+    private static let retryProgressBytes: Int64 = 1_048_576
     private var retryCount = 0
+    private var retryBaselineBytes: Int64 = 0
 
     private var expectedSHA256: String?
     private var expectedBytes: Int64?
@@ -210,6 +215,8 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
     private var lastDataBytes: Int64 = 0
     /// Current download speed in bytes/sec, computed from recent samples.
     private(set) var currentSpeedBPS: Double = 0
+    /// True while a speed-limit cooldown is in flight, so at most one exists.
+    private var isCoolingDown = false
 
     // Compatibility accessors used across the UI
     var finished: Bool { phase == .finished }
@@ -267,6 +274,15 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
         task = t
         phase = .downloading
         receivedMB = Double(requestedOffset) / 1_048_576
+        // Speed is measured from the offset this attempt starts at. Without this
+        // a server that ignores Range answers 200 and the sink restarts, so the
+        // next delta was measured against the old, much larger offset: the reading
+        // went negative and the limiter switched itself off.
+        lastDataBytes = requestedOffset
+        lastDataTime = 0
+        currentSpeedBPS = 0
+        retryBaselineBytes = requestedOffset
+        isCoolingDown = false
         if let expectedBytes, expectedBytes > 0 {
             progress = Double(requestedOffset) / Double(expectedBytes)
         }
@@ -364,8 +380,14 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
             return
         }
         Task { @MainActor in
-            // Successful data receipt means connection is healthy; reset retry counter
-            self.retryCount = 0
+            // Receiving *any* byte is not evidence the connection is healthy: a
+            // server that answers one byte and resets made this reset the counter
+            // on every attempt, so the retry ceiling was never reached and an
+            // unrecoverable failure looped forever. Only real progress clears it.
+            if bytes - self.retryBaselineBytes >= Self.retryProgressBytes {
+                self.retryCount = 0
+                self.retryBaselineBytes = bytes
+            }
 
             self.receivedMB = Double(bytes) / 1_048_576
             let expected = self.expectedBytes ?? Int64(self.totalMB * 1_048_576)
@@ -389,18 +411,24 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
             self.lastDataTime = now
             self.lastDataBytes = bytes
 
-            // Speed limiting: pause task when exceeding limit, resume after cooldown
+            // Speed limiting: pause task when exceeding limit, resume after cooldown.
+            // One cooldown at a time. The condition holds for every chunk while the
+            // limit is below the real bandwidth, which is the normal case once the
+            // limiter is on at all, so without this guard each chunk spawned its
+            // own sleep and hammered suspend/resume on the same connection.
             let limit = self.bytesPerSecondLimit
-            if limit > 0, self.currentSpeedBPS > Double(limit) {
+            if limit > 0, !self.isCoolingDown, self.currentSpeedBPS > Double(limit) {
                 // Calculate how long to wait to get back under the limit
                 let overshoot = self.currentSpeedBPS / Double(limit)
                 let cooldown = min(1.0, (overshoot - 1.0) * 0.5) // up to 1s pause
+                self.isCoolingDown = true
                 Task { @MainActor in
                     self.task?.suspend()
                     try? await Task.sleep(for: .milliseconds(Int(cooldown * 1000)))
                     // Reset speed tracking after cooldown to avoid measuring the pause
                     self.lastDataTime = 0
                     self.lastDataBytes = bytes
+                    self.isCoolingDown = false
                     self.task?.resume()
                 }
             }
@@ -696,6 +724,10 @@ final class ModelStore: ObservableObject {
         let directory = directory
         ModelTraitsCache.invalidate()
         ModelName.forgetCachedNames()
+        // The heaviest of the three caches is the one that could not be emptied:
+        // a deleted model used to keep its parsed header for the rest of the
+        // session. Costs one stat per entry and only on a rescan.
+        GGUFMetadataCache.prune()
         Task { [weak self] in
             let snapshot = await Task.detached(priority: .utility) {
                 let index = ModelFileIndex.scan(in: directory)

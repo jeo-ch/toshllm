@@ -435,7 +435,15 @@ final class VideoGenerator: ObservableObject {
         }
     }
 
-    func cancel() { process?.terminate() }
+    func cancel() {
+        // SIGTERM alone is not enough: a wedged engine would keep its Metal context
+        // and the VRAM, so the escalation Server.swift uses is applied here too.
+        if let pid = process?.processIdentifier {
+            ImageGenerator.killIfStillRunning(
+                pid, after: ImageGenerator.terminationGraceSeconds)
+        }
+        process?.terminate()
+    }
 
     /// Playback copy: full frames are only needed for the mp4, which reads the PNGs.
     nonisolated static func displayFrame(_ url: URL) -> NSImage? {

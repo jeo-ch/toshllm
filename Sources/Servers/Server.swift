@@ -1825,6 +1825,10 @@ final class ServerController: ObservableObject {
             return
         }
         if settings.routerMode {
+            // Stays synchronous on purpose: a refusal raised from the task below
+            // would flash "Starting…" before failing, which is a visible change.
+            // The expensive half — building the preset — is what moved off the
+            // main actor, in launch().
             let models = LocalModel.scan(in: ServerSettings.modelsDirectory)
             guard !models.isEmpty else {
                 let lang = UserDefaults.standard.string(forKey: SettingsKeys.language) ?? "en"
@@ -1922,7 +1926,7 @@ final class ServerController: ObservableObject {
                 planned.plannedMode = plan.mode
                 self?.autoPlan = plan
             }
-            self?.launch(planned)
+            await self?.launch(planned)
         }
     }
 
@@ -2054,17 +2058,30 @@ final class ServerController: ObservableObject {
         """
     }
 
-    private func launch(_ settings: ServerSettings) {
+    /// Writes the router's model-preset INI. Kept off the main actor: it walks the
+    /// models directory, reads each header and stats a projector per model, which
+    /// for a folder of any size is hundreds of syscalls and enough header parsing
+    /// to be felt as a stall — and the user gets no feedback while it runs,
+    /// because the whole launch happens before the state starts moving.
+    nonisolated static func writeRouterPreset(settings: ServerSettings) {
+        let models = LocalModel.scan(in: ServerSettings.modelsDirectory)
+        let paths = models.map(\.url.path)
+        let ncmoeByPath = Dictionary(uniqueKeysWithValues: paths.map {
+            ($0, Estimator.ncmoeForSelection(path: $0, models: models))
+        })
+        let ini = settings.routerPresetINI(modelPaths: paths, ncmoeByPath: ncmoeByPath)
+        try? ini.write(to: ServerSettings.routerPresetPath(port: settings.port), atomically: true, encoding: .utf8)
+    }
+
+    private func launch(_ settings: ServerSettings) async {
         guard state == .starting else { return }   // user hit Stop meanwhile
 
         if settings.routerMode {
-            let models = LocalModel.scan(in: ServerSettings.modelsDirectory)
-            let paths = models.map(\.url.path)
-            let ncmoeByPath = Dictionary(uniqueKeysWithValues: paths.map {
-                ($0, Estimator.ncmoeForSelection(path: $0, models: models))
-            })
-            let ini = settings.routerPresetINI(modelPaths: paths, ncmoeByPath: ncmoeByPath)
-            try? ini.write(to: ServerSettings.routerPresetPath(port: settings.port), atomically: true, encoding: .utf8)
+            await Task.detached(priority: .userInitiated) {
+                Self.writeRouterPreset(settings: settings)
+            }.value
+            // Stop may have landed while the preset was being written.
+            guard state == .starting else { return }
         }
 
         prewarmActive = !settings.routerMode && settings.persistCache && settings.effectiveFaAmd
@@ -2139,7 +2156,7 @@ final class ServerController: ObservableObject {
                         EngineLock.remove(pid: proc.processIdentifier)
                         self.consume("\n[ToshLLM] el proyector (mmproj) no se pudo cargar — reintentando solo-texto (visión desactivada) / projector failed to load — retrying text-only (vision disabled)\n")
                         self.state = .starting
-                        self.launch(settings)
+                        await self.launch(settings)
                         return
                     }
                     AppLog.server.error("engine exited with status \(proc.terminationStatus)")
@@ -2150,7 +2167,7 @@ final class ServerController: ObservableObject {
                         self.lastCrashRelaunch = Date()
                         self.consume("\n[ToshLLM] el motor se detuvo (\(why)) — reiniciando / the engine stopped (\(why)) — restarting\n")
                         self.state = .starting
-                        self.launch(settings)
+                        await self.launch(settings)
                         return
                     }
                     self.state = .failed(why)
@@ -2399,13 +2416,32 @@ final class ServerController: ObservableObject {
 
     private var isFailed: Bool { if case .failed = state { return true }; return false }
 
+    /// How long a starting engine gets to answer /health before it is declared
+    /// stuck. A large model split across cards genuinely needs minutes.
+    static let startupDeadline: TimeInterval = 600
+    /// Per-request ceiling. `URLSession.shared` allows a request 60 s, so a port
+    /// that accepts but never answers would have stretched the loop far past its
+    /// own deadline; an unopened port fails to connect immediately either way.
+    private static let healthProbeTimeout: TimeInterval = 5
+
+    /// A session that gives up on a probe instead of waiting out the shared
+    /// default, so a port that accepts but never answers cannot stretch the wait.
+    private static let healthProbe: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = healthProbeTimeout
+        configuration.timeoutIntervalForResource = healthProbeTimeout
+        return URLSession(configuration: configuration)
+    }()
+
     private func watchHealth(port: Int) {
         healthTask?.cancel()
         healthTask = Task { [weak self] in
             let url = URL(string: "http://127.0.0.1:\(port)/health")!
-            for _ in 0..<300 {   // up to ~10 min: a large model split across cards can take over 5
+            let probe = Self.healthProbe
+            let deadline = Date().addingTimeInterval(Self.startupDeadline)
+            while Date() < deadline {
                 if Task.isCancelled { return }
-                if let (data, _) = try? await URLSession.shared.data(from: url),
+                if let (data, _) = try? await probe.data(from: url),
                    String(data: data, encoding: .utf8)?.contains("ok") == true {
                     await MainActor.run {
                         self?.state = .running
@@ -2423,9 +2459,12 @@ final class ServerController: ObservableObject {
             }
             await MainActor.run {
                 let lang = UserDefaults.standard.string(forKey: SettingsKeys.language) ?? "en"
+                // Derived from the deadline the loop actually enforced, so the two
+                // cannot drift apart again.
+                let minutes = Int((Self.startupDeadline / 60).rounded())
                 self?.state = .failed(lang == "es"
-                    ? "El servidor no estuvo listo en 10 minutos"
-                    : "The server was not ready after 10 minutes")
+                    ? "El servidor no estuvo listo en \(minutes) minutos"
+                    : "The server was not ready after \(minutes) minutes")
                 self?.stopDiscovery()
                 if let p = self?.process {
                     let pid = p.processIdentifier
