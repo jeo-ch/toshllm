@@ -1635,8 +1635,17 @@ final class ImageUpscaler: ObservableObject {
                     self.pending = []
                     return
                 }
-                if self.scale == .x2 { Self.halve(out) }
-                self.resultImage = NSImage(contentsOf: out) ?? img
+                if self.scale == .x2 {
+                    Self.halve(out)
+                    // halve rewrote the file, so the halves need their own decode;
+                    // `img` stays as the fallback for a file that no longer reads.
+                    self.resultImage = NSImage(contentsOf: out) ?? img
+                } else {
+                    // Nothing rewrote the file, so decoding it a second time built
+                    // an identical image: for a x4 upscale of a 2048x1536 source
+                    // that is another ~200 MB alive alongside this one.
+                    self.resultImage = img
+                }
                 self.resultURL = out
                 self.progress = 1
                 if let src = self.sourceURL {

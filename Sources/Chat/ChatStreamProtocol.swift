@@ -25,10 +25,12 @@ struct ChatStreamAccumulator {
 
     mutating func consume(_ line: String) throws -> ChatStreamEvent? {
         guard line.hasPrefix("data: ") else { return nil }
-        let payload = String(line.dropFirst(6))
+        let payload = line.dropFirst(6)
         if payload == "[DONE]" { return ChatStreamEvent(completed: true) }
-        guard let data = payload.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        // Bytes straight off the substring: materialising a String first and then
+        // encoding it copied every line of the answer twice, once per token.
+        guard let object = try? JSONSerialization.jsonObject(
+            with: Data(payload.utf8)) as? [String: Any]
         else { return nil }
 
         if let message = ChatStore.streamedError(from: object) {

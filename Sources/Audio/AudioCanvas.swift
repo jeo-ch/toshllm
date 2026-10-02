@@ -350,7 +350,6 @@ struct AudioCanvas: View {
     }
 
     private var resultSummary: String {
-        let words = studio.cues.reduce(0) { $0 + $1.text.split(whereSeparator: \.isWhitespace).count }
         let language = studio.detectedLanguage.isEmpty ? "" : " · \(studio.detectedLanguage.uppercased())"
         let translating = studio.translationBatchCount > 0 && studio.stage == .translating
         let translation = translating
@@ -358,7 +357,7 @@ struct AudioCanvas: View {
                             "\(studio.translatedBatchCount)", "\(studio.translationBatchCount)")
             : ""
         return loc.t("%@ segmentos · %@ palabras%@%@", "%@ segments · %@ words%@%@",
-                     "\(studio.cues.count)", "\(words)", language, translation)
+                     "\(studio.cues.count)", "\(studio.cuesWordCount)", language, translation)
     }
 
     private func pickMedia() {

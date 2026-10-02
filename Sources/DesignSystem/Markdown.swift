@@ -51,7 +51,11 @@ final class FormattedTextCache {
 
     private let lock = NSLock()
     private var entries: [String: AttributedString] = [:]
+    /// Insertion order, oldest first. `head` is how much of it has already been
+    /// retired, so eviction advances a cursor instead of shifting the array — at
+    /// the 800-entry limit that shift was the expensive part of every miss.
     private var order: [String] = []
+    private var head = 0
     private let limit: Int
 
     init(limit: Int) { self.limit = limit }
@@ -66,7 +70,18 @@ final class FormattedTextCache {
         lock.lock()
         if entries.updateValue(value, forKey: key) == nil {
             order.append(key)
-            if order.count > limit { entries.removeValue(forKey: order.removeFirst()) }
+            if order.count - head > limit {
+                let stale = order[head]
+                order[head] = ""
+                head += 1
+                entries.removeValue(forKey: stale)
+            }
+            // Reclaim the retired prefix once it is half the buffer, so the array
+            // does not grow without bound over a long session.
+            if head > 32, head * 2 > order.count {
+                order.removeFirst(head)
+                head = 0
+            }
         }
         lock.unlock()
         return value
@@ -80,9 +95,10 @@ struct RichText: View {
     var streaming = false
 
     @State private var cache = BlockCache()
+    @State private var boundary = SettledBoundary()
 
     var body: some View {
-        let (settled, tail) = streaming ? Self.splitSettled(text) : (text, "")
+        let (settled, tail) = streaming ? boundary.split(text) : (text, "")
         let blocks = cache.blocks(for: settled)
         VStack(alignment: .leading, spacing: 8) {
             // Positional identity plus Equatable: settled blocks stay frozen
@@ -98,26 +114,49 @@ struct RichText: View {
 
     /// Boundary is the last blank line outside an open code fence: anything
     /// after it may still change as tokens arrive.
-    private static func splitSettled(_ text: String) -> (settled: String, tail: String) {
-        let lines = text.components(separatedBy: "\n")
-        var inFence = false
-        var fenceChar: Character = "`"
-        var fenceLen = 0
-        var settledLines = 0
-        for (i, line) in lines.enumerated() {
-            if let f = fenceInfo(line) {
-                if !inFence {
-                    inFence = true; fenceChar = f.char; fenceLen = f.length
-                } else if f.info.isEmpty, f.char == fenceChar, f.length >= fenceLen {
-                    inFence = false
-                }
-            } else if !inFence, line.trimmingCharacters(in: .whitespaces).isEmpty {
-                settledLines = i + 1
+    ///
+    /// The answer only ever moves forward. A fence that opened after a blank line
+    /// cannot make that line part of the fence, and text is only ever appended, so
+    /// once a prefix has been classified it stays classified — which lets the scan
+    /// resume where it stopped instead of re-walking the whole answer on every
+    /// tick, as it did while the block was still growing.
+    final class SettledBoundary {
+        /// Lines of `text` already examined.
+        private var scannedLines = 0
+        private var inFence = false
+        private var fenceChar: Character = "`"
+        private var fenceLength = 0
+        private var settledLines = 0
+
+        func split(_ text: String) -> (settled: String, tail: String) {
+            let lines = text.components(separatedBy: "\n")
+            if scannedLines > lines.count {
+                // The text was replaced rather than appended to; start over.
+                scannedLines = 0; inFence = false; settledLines = 0
             }
+            if scannedLines == 0 {
+                scannedLines = 1   // line 0 was handled on the previous pass
+            }
+            var i = scannedLines
+            while i < lines.count {
+                let line = lines[i]
+                if let f = fenceInfo(line) {
+                    if !inFence {
+                        inFence = true; fenceChar = f.char; fenceLength = f.length
+                    } else if f.info.isEmpty, f.char == fenceChar, f.length >= fenceLength {
+                        inFence = false
+                    }
+                } else if !inFence, line.trimmingCharacters(in: .whitespaces).isEmpty {
+                    settledLines = i + 1
+                }
+                i += 1
+            }
+            scannedLines = max(1, lines.count)
+            let boundary = min(settledLines, lines.count)
+            let settled = lines[..<boundary].joined(separator: "\n")
+            let tail = lines[boundary...].joined(separator: "\n")
+            return (settled, tail)
         }
-        let settled = lines[..<settledLines].joined(separator: "\n")
-        let tail = lines[settledLines...].joined(separator: "\n")
-        return (settled, tail)
     }
 
     /// Re-parses only when the settled prefix changes, i.e. once per block
@@ -130,6 +169,14 @@ struct RichText: View {
             return cached
         }
     }
+
+    /// Test seam: the incremental split's correctness rests on `fenceInfo`, so the
+    /// equivalence test calls it rather than restating it.
+    static func fenceInfoForTest(_ line: String) -> (char: Character, length: Int, info: String)? {
+        fenceInfo(line)
+    }
+
+    static func settledBoundaryForTest() -> SettledBoundary { SettledBoundary() }
 
     // MARK: parser
 

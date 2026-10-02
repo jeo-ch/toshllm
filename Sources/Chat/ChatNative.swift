@@ -68,7 +68,10 @@ final class LiveStream: ObservableObject {
     private static func tailSnippet(_ s: String, limit: Int = 200) -> String {
         // Only the recent tail can appear: flattening a multi-thousand-char
         // reasoning block every tick is work the limit throws away anyway.
-        let window = s.count > 4000 ? String(s.suffix(4000)) : s
+        // utf8.count, not count: this asks roughly how big the string is, and
+        // `count` walks grapheme clusters over the whole (still growing) block
+        // every time the tail is republished.
+        let window = s.utf8.count > 4000 ? String(s.suffix(4000)) : s
         let flat = window.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
@@ -175,6 +178,19 @@ final class ChatStore: ObservableObject {
         default: nil
         }
     }
+
+    /// How long to wait between UI publishes, from the length of the answer so far.
+    ///
+    /// The producer decides when to hand a snapshot over and the consumer decides
+    /// how long to wait before redrawing with it; both used to carry their own
+    /// copy of these thresholds in different units, so tuning one silently left
+    /// the other behind and the two ends of the pipe disagreed.
+    nonisolated static func publishInterval(characters: Int) -> TimeInterval {
+        characters > 12_000 ? 0.6 : characters > 6_000 ? 0.35 : characters > 2_500 ? 0.18 : 0.08
+    }
+
+    /// Window the live tokens-per-second reading is measured over.
+    nonisolated static let speedWindowSeconds: TimeInterval = 3
     private static var configuredAgentTurnLimit: Int {
         max(1, UserDefaults.standard.object(forKey: SettingsKeys.chatAgenticMaxTurns) as? Int ?? 10)
     }
@@ -620,10 +636,10 @@ final class ChatStore: ObservableObject {
                 let prefilling = snap.reasoning.isEmpty && snap.visible.isEmpty
                 self?.live.setPrefillProgress(prefilling ? snap.progress : nil)
                 self?.noteStreamActivity()
-                // Adaptive throttle: longer sleep when output is long to avoid UI thrash.
-                let n = snap.visible.count
-                let ms = n > 12000 ? 600 : n > 6000 ? 350 : n > 2500 ? 180 : 80
-                try? await Task.sleep(for: .milliseconds(ms))
+                // The producer already spaced its publishes; the extra wait here
+                // is what the view can absorb, and it is the same curve.
+                try? await Task.sleep(for: .milliseconds(
+                    ChatStore.publishInterval(characters: snap.visible.count) * 1000))
             }
         }
 
@@ -631,7 +647,7 @@ final class ChatStore: ObservableObject {
             var nTokens = 0
             let tSent = Date()
             var tFirst: Date?
-            // Token arrival times within the last seconds; drives the live
+            // Token arrival times within the last few seconds; drives the live
             // t/s as an instantaneous reading instead of a cumulative average.
             var stamps: [Date] = []
             var accumulator = ChatStreamAccumulator()
@@ -649,13 +665,10 @@ final class ChatStore: ObservableObject {
 
             func flush() {
                 let now = Date()
-                let interval: TimeInterval = {
-                    let n = accumulator.visibleCount
-                    return n > 12000 ? 0.6 : n > 6000 ? 0.35 : n > 2500 ? 0.18 : 0.08
-                }()
+                let interval = Self.publishInterval(characters: accumulator.visibleCount)
                 guard now.timeIntervalSince(lastFlush) > interval else { return }
                 lastFlush = now
-                if let cut = stamps.firstIndex(where: { now.timeIntervalSince($0) < 3 }) {
+                if let cut = stamps.firstIndex(where: { now.timeIntervalSince($0) < Self.speedWindowSeconds }) {
                     stamps.removeFirst(cut)
                 } else {
                     stamps.removeAll()

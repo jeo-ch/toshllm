@@ -60,6 +60,11 @@ final class AudioStudioController: ObservableObject {
     private var shouldRestorePersistentModel = false
     private var undoHistory: [([SubtitleCue], [SubtitleCue])] = []
     private var redoHistory: [([SubtitleCue], [SubtitleCue])] = []
+    /// A pending recovery write and the task that will perform it. Coalescing the
+    /// per-cue writes of a translation run is the reason these exist.
+    private var recoverySaveTask: Task<Void, Never>?
+    private var recoveryDirty = false
+    private static let recoverySaveDebounceMS = 400
 
     private static var recoveryURL: URL {
         URL.applicationSupportDirectory
@@ -85,6 +90,9 @@ final class AudioStudioController: ObservableObject {
     }
 
     var hasTranslation: Bool { !translatedCues.isEmpty }
+
+    /// Words across the cues currently on show, counted when they last changed.
+    var cuesWordCount = 0
 
     var canRetryTranslation: Bool { !originalCues.isEmpty && !isBusy }
 
@@ -319,6 +327,8 @@ final class AudioStudioController: ObservableObject {
     }
 
     func cancel(clearResult: Bool = false) {
+        // Whatever the run managed to translate is worth keeping.
+        flushRecoverySave()
         runID = nil
         process?.terminate()
         process = nil
@@ -463,13 +473,16 @@ final class AudioStudioController: ObservableObject {
         return nil
     }
 
+    /// Compiled once: this runs per chunk of a live transcription, and a pattern
+    /// built here would be recompiled on every call.
+    private static let progressPattern = try! NSRegularExpression(pattern: #"progress\s*=\s*(\d+)%"#)
+
     private func consumeDiagnostics(_ chunk: String, runID: UUID) {
         guard self.runID == runID else { return }
         stderrBuffer += chunk
         if stderrBuffer.count > 32_000 { stderrBuffer = String(stderrBuffer.suffix(16_000)) }
-        let pattern = #"progress\s*=\s*(\d+)%"#
-        guard let expression = try? NSRegularExpression(pattern: pattern),
-              let match = expression.matches(in: stderrBuffer, range: NSRange(stderrBuffer.startIndex..., in: stderrBuffer)).last,
+        guard let match = Self.progressPattern.matches(
+                in: stderrBuffer, range: NSRange(stderrBuffer.startIndex..., in: stderrBuffer)).last,
               let range = Range(match.range(at: 1), in: stderrBuffer),
               let percent = Double(stderrBuffer[range]) else { return }
         progress = 0.08 + min(100, percent) / 100 * 0.67
@@ -551,15 +564,25 @@ final class AudioStudioController: ObservableObject {
             guard let self else { return }
             do {
                 var translated = preserved
+                // Both lookups the context needs are the same for every cue: the
+                // source never changes during a run, and the translated ids only
+                // ever gain the one the current batch returns.
+                let sourceIndex = Dictionary(source.map { ($0.id, $0) },
+                                             uniquingKeysWith: { a, _ in a })
+                var sortedIDs = Self.SortedIDs()
+                sortedIDs.insert(contentsOf: translated.keys)
                 for (index, batch) in batches.enumerated() {
                     try Task.checkCancellation()
-                    let context = Self.translationContext(for: batch, in: source, translated: translated)
+                    let context = Self.translationContext(for: batch, in: source, translated: translated,
+                                                          sourceIndex: sourceIndex,
+                                                          sortedTranslatedIDs: sortedIDs.sorted)
                     let result = try await self.translateBatchResilient(
                         batch, targetLanguage: targetLanguage,
                         port: port, routerModel: routerModel,
                         glossary: glossary, context: context
                     )
                     translated.merge(result) { _, new in new }
+                    sortedIDs.insert(contentsOf: result.keys)
                     self.translatedCues = source.compactMap { cue in
                         translated[cue.id].map {
                             SubtitleCue(id: cue.id, start: cue.start, end: cue.end, text: $0)
@@ -567,7 +590,7 @@ final class AudioStudioController: ObservableObject {
                     }
                     self.translatedBatchCount = index + 1
                     self.refreshVisibleCues()
-                    self.saveRecovery()
+                    self.scheduleRecoverySave()
                     self.progress = 0.76 + Double(index + 1) / Double(batches.count) * 0.22
                 }
                 self.translatedCues = source.map {
@@ -740,6 +763,22 @@ final class AudioStudioController: ObservableObject {
 
     nonisolated static func translationContext(for batch: [SubtitleCue], in source: [SubtitleCue],
                                                translated: [Int: String]) -> String {
+        translationContext(for: batch, in: source, translated: translated,
+                           sourceIndex: Dictionary(source.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }),
+                           sortedTranslatedIDs: translated.keys.sorted())
+    }
+
+    /// The same context, with the two lookups the loop repeats already done.
+    ///
+    /// A translation run asks for this once per cue, and the two scans it used to
+    /// do — find the batch's place in the source, then find each remembered id in
+    /// it again — made a run quadratic in the length of the transcript. Callers
+    /// outside a run use the wrapper above; a run builds the index once and keeps
+    /// the sorted id list up to date as results arrive.
+    nonisolated static func translationContext(for batch: [SubtitleCue], in source: [SubtitleCue],
+                                               translated: [Int: String],
+                                               sourceIndex: [Int: SubtitleCue],
+                                               sortedTranslatedIDs: [Int]) -> String {
         guard let first = batch.first, let last = batch.last,
               let start = source.firstIndex(where: { $0.id == first.id }),
               let end = source.firstIndex(where: { $0.id == last.id }) else { return "" }
@@ -749,14 +788,49 @@ final class AudioStudioController: ObservableObject {
             let prior = translated[cue.id].map { " => \($0)" } ?? ""
             return "[\(cue.id)] \(cue.text)\(prior)"
         }.joined(separator: "\n")
-        let memoryIDs = Array(translated.keys.sorted().prefix(6))
-            + Array(translated.keys.sorted().suffix(8))
+        // The first six and the last eight of the sorted ids: the ones a model is
+        // most likely to contradict are the earliest and the most recent.
+        let memoryIDs = Array(sortedTranslatedIDs.prefix(6))
+            + Array(sortedTranslatedIDs.suffix(8))
         let memory = Array(Set(memoryIDs)).sorted().compactMap { id -> String? in
-            guard let sourceCue = source.first(where: { $0.id == id }),
-                  let translatedText = translated[id] else { return nil }
+            guard let sourceCue = sourceIndex[id], let translatedText = translated[id] else { return nil }
             return "[\(id)] \(sourceCue.text) => \(translatedText)"
         }.joined(separator: "\n")
         return memory.isEmpty ? neighboring : "CONSISTENCY MEMORY:\n\(memory)\n\nNEIGHBORING CONTEXT:\n\(neighboring)"
+    }
+
+    /// The translated ids in ascending order, kept that way as results arrive.
+    ///
+    /// Re-sorting the whole map on every cue was the other half of the quadratic
+    /// behaviour. A run walks the transcript in order, so an id past the end is
+    /// just an append; anything else goes in at its binary-searched position.
+    struct SortedIDs {
+        private var ids: [Int] = []
+        private var seen: Set<Int> = []
+
+        mutating func insert(_ id: Int) {
+            guard seen.insert(id).inserted else { return }
+            guard let last = ids.last else { ids = [id]; return }
+            if id > last { ids.append(id); return }
+            let at = Self.search(id, in: ids)
+            ids.insert(id, at: at)
+        }
+
+        mutating func insert(contentsOf new: some Sequence<Int>) {
+            for id in new.sorted() { insert(id) }
+        }
+
+        var sorted: [Int] { ids }
+
+        private static func search(_ id: Int, in ids: [Int]) -> Int {
+            var low = 0
+            var high = ids.count
+            while low < high {
+                let mid = (low + high) / 2
+                if ids[mid] < id { low = mid + 1 } else { high = mid }
+            }
+            return low
+        }
     }
 
     /// Finishing a translation must not undo the view the user chose; only a
@@ -770,8 +844,27 @@ final class AudioStudioController: ObservableObject {
         refreshVisibleCues()
     }
 
+    /// The subtitle rows ask for their original and their translation together,
+    /// once per row per render, and each half used to be a scan of the whole
+    /// transcript. `refreshVisibleCues()` is where every mutation funnels through,
+    /// so its counter is enough to know when the lookups have to be rebuilt.
+    private var cueIndexGeneration = 0
+    private var cueIndexStamp = -1
+    private var cueIndex: [Int: (original: SubtitleCue?, translated: SubtitleCue?)] = [:]
+
     func cuePair(id: Int) -> (original: SubtitleCue?, translated: SubtitleCue?) {
-        (originalCues.first { $0.id == id }, translatedCues.first { $0.id == id })
+        if cueIndexStamp != cueIndexGeneration {
+            var index: [Int: (original: SubtitleCue?, translated: SubtitleCue?)] = [:]
+            index.reserveCapacity(max(originalCues.count, translatedCues.count))
+            // First one wins on a duplicate id, which is what the scans it replaces did.
+            for cue in originalCues where index[cue.id] == nil { index[cue.id] = (cue, nil) }
+            for cue in translatedCues where index[cue.id]?.translated == nil {
+                index[cue.id] = (index[cue.id]?.original, cue)
+            }
+            cueIndex = index
+            cueIndexStamp = cueIndexGeneration
+        }
+        return cueIndex[id] ?? (nil, nil)
     }
 
     func updateCue(id: Int, text: String, translated: Bool) {
@@ -917,6 +1010,8 @@ final class AudioStudioController: ObservableObject {
     }
 
     func loadRecoveryProject() throws {
+        // A pending write has to land first, or this reads the previous state.
+        flushRecoverySave()
         try loadProject(from: Self.recoveryURL)
     }
 
@@ -939,12 +1034,17 @@ final class AudioStudioController: ObservableObject {
     private func exportCues(track: AudioExportTrack) -> [SubtitleCue] {
         switch track {
         case .original:
-            originalCues
+            return originalCues
         case .translated:
-            translatedCues.isEmpty ? originalCues : translatedCues
+            return translatedCues.isEmpty ? originalCues : translatedCues
         case .bilingual:
-            originalCues.map { cue in
-                let translated = translatedCues.first { $0.id == cue.id }?.text
+            // One lookup instead of a scan of the translated track per source cue:
+            // a long transcript made this quadratic, and the export runs on the
+            // main actor right after the user picks a destination.
+            let translations = Dictionary(translatedCues.map { ($0.id, $0.text) },
+                                          uniquingKeysWith: { first, _ in first })
+            return originalCues.map { cue in
+                let translated = translations[cue.id]
                 let text = translated.map { "\(cue.text)\n\($0)" } ?? cue.text
                 return SubtitleCue(id: cue.id, start: cue.start, end: cue.end, text: text)
             }
@@ -952,12 +1052,16 @@ final class AudioStudioController: ObservableObject {
     }
 
     private func refreshVisibleCues() {
+        cueIndexGeneration &+= 1
         switch transcriptMode {
         case .original, .bilingual:
             cues = originalCues
         case .translated:
             cues = translatedCues.isEmpty ? originalCues : translatedCues
         }
+        // Counted here rather than in the view: this runs once per change, while
+        // the summary that reads it is re-evaluated on every playback tick.
+        cuesWordCount = cues.reduce(0) { $0 + $1.text.split(whereSeparator: \.isWhitespace).count }
     }
 
     private func projectDocument(targetLanguage: String, glossary: String) -> AudioProjectDocument {
@@ -969,7 +1073,40 @@ final class AudioStudioController: ObservableObject {
         )
     }
 
+    /// Writes the recovery file now.
     private func saveRecovery() {
+        recoverySaveTask?.cancel()
+        recoverySaveTask = nil
+        recoveryDirty = false
+        writeRecovery()
+    }
+
+    /// Marks the recovery file stale and writes it once the edits settle.
+    ///
+    /// A translation run calls this per cue, and each call used to encode and
+    /// atomically write the whole project — quadratic in the transcript's length
+    /// and, for a long recording, tens of gigabytes of writes to say the same
+    /// thing over and over. Callers that read the file back, or that finish, force
+    /// the write instead of waiting.
+    private func scheduleRecoverySave() {
+        guard sourceURL != nil, !originalCues.isEmpty else { return }
+        recoveryDirty = true
+        guard recoverySaveTask == nil else { return }
+        recoverySaveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.recoverySaveDebounceMS))
+            guard !Task.isCancelled else { return }
+            self?.recoverySaveTask = nil
+            self?.flushRecoverySave()
+        }
+    }
+
+    /// Writes a pending recovery file. Safe to call when nothing is pending.
+    func flushRecoverySave() {
+        guard recoveryDirty else { return }
+        saveRecovery()
+    }
+
+    private func writeRecovery() {
         guard sourceURL != nil, !originalCues.isEmpty else { return }
         do {
             let url = Self.recoveryURL
@@ -984,6 +1121,7 @@ final class AudioStudioController: ObservableObject {
     }
 
     private func complete() {
+        flushRecoverySave()
         runID = nil
         translationTask = nil
         stage = .completed
@@ -995,6 +1133,7 @@ final class AudioStudioController: ObservableObject {
     }
 
     private func fail(_ message: String) {
+        flushRecoverySave()
         runID = nil
         translationTask = nil
         stage = .failed(message)

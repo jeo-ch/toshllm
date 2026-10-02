@@ -211,6 +211,46 @@ final class WhisperTranscriptTests: XCTestCase {
         XCTAssertTrue(context.contains("[13] Source 13"))
     }
 
+    /// A run builds the source index and the sorted id list once and passes them
+    /// in; the result has to be the same string the single-call form produces, or
+    /// the prompt the model sees would depend on how the loop was written.
+    func testPrebuiltIndexesProduceTheSameContextAsTheOneShotForm() {
+        let source = (1...30).map {
+            SubtitleCue(id: $0, start: Double($0), end: Double($0 + 1), text: "Source \($0)")
+        }
+        var translated: [Int: String] = [:]
+        var sorted = AudioStudioController.SortedIDs()
+        for batch in source {
+            let oneShot = AudioStudioController.translationContext(
+                for: [batch], in: source, translated: translated)
+            let incremental = AudioStudioController.translationContext(
+                for: [batch], in: source, translated: translated,
+                sourceIndex: Dictionary(source.map { ($0.id, $0) },
+                                        uniquingKeysWith: { a, _ in a }),
+                sortedTranslatedIDs: sorted.sorted)
+            XCTAssertEqual(oneShot, incremental, "cue \(batch.id)")
+
+            translated[batch.id] = "Destino \(batch.id)"
+            sorted.insert(batch.id)
+        }
+    }
+
+    /// The sorted list is maintained by insertion, so it has to agree with sorting
+    /// the keys — including when ids arrive out of order.
+    func testSortedIDsMatchSortingTheKeys() {
+        var sorted = AudioStudioController.SortedIDs()
+        var keys: Set<Int> = []
+        for id in [5, 1, 9, 3, 100, 3, 7, 2] {
+            sorted.insert(id)
+            keys.insert(id)
+        }
+        XCTAssertEqual(sorted.sorted, keys.sorted())
+
+        var bulk = AudioStudioController.SortedIDs()
+        bulk.insert(contentsOf: [8, 2, 6].map { $0 })
+        XCTAssertEqual(bulk.sorted, [2, 6, 8])
+    }
+
     func testPlainTextCreatesParagraphsFromLongPauses() {
         let cues = [
             SubtitleCue(id: 1, start: 0, end: 1, text: "Hola"),
