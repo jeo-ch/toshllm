@@ -679,26 +679,45 @@ final class ChatStore: ObservableObject {
             }
 
             func drain(_ bytes: URLSession.AsyncBytes) async throws -> Bool {
-                for try await line in bytes.lines {
-                    if Task.isCancelled { throw CancellationError() }
-                    bytesReceived += line.utf8.count + 1
-                    guard let event = try accumulator.consume(line) else { continue }
-                    if let progress = event.progress { buffer.writeProgress(progress) }
-                    if event.receivedContent {
-                        let now = Date()
-                        if tFirst == nil { tFirst = now }
-                        nTokens += 1
-                        stamps.append(now)
-                        flush()
-                    } else if event.receivedToolCall {
-                        // A tool call streams arguments with no content at all, and a long
-                        // one can pass 30s without text: without this heartbeat the
-                        // watchdog reads silence, stops the engine and drops the call.
-                        await self?.noteStreamActivity()
+                var splitter = ByteLineSplitter()
+                // AsyncBytes yields one byte at a time, so they are gathered into
+                // a block before splitting: one allocation per chunk instead of
+                // one per byte, which is the difference between this being free
+                // and this being the most expensive thing in the stream.
+                var block: [UInt8] = []
+                block.reserveCapacity(16 * 1024)
+
+                func consume(_ lines: [ByteLineSplitter.Line]) async throws -> Bool {
+                    for line in lines {
+                        bytesReceived += line.bytes
+                        guard let event = try accumulator.consume(line.text) else { continue }
+                        if let progress = event.progress { buffer.writeProgress(progress) }
+                        if event.receivedContent {
+                            let now = Date()
+                            if tFirst == nil { tFirst = now }
+                            nTokens += 1
+                            stamps.append(now)
+                            flush()
+                        } else if event.receivedToolCall {
+                            // A tool call streams arguments with no content at all, and a long
+                            // one can pass 30s without text: without this heartbeat the
+                            // watchdog reads silence, stops the engine and drops the call.
+                            await self?.noteStreamActivity()
+                        }
+                        if event.completed { return true }
                     }
-                    if event.completed { return true }
+                    return false
                 }
-                return false
+
+                for try await byte in bytes {
+                    if Task.isCancelled { throw CancellationError() }
+                    block.append(byte)
+                    guard block.count >= 16 * 1024 else { continue }
+                    if try await consume(splitter.push(block)) { return true }
+                    block.removeAll(keepingCapacity: true)
+                }
+                if try await consume(splitter.push(block)) { return true }
+                return try await consume(splitter.flush())
             }
 
             do {

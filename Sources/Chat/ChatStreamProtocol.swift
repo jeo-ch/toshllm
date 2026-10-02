@@ -103,6 +103,53 @@ struct ChatStreamAccumulator {
     }
 }
 
+/// Splits a byte stream into lines while counting exactly what was consumed.
+///
+/// `URLSession.AsyncBytes.lines` strips the terminator, so a resume offset built
+/// from it assumes every line ended in one byte. Under CRLF — anything that puts
+/// a proxy or an HTTP filter in front — the real cost is two, and the count
+/// drifts low by one per line. The engine then resumed from before what it had
+/// already sent and replayed it, so the answer contained a duplicated passage
+/// with nothing in the UI to say why. Counting the terminator we actually saw
+/// keeps the offset a position in the stream.
+struct ByteLineSplitter {
+    private var pending: [UInt8] = []
+
+    struct Line {
+        let text: String
+        /// Bytes consumed, terminator included.
+        let bytes: Int
+    }
+
+    /// Appends a chunk and returns whatever complete lines it finished.
+    mutating func push(_ chunk: some Sequence<UInt8>) -> [Line] {
+        pending.append(contentsOf: chunk)
+        var lines: [Line] = []
+        var start = 0
+        var index = 0
+        while index < pending.count {
+            guard pending[index] == 0x0A else { index += 1; continue }
+            var end = index
+            if end > start, pending[end - 1] == 0x0D { end -= 1 }   // CRLF
+            let text = String(decoding: pending[start..<end], as: UTF8.self)
+            lines.append(Line(text: text, bytes: index + 1 - start))
+            start = index + 1
+            index += 1
+        }
+        if start > 0 { pending.removeFirst(start) }
+        return lines
+    }
+
+    /// What is left once the stream ended without a final newline.
+    mutating func flush() -> [Line] {
+        guard !pending.isEmpty else { return [] }
+        let text = String(decoding: pending, as: UTF8.self)
+        let bytes = pending.count
+        pending.removeAll()
+        return [Line(text: text, bytes: bytes)]
+    }
+}
+
 enum ChatStreamIdentity {
     static func value(conversationID: UUID, model: String?) -> String {
         guard let model, !model.isEmpty else { return conversationID.uuidString }
@@ -111,6 +158,9 @@ enum ChatStreamIdentity {
 
     /// The engine keys a session by the conv_id query parameter, not by a path segment.
     static func resumeURL(port: Int, identity: String, from offset: Int) -> URL? {
+        // A negative offset would ask the engine to rewind past the start, which
+        // it answers by replaying the whole answer rather than by failing.
+        guard offset >= 0 else { return nil }
         var comps = URLComponents(string: "http://127.0.0.1:\(port)/v1/stream")
         comps?.percentEncodedQueryItems = [URLQueryItem(name: "conv_id", value: encode(identity)),
                                            URLQueryItem(name: "from", value: String(offset))]

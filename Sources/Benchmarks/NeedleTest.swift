@@ -32,14 +32,12 @@ final class NeedleTest: ObservableObject {
         return Self.lengths.filter { $0 + 512 <= ctx }
     }
 
-    func readContext(port: Int) async {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/props") else { return }
-        var req = URLRequest(url: url, timeoutInterval: 10)
-        if let key = ServerSettings.activeAPIKey() { req.setValue("Bearer " + key, forHTTPHeaderField: "Authorization") }
-        guard let (data, _) = try? await URLSession.shared.data(for: req),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-        let settings = json["default_generation_settings"] as? [String: Any]
-        contextTokens = (settings?["n_ctx"] as? Int) ?? (json["n_ctx"] as? Int)
+    func readContext(port: Int, model: String?) async {
+        // The shared reader, so this and the chat agree on the endpoint, the
+        // fields and the model to ask about. Under the router the old bare
+        // request described whichever model happened to be resident, so the card
+        // offered lengths the selected model could not run.
+        contextTokens = await ModelCapabilitiesService.contextTokens(port: port, model: model)
     }
 
     func run(port: Int, upTo maxLength: Int) {
@@ -211,7 +209,10 @@ struct NeedleTestCard: View {
         }
         .task(id: server.runningPort) {
             if let port = server.runningPort {
-                await test.readContext(port: port)
+                // Keyed on the router's model as well as the port: the port does
+                // not change when the selected model does, and under the router
+                // the context belongs to the model.
+                await test.readContext(port: port, model: ServerSettings.activeRouterModel())
                 if let best = test.lengths(fitting: test.contextTokens).first(where: { $0 >= 32768 }) ?? test.lengths(fitting: test.contextTokens).last {
                     maxLength = best
                 }

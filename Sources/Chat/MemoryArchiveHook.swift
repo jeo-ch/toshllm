@@ -108,6 +108,7 @@ actor MemoryArchiveHook {
         defer { draining = false }
 
         var backoff: UInt64 = 1
+        var consecutiveFailures = 0
         while let file = pending().first {
             guard let url = Self.url else { return }   // hook turned off: leave the queue for later
             guard let data = try? Data(contentsOf: file) else {
@@ -117,16 +118,33 @@ actor MemoryArchiveHook {
             case .delivered:
                 try? FileManager.default.removeItem(at: file)
                 backoff = 1
+                consecutiveFailures = 0
             case .rejected:
                 // The receiver understood and refused it; another attempt would be refused too.
                 try? FileManager.default.removeItem(at: file)
                 backoff = 1
+                consecutiveFailures = 0
             case .retry:
+                // A receiver that never comes back used to keep this loop alive
+                // for the rest of the session, growing the backoff to its ceiling
+                // and holding `draining` true, so every later archive returned
+                // immediately and nothing was ever delivered. Give up for now and
+                // leave the queue intact: resume() picks it up again next launch,
+                // and the oldest entries are still there to deliver.
+                consecutiveFailures += 1
+                guard consecutiveFailures <= Self.maxConsecutiveFailures else {
+                    AppLog.chat.error("memory archive hook unreachable after \(Self.maxConsecutiveFailures) attempts; \(self.pending().count) file(s) kept for the next run")
+                    return
+                }
                 try? await Task.sleep(for: .seconds(min(backoff, 300)))
                 backoff *= 2
             }
         }
     }
+
+    /// Attempts on one archive before the drain gives up until the next launch.
+    /// The backoff totals roughly half an hour at this ceiling.
+    private static let maxConsecutiveFailures = 8
 
     private enum Outcome { case delivered, rejected, retry }
 

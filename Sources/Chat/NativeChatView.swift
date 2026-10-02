@@ -164,7 +164,16 @@ struct NativeChatView: View {
     @AppStorage(SettingsKeys.chatPDFAsImages) private var pdfAsImages = false
     @AppStorage(SettingsKeys.chatShowSystemMessage) private var showSystemMessage = true
     @AppStorage(SettingsKeys.port) private var port = 8080
-    @AppStorage(SettingsKeys.ctx) private var contextLimit = 16384
+    @AppStorage(SettingsKeys.ctx) private var requestedContextLimit = 16384
+    /// The context the engine reports for the model in force. The router rewrites
+    /// the context per model, so the setting is only what was asked for — the
+    /// meter, the thresholds and the attachment warnings all read this instead,
+    /// or they compared a prompt against a window the engine never opened.
+    @State private var engineContextLimit: Int?
+    private var contextLimit: Int {
+        let engine = engineContextLimit ?? 0
+        return engine > 0 ? engine : requestedContextLimit
+    }
     @AppStorage(SettingsKeys.routerMode) private var routerMode = false
     @AppStorage(SettingsKeys.chatSelectedModel) private var chatSelectedModel = ""
     @State private var draft = ""
@@ -1736,11 +1745,17 @@ struct NativeChatView: View {
     private func refreshModelModalities() async {
         guard server.state == .running else {
             modelModalities = nil
+            engineContextLimit = nil
             loadingModalities = false
             return
         }
         loadingModalities = true
         let selected = routerMode && !chatSelectedModel.isEmpty ? chatSelectedModel : nil
+        // Asked before the modalities, from the same reader, so the meter's
+        // denominator is the context the engine actually opened rather than the
+        // one the settings asked for. Cleared first: a stale value from the
+        // previous model would be worse than no value.
+        engineContextLimit = await ModelCapabilitiesService.contextTokens(port: port, model: selected)
         if let fetched = try? await ModelCapabilitiesService.fetch(port: port, model: selected) {
             modelModalities = fetched
             capabilitiesAreComplete = true

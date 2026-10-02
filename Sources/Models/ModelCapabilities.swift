@@ -24,17 +24,65 @@ struct ModelModalities: Codable, Equatable, Sendable {
 }
 
 enum ModelCapabilitiesService {
-    private struct Props: Decodable {
+    struct Props: Decodable {
         let modalities: ModelModalities?
         let chatTemplate: String?
+        /// The context the engine is actually running with. Two places carry it:
+        /// the default generation settings, and the top level. Read both, in that
+        /// order, because which one is present depends on the build.
+        let nCtx: Int?
+        let defaultGenerationSettings: [String: Int]?
 
         enum CodingKeys: String, CodingKey {
             case modalities
             case chatTemplate = "chat_template"
+            case nCtx = "n_ctx"
+            case defaultGenerationSettings = "default_generation_settings"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            modalities = try container.decodeIfPresent(ModelModalities.self, forKey: .modalities)
+            chatTemplate = try container.decodeIfPresent(String.self, forKey: .chatTemplate)
+            // Numbers come through as whatever JSONSerialization or the decoder
+            // chose; a context of 16384.0 is not a decoding failure.
+            nCtx = Self.number(try container.decodeIfPresent(Double.self, forKey: .nCtx))
+            let settings = try container.decodeIfPresent(
+                [String: Double].self, forKey: .defaultGenerationSettings)
+            defaultGenerationSettings = settings.map { raw in
+                var out: [String: Int] = [:]
+                for (key, value) in raw {
+                    if let value = Self.number(value) { out[key] = value }
+                }
+                return out
+            }
+        }
+
+        private static func number(_ value: Double?) -> Int? {
+            guard let value, value.isFinite, value >= 0, value < Double(Int32.max) else { return nil }
+            return Int(value)
+        }
+
+        /// The context in force, or nil when the engine did not say.
+        var contextTokens: Int? {
+            defaultGenerationSettings?["n_ctx"] ?? nCtx
         }
     }
 
-    static func fetch(port: Int, model: String?) async throws -> ModelModalities? {
+    /// The context the engine reports, so a caller can tell what it is really
+    /// running with from what was requested. The router rewrites the context per
+    /// model, so the setting alone is not the truth.
+    nonisolated static func contextTokens(port: Int, model: String?) async -> Int? {
+        await fetchProps(port: port, model: model)?.contextTokens
+    }
+
+    /// One read of `/props`, shared by everything that needs it.
+///
+/// The context recall card used to build its own request and read a different
+/// set of fields from the same endpoint, so the two could disagree — and the
+/// card's version did not pass the model, which under the router meant it
+/// described whichever model happened to be resident.
+nonisolated static func fetchProps(port: Int, model: String?) async -> Props? {
         guard let baseURL = URL(string: "http://127.0.0.1:\(port)/props") else { return nil }
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         if let model, !model.isEmpty {
@@ -48,11 +96,17 @@ enum ModelCapabilitiesService {
         if let key = ServerSettings.activeAPIKey() {
             request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
         }
-        let (data, response) = try await NetworkManager.session.data(for: request)
+        guard let (data, response) = try? await NetworkManager.session.data(for: request) else {
+            return nil
+        }
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             return nil
         }
-        let props = try JSONDecoder().decode(Props.self, from: data)
+        return try? JSONDecoder().decode(Props.self, from: data)
+    }
+
+    static func fetch(port: Int, model: String?) async throws -> ModelModalities? {
+        guard let props = await fetchProps(port: port, model: model) else { return nil }
         var capabilities = props.modalities ?? .textOnly
         capabilities.thinking = props.chatTemplate.map(ThinkingSupportDetector.supportsThinking)
         capabilities.reasoning = props.chatTemplate.map(ReasoningEffortDetector.detect)

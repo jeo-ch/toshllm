@@ -312,6 +312,44 @@ struct ServerSettings {
         (cacheTypeV.hasPrefix("turbo") && cacheTypeK == "q4_0")
     }
 
+    /// Re-states the options the app owns after the user's extra arguments.
+    ///
+    /// `extraArgTokens.cli` is appended last and llama.cpp takes the last value
+    /// for a scalar option, so `--host 0.0.0.0` or `--api-key=…` typed into Extra
+    /// arguments quietly won — while the server card still said "This Mac only"
+    /// and the settings page still showed the key from the Keychain. Extra
+    /// arguments are also the easiest field for a shared or imported settings
+    /// file to carry, and nothing on screen said it had that reach.
+    ///
+    /// Only the options that decide who can reach the server and what they
+    /// authenticate as are reasserted. Everything else the user typed still takes
+    /// effect, which is the point of the field.
+    private func reassertingManagedOptions(_ args: [String], extra: [String]) -> [String] {
+        func isSet(_ names: [String]) -> Bool {
+            var index = 0
+            while index < extra.count {
+                let token = extra[index]
+                if names.contains(where: { token == $0 || token.hasPrefix($0 + "=") }) {
+                    return true
+                }
+                // A bare word is the value of the flag before it, not a flag.
+                index += token.hasPrefix("-") ? 1 : 2
+            }
+            return false
+        }
+        var out = args
+        if isSet(["--host", "-h"]) {
+            out += ["--host", localNetworkDiscovery ? "0.0.0.0" : "127.0.0.1"]
+        }
+        if isSet(["--port"]) {
+            out += ["--port", String(port)]
+        }
+        if isSet(["--api-key"]), apiKeyEnabled {
+            out += ["--api-key", Keychain.apiKey()]
+        }
+        return out
+    }
+
     var arguments: [String] {
         if routerMode { return routerArguments }
         // Quantized KV requires FA, so it stays forced. Elsewhere the AMD kernel rides
@@ -391,7 +429,7 @@ struct ServerSettings {
         }
         if let ui = Self.chatUIPath { args += ["--path", ui] }
         args += extraArgTokens.cli
-        return args
+        return reassertingManagedOptions(args, extra: extraArgTokens.cli)
     }
 
     /// Router writes one entry per model with the same context, but a multi-head model
@@ -438,7 +476,7 @@ struct ServerSettings {
         if apiKeyEnabled { args += ["--api-key", Keychain.apiKey()] }
         if let ui = Self.chatUIPath { args += ["--path", ui] }
         args += extraArgTokens.cli
-        return args
+        return reassertingManagedOptions(args, extra: extraArgTokens.cli)
     }
 
     /// Same folder `ModelStore` scans (`~/models` or the custom override),
