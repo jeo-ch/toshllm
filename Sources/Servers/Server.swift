@@ -632,11 +632,11 @@ struct ServerSettings {
                     "-p", String(benchPPClamped), "-n", String(benchTGClamped),
                     "-ub", String(plan.ubatch), "-b", String(max(plan.ubatch, 2048))]
         if benchDepthClamped > 0 { args += ["-d", String(benchDepthClamped)] }
-        switch plan.mode {
-        case "dmoe": args += ["-ot", Self.expertsOnHostOverride, "--load-mode", "mlock"]
-        case "dmoe_bounded": args += ["-ot", Self.expertsOnHostOverride, "--load-mode", "none"]
-        case "legacy_offload": args += ["-ncmoe", String(plan.ncmoe), "--load-mode", "none"]
-        default: break
+        switch plan.resolvedMode {
+        case .dmoe: args += ["-ot", Self.expertsOnHostOverride, "--load-mode", "mlock"]
+        case .dmoeBounded: args += ["-ot", Self.expertsOnHostOverride, "--load-mode", "none"]
+        case .legacyOffload: args += ["-ncmoe", String(plan.ncmoe), "--load-mode", "none"]
+        case nil, .fullGPU: break
         }
         if plan.kv != "f16" { args += ["-ctk", plan.kv, "-ctv", plan.kv] }
         return args
@@ -656,7 +656,7 @@ struct ServerSettings {
         env["TOSH_DMOE_MIN_ARENA_MIB"] = String(Int(plan.minArenaMib))
         env["TOSH_DMOE_RARE_ROWS"] = "auto"
         env["TOSH_DMOE_RARE_TAIL"] = "0"
-        if plan.mode == "dmoe_bounded", let warm = plan.product?.dmoe.warmBytes, warm > 0 {
+        if plan.resolvedMode == .dmoeBounded, let warm = plan.product?.dmoe.warmBytes, warm > 0 {
             env["TOSH_DMOE_HOST_CACHE_MIB"] = String(warm / 1_048_576)
             // batches of up to 8 tokens stay in mixed execution; the bank has no bytes for the CPU backend
             env["GGML_OP_OFFLOAD_MIN_BATCH"] = "9"
@@ -991,7 +991,7 @@ struct ServerSettings {
     /// an MTP head, built in or in its own file, which is why only DFlash is gated.
     /// Both the argument list and the environment read this, so a plan that withheld
     /// `-md` cannot still ask the engine to mirror an output head per card.
-    var draftAllowed: Bool { !usesAutoPlan || plannedMode == "full_gpu" }
+    var draftAllowed: Bool { !usesAutoPlan || plannedMode == AutoMemoryPlan.Mode.fullGPU.rawValue }
     /// Cache types the launch passes itself; under the plan the engine picks them.
     var launchKV: (k: String, v: String) {
         if manualFullGPU {

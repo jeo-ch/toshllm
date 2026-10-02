@@ -401,10 +401,7 @@ struct AudioCanvas: View {
     }
 
     private func openProject() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let url = FileImport.choose(contentTypes: [.json]) else { return }
         do {
             try studio.loadProject(from: url)
             targetLanguage = studio.translationTargetLanguage

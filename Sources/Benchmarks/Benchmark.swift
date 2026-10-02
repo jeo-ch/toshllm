@@ -96,10 +96,10 @@ struct BenchResult: Codable, Identifiable {
     }
 
     var dynamicMoeLabel: String? {
-        guard let dynamicMoe else { return nil }
-        switch dynamicMoe {
-        case "dmoe_bounded": return "Dynamic MoE · RAM"
-        case "legacy_offload": return "Dynamic MoE · ncmoe \(ncmoe)"
+        guard let dynamicMoe, let mode = AutoMemoryPlan.Mode(rawValue: dynamicMoe) else { return nil }
+        switch mode {
+        case .dmoeBounded: return "Dynamic MoE · RAM"
+        case .legacyOffload: return "Dynamic MoE · ncmoe \(ncmoe)"
         default: return "Dynamic MoE"
         }
     }
@@ -220,7 +220,7 @@ final class BenchmarkController: ObservableObject {
     private func engineMemoryLabel(_ settings: ServerSettings) -> String {
         if settings.usesAutoPlan {
             guard let plan = settings.benchmarkPlan else { return " · Dynamic MoE" }
-            return " · Dynamic MoE \(plan.product?.mode ?? plan.mode)" + (plan.mode == "legacy_offload" ? " ncmoe \(plan.ncmoe)" : "")
+            return " · Dynamic MoE \(plan.product?.mode ?? plan.mode)" + (plan.resolvedMode == .legacyOffload ? " ncmoe \(plan.ncmoe)" : "")
         }
         return settings.ncmoe > 0 ? " · ncmoe \(settings.ncmoe)" : ""
     }
@@ -379,7 +379,7 @@ final class BenchmarkController: ObservableObject {
             let engine = s.serverBinary == ServerSettings.defaultBinary ? "bundled" : "externo"
             let realPlan = s.usesAutoPlan ? AutoMemoryPlan.readPlan(port: s.port) : nil
             history.insert(BenchResult(date: .now, model: name, ncmoe: realPlan?.ncmoe ?? s.ncmoe,
-                                       dmoeK: nil, dynamicMoe: s.usesAutoPlan ? (realPlan?.mode ?? "dmoe") : nil, pp: pp, tg: tg,
+                                       dmoeK: nil, dynamicMoe: s.usesAutoPlan ? (realPlan?.mode ?? AutoMemoryPlan.Mode.dmoe.rawValue) : nil, pp: pp, tg: tg,
                                        ctk: realPlan?.kv ?? s.cacheTypeK, ctv: realPlan?.kv ?? s.cacheTypeV, engine: engine,
                                        fa: s.benchmarkFlashAttentionRoute,
                                        gpu: s.gpuLabel, peer: s.mgpuPeer && s.isSplitting, profile: base.makeProfile(name: name),

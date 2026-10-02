@@ -1932,10 +1932,7 @@ struct NativeChatView: View {
     }
 
     private func pickAttachments() {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        if panel.runModal() == .OK { addAttachments(urls: panel.urls) }
+        addAttachments(urls: FileImport.chooseMany(contentTypes: []))
     }
 
     private func loadVideoDuration(url: URL, attachmentID: UUID) {

@@ -478,11 +478,7 @@ final class ChatStore: ObservableObject {
 
     /// Folder picker for a project, so the menu entry is one line at each call site.
     func pickProjectWorkingDirectory(_ p: ChatProject) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let path = panel.url?.path {
+        if let path = FileImport.chooseDirectory()?.path {
             setProjectWorkingDirectory(p, path)
         }
     }

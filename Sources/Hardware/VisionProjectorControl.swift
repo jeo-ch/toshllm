@@ -129,10 +129,7 @@ struct VisionProjectorControl: View {
     }
 
     private func pick() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "gguf")].compactMap { $0 }
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        if panel.runModal() == .OK, let url = panel.url { set(url.path) }
+        let types = [UTType(filenameExtension: "gguf")].compactMap { $0 }
+        if let url = FileImport.choose(contentTypes: types) { set(url.path) }
     }
 }

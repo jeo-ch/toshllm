@@ -1267,6 +1267,35 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertEqual(refused.product?.unsupported?.requiredHostBytes, 11000000000)
     }
 
+    /// The engine and the product plan each name a mode, and both vocabularies
+    /// used to be compared as bare strings in eleven places. The property that has
+    /// to survive the enum is that a mode nobody recognises stays unrecognised —
+    /// it must not quietly become "full GPU", which is what a defaulting
+    /// initialiser would have done.
+    func testAnUnrecognisedModeIsNotSilentlyTreatedAsAValidOne() throws {
+        func plan(mode: String, productMode: String, state: String) throws -> AutoMemoryPlan {
+            let json = #"{"plan_schema_version": 1, "product": {"mode": "\#(productMode)", "mode_label_key": "k", "reason": "CURRENT_RAM_LIMIT", "warnings": [], "limits": [], "limiting_resource": "HOST_RAM", "fallback": {"selected": true, "type": "X"}, "memory": {"physical_bytes": 1, "reclaimable_bytes": 1, "projected_rss_bytes": 1, "projected_vram_bytes": 1}, "dmoe": {"expert_bank_bytes": 1, "hot_bytes": 1, "warm_bytes": 1, "coverage": 1, "coverage_state": "GOOD"}, "runtime": {"context": 8192, "kv_type": "f16", "kv_bytes": 1, "ubatch": 1024, "ncmoe_layers": 0}}, "state": "\#(state)", "mode": "\#(mode)", "reason": "r", "fallback": "", "kv": "f16", "n_ctx": 8192, "ubatch": 1024, "ncmoe": 0, "reserve_mib": 1, "arena_mib": 1, "min_arena_mib": 1, "projected_private_mib": 1, "projected_free_mib": 1, "vram_total_mib": 1, "vram_free_mib": 1, "host_required_mib": 1, "host_ram_mib": 1, "host_available_mib": 1, "host_reserve_mib": 1, "bank_mib": 1, "mlock": "required", "dispersion": "high", "candidates": []}"#
+            return try XCTUnwrap(AutoMemoryPlan.decode(Data(json.utf8)))
+        }
+
+        // A mode from a newer engine.
+        let unknown = try plan(mode: "plan_from_the_future", productMode: "PLAN_FROM_THE_FUTURE",
+                              state: "DMOE_BOUNDED_HOST")
+        XCTAssertNil(unknown.resolvedMode)
+        XCTAssertFalse(unknown.usesDynamicMoE, "an unknown mode is not Dynamic MoE")
+        XCTAssertNotEqual(unknown.productState, .fullGPU,
+                          "an unknown product mode must not default to full GPU")
+        XCTAssertEqual(AutoMemoryText.modeLabel("plan_from_the_future"),
+                       AutoMemoryText.modeLabel("also_unknown"),
+                       "an unknown mode is labelled the same way whatever it says")
+
+        // The known ones still resolve, and to themselves.
+        XCTAssertEqual(try plan(mode: "full_gpu", productMode: "PLAN_FULL_GPU", state: "OK").resolvedMode, .fullGPU)
+        XCTAssertEqual(try plan(mode: "dmoe", productMode: "PLAN_FULL_HOST_DMOE", state: "OK").resolvedMode, .dmoe)
+        XCTAssertEqual(try plan(mode: "dmoe_bounded", productMode: "PLAN_BOUNDED_DMOE", state: "OK").resolvedMode, .dmoeBounded)
+        XCTAssertEqual(try plan(mode: "legacy_offload", productMode: "PLAN_CLASSIC_NCMOE", state: "OK").resolvedMode, .legacyOffload)
+    }
+
     func testAgentToolsArgumentsAreEmittedExactlyOnce() {
         var settings = makeSettings()
         settings.jinja = false

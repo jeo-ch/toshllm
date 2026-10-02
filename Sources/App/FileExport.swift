@@ -84,18 +84,46 @@ enum FileImport {
     static func choose(contentTypes: [UTType],
                        directory: URL? = nil,
                        allowsMultipleSelection: Bool = false) -> URL? {
+        panel(contentTypes: contentTypes, directory: directory,
+              allowsMultipleSelection: allowsMultipleSelection)?.first
+    }
+
+    /// Every file the user picked. Additive alongside `choose`, which keeps
+    /// answering with the first: a caller that wants one file and a caller that
+    /// wants all of them should not have to be told apart by a flag.
+    static func chooseMany(contentTypes: [UTType],
+                           directory: URL? = nil) -> [URL] {
+        panel(contentTypes: contentTypes, directory: directory,
+              allowsMultipleSelection: true) ?? []
+    }
+
+    /// A folder. `prompt` is left to the system when not given, so a caller that
+    /// never set one keeps the panel's own wording.
+    static func chooseDirectory(prompt: String? = nil, directory: URL? = nil) -> URL? {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        if let prompt { panel.prompt = prompt }
+        panel.directoryURL = directory
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    /// Audio or video, as offered by the transcription entry points.
+    static func chooseAudioOrVideo() -> URL? {
+        choose(contentTypes: [.audio, .movie, .audiovisualContent])
+    }
+
+    private static func panel(contentTypes: [UTType], directory: URL?,
+                              allowsMultipleSelection: Bool) -> [URL]? {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = contentTypes
         panel.allowsMultipleSelection = allowsMultipleSelection
         panel.canChooseDirectories = false
         panel.directoryURL = directory
         guard panel.runModal() == .OK else { return nil }
-        return allowsMultipleSelection ? panel.urls.first : panel.url
-    }
-
-    /// Audio or video, as offered by the transcription entry points.
-    static func chooseAudioOrVideo() -> URL? {
-        choose(contentTypes: [.audio, .movie, .audiovisualContent])
+        return allowsMultipleSelection ? panel.urls : (panel.url.map { [$0] } ?? [])
     }
 }
 

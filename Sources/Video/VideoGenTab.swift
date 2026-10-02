@@ -386,8 +386,7 @@ struct VideoControls: View {
         }
     }
     private func pickInitImage() {
-        let panel = NSOpenPanel(); panel.allowedContentTypes = [.png, .jpeg]; panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url { initImage = url.path }
+        if let url = FileImport.choose(contentTypes: [.png, .jpeg]) { initImage = url.path }
     }
 }
 

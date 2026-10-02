@@ -352,12 +352,9 @@ struct ConversationListView: View {
     }
 
     private func importArchive() {
-        let panel = NSOpenPanel()
         var allowedTypes: [UTType] = [.json]
         if let jsonl = UTType(filenameExtension: "jsonl") { allowedTypes.append(jsonl) }
-        panel.allowedContentTypes = allowedTypes
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let url = FileImport.choose(contentTypes: allowedTypes) else { return }
         do {
             let count = try chat.importArchiveData(Data(contentsOf: url))
             archiveMessage = loc.t("Se importaron %@ conversaciones nuevas.", "Imported %@ new conversations.", "\(count)")

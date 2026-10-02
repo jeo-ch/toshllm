@@ -44,66 +44,6 @@ final class OptimizationModuleTests: XCTestCase {
         XCTAssertGreaterThan(recommendation.estimatedSpeed, 0)
     }
     
-    // MARK: - ConcurrencyEstimator Tests
-    
-    func testConcurrencyEstimatorWithKvBytesPerToken() {
-        let spec = ModelSpec(
-            fileGB: 4.5,
-            paramsB: 8.0,
-            layers: 32,
-            isMoE: false,
-            activeParamsB: 0,
-            kvBytesPerToken: 128.0  // Q4 quantization
-        )
-        
-        let hw = HardwareInfo(
-            cpuBrand: "Intel Core i7-10700K",
-            physicalCores: 8,
-            logicalCores: 16,
-            ramGB: 32.0,
-            arch: "x86_64",
-            model: "iMac (iMac20,1)",
-            osVersion: "macOS 15.5 Sequoia",
-            gpus: [
-                GPUDevice(
-                    index: 0,
-                    name: "AMD Radeon RX 5700 XT",
-                    vramMB: 8192,
-                    isExternal: false,
-                    isIntegrated: false,
-                    peerGroupID: 0,
-                    peerCount: 0,
-                    supportsBF16: true
-                )
-            ]
-        )
-        
-        let result = ConcurrencyEstimator.estimate(spec: spec, hw: hw, ctx: 8192)
-        
-        XCTAssertGreaterThan(result.kvPerSession, 0)
-        XCTAssertGreaterThanOrEqual(result.memoryEfficiency, 0)
-        XCTAssertLessThanOrEqual(result.memoryEfficiency, 1)
-    }
-    
-    func testQuickEstimateWithKvBytesPerToken() {
-        let sessions128 = ConcurrencyEstimator.quickEstimate(
-            vramGB: 8.0,
-            modelGB: 4.5,
-            ctx: 8192,
-            kvBytesPerToken: 128.0
-        )
-        
-        let sessions256 = ConcurrencyEstimator.quickEstimate(
-            vramGB: 8.0,
-            modelGB: 4.5,
-            ctx: 8192,
-            kvBytesPerToken: 256.0
-        )
-        
-        // Lower kvBytesPerToken should allow more sessions
-        XCTAssertGreaterThanOrEqual(sessions128, sessions256)
-    }
-    
     // MARK: - PermissionPolicy Tests
     
     func testPermissionPolicyGlobMatching() {

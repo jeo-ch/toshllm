@@ -495,10 +495,11 @@ struct ServerLogView: View {
         ## Recent log
         \(logTail.isEmpty ? server.log : logTail)
         """
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = name
-        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-        if panel.runModal() == .OK, let url = panel.url { try? report.write(to: url, atomically: true, encoding: .utf8) }
+        // Went through FileExport so a failed write is logged rather than lost;
+        // the report has no error channel of its own to show one in.
+        _ = FileExport.write(report, suggestedName: name, contentTypes: [.plainText],
+                             directory: FileManager.default.urls(for: .downloadsDirectory,
+                                                                 in: .userDomainMask).first)
     }
 }
 

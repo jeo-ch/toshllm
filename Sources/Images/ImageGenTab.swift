@@ -42,21 +42,16 @@ struct ImageControls: View {
     }
 
     private func pickCustomModel() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = ["pth", "safetensors", "bin"]
-            .compactMap { UTType(filenameExtension: $0) }
-        panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url { upscalerCustom = url.path }
+        let types = ["pth", "safetensors", "bin"].compactMap { UTType(filenameExtension: $0) }
+        if let url = FileImport.choose(contentTypes: types) { upscalerCustom = url.path }
     }
 
     /// Picking only queues. Starting a GPU run on a file chooser is a surprise,
     /// especially with a batch.
     private func pickImages() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.png, .jpeg, .tiff, .heic]
-        panel.allowsMultipleSelection = true
-        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
-        upscaler.queued = panel.urls
+        let picked = FileImport.chooseMany(contentTypes: [.png, .jpeg, .tiff, .heic])
+        guard !picked.isEmpty else { return }
+        upscaler.queued = picked
     }
 
     /// Collapsed accordions (default: expanded).
@@ -803,10 +798,8 @@ struct QueueFeedView: View {
     }
 
     private func pickDraftImage() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = ["png", "jpg", "jpeg", "webp"].compactMap { UTType(filenameExtension: $0) }
-        panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url { draftInitImage = url.path }
+        let types = ["png", "jpg", "jpeg", "webp"].compactMap { UTType(filenameExtension: $0) }
+        if let url = FileImport.choose(contentTypes: types) { draftInitImage = url.path }
     }
 
     private func add() {
@@ -1454,22 +1447,15 @@ struct ImageInstanceForm: View {
     }
 
     private func pickFile(types: [String], onPick: @escaping (String) -> Void) {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = types.compactMap { UTType(filenameExtension: $0) }
-        panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url { onPick(url.path) }
+        let allowed = types.compactMap { UTType(filenameExtension: $0) }
+        if let url = FileImport.choose(contentTypes: allowed) { onPick(url.path) }
     }
 }
 
 /// Copies finished images into one folder the user picks. Output names are
 /// unique (timestamp + token), so nothing clobbers inside the destination.
 @MainActor private func saveImagesToFolder(_ urls: [URL], loc: Localizer) {
-    let panel = NSOpenPanel()
-    panel.canChooseDirectories = true
-    panel.canChooseFiles = false
-    panel.allowsMultipleSelection = false
-    panel.prompt = loc.t("Guardar aquí", "Save here")
-    guard panel.runModal() == .OK, let dir = panel.url else { return }
+    guard let dir = FileImport.chooseDirectory(prompt: loc.t("Guardar aquí", "Save here")) else { return }
     for src in urls {
         try? FileManager.default.copyItem(at: src, to: dir.appendingPathComponent(src.lastPathComponent))
     }

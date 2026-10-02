@@ -87,20 +87,45 @@ struct AutoMemoryPlan: Decodable, Equatable {
     let candidates: [Candidate]
 
     var isUnsupported: Bool { state == "UNSUPPORTED" }
-    var usesDynamicMoE: Bool { mode == "dmoe" || mode == "dmoe_bounded" }
+
+    /// The engine's own name for a mode. One spelling per mode, so a new one from
+    /// upstream cannot leave half the comparisons behind: `mode` used to be
+    /// compared against bare strings in eleven places, and a mode nobody listed
+    /// fell through each of them differently. Failable on purpose — an unrecognised
+    /// mode must stay distinguishable from a known one, not default into one.
+    enum Mode: String {
+        case fullGPU = "full_gpu"
+        case dmoe = "dmoe"
+        case dmoeBounded = "dmoe_bounded"
+        case legacyOffload = "legacy_offload"
+    }
+
+    /// The product plan's own vocabulary, which is finer-grained than `mode`.
+    enum ProductMode: String {
+        case fullGPU = "PLAN_FULL_GPU"
+        case fullHostDmoe = "PLAN_FULL_HOST_DMOE"
+        case boundedDmoe = "PLAN_BOUNDED_DMOE"
+        case classicNcmoe = "PLAN_CLASSIC_NCMOE"
+        case unsupported = "PLAN_UNSUPPORTED"
+    }
+
+    var resolvedMode: Mode? { Mode(rawValue: mode) }
+    var usesDynamicMoE: Bool { resolvedMode == .dmoe || resolvedMode == .dmoeBounded }
     /// The user asked for RAM to hold only the experts that are not in VRAM.
     var savesHostRAM: Bool { product?.reason == "HOST_RAM_SAVING" }
 
     var productState: ProductState {
-        switch product?.mode ?? "" {
-        case "PLAN_FULL_GPU": return .fullGPU
-        case "PLAN_FULL_HOST_DMOE": return .fullHost
+        switch ProductMode(rawValue: product?.mode ?? "") {
+        case .fullGPU: return .fullGPU
+        case .fullHostDmoe: return .fullHost
         // a cache kept small by choice is not a machine short of memory
-        case "PLAN_BOUNDED_DMOE": return product?.dmoe.coverageState == "GOOD" || savesHostRAM ? .boundedHost : .memoryConstrained
-        case "PLAN_CLASSIC_NCMOE": return .classicFallback
-        case "PLAN_UNSUPPORTED": return .cannotLoad
-        default:
-            return isUnsupported ? .cannotLoad : mode == "legacy_offload" ? .classicFallback : mode == "full_gpu" ? .fullGPU : .fullHost
+        case .boundedDmoe: return product?.dmoe.coverageState == "GOOD" || savesHostRAM ? .boundedHost : .memoryConstrained
+        case .classicNcmoe: return .classicFallback
+        case .unsupported: return .cannotLoad
+        case nil:
+            return isUnsupported ? .cannotLoad
+                : resolvedMode == .legacyOffload ? .classicFallback
+                : resolvedMode == .fullGPU ? .fullGPU : .fullHost
         }
     }
 
@@ -214,12 +239,12 @@ enum AutoMemoryText {
     }
 
     static func modeLabel(_ mode: String) -> String {
-        switch mode {
-        case "full_gpu": return t("GPU completa", "Full GPU")
-        case "dmoe": return "Dynamic MoE"
-        case "dmoe_bounded": return t("Dynamic MoE (RAM limitada)", "Dynamic MoE (bounded RAM)")
-        case "legacy_offload": return t("Expertos en CPU", "Expert offload")
-        default: return t("Sin configuración válida", "No valid configuration")
+        switch AutoMemoryPlan.Mode(rawValue: mode) {
+        case .fullGPU: return t("GPU completa", "Full GPU")
+        case .dmoe: return "Dynamic MoE"
+        case .dmoeBounded: return t("Dynamic MoE (RAM limitada)", "Dynamic MoE (bounded RAM)")
+        case .legacyOffload: return t("Expertos en CPU", "Expert offload")
+        case nil: return t("Sin configuración válida", "No valid configuration")
         }
     }
 
@@ -233,7 +258,7 @@ enum AutoMemoryText {
                 parts.append(t("\(gib(Double(p.dmoe.warmBytes)/1048576)) en RAM", "\(gib(Double(p.dmoe.warmBytes)/1048576)) in RAM"))
             }
             if plan.productState == .memoryConstrained { parts.append(t("memoria justa", "memory constrained")) }
-        } else if plan.mode == "legacy_offload" {
+        } else if plan.resolvedMode == .legacyOffload {
             parts.append(t("\(plan.ncmoe) capas de expertos en CPU", "\(plan.ncmoe) expert layers on CPU"))
         }
         parts.append(t("contexto \(plan.nCtx / 1024)K", "\(plan.nCtx / 1024)K context"))

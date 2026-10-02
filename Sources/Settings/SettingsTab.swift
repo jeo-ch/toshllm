@@ -169,14 +169,8 @@ struct SettingsView: View {
     }
 
     private func chooseModelsFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = loc.t("Elegir", "Choose")
-        panel.directoryURL = models.directory
-        if panel.runModal() == .OK, let url = panel.url {
+        if let url = FileImport.chooseDirectory(prompt: loc.t("Elegir", "Choose"),
+                                                directory: models.directory) {
             modelsDir = url.path
             models.refresh()
         }
@@ -362,10 +356,7 @@ struct SettingsView: View {
     }
 
     private func importSettings() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let url = FileImport.choose(contentTypes: [.json]) else { return }
         do {
             let count = try SettingsArchive.importData(Data(contentsOf: url))
             settingsTransferMessage = loc.t("Se importaron %@ ajustes. Reinicia el servidor para aplicar los cambios del motor.", "Imported %@ settings. Restart the server to apply engine changes.", "\(count)")
