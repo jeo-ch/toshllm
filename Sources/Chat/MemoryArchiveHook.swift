@@ -72,25 +72,48 @@ actor MemoryArchiveHook {
         let legacy = UserDefaults.standard.string(forKey: SettingsKeys.memoryArchiveHookSecret)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard let legacy, !legacy.isEmpty else { return nil }
-        Keychain.setThisDeviceOnly(legacy, account: Self.secretAccount)
-        UserDefaults.standard.removeObject(forKey: SettingsKeys.memoryArchiveHookSecret)
+        // Only drop the plaintext once the Keychain has taken it. Deleting it
+        // unconditionally threw away the user's only copy whenever the write was
+        // refused, and a token they cannot retype is not recoverable from here.
+        if Keychain.setThisDeviceOnly(legacy, account: Self.secretAccount) {
+            UserDefaults.standard.removeObject(forKey: SettingsKeys.memoryArchiveHookSecret)
+        }
         return legacy
     }
 
     /// Mirrors a value typed in settings into the Keychain, or removes the
     /// Keychain copy when it is cleared.
+    ///
+    /// Returns the value to show in the field. That field is not what the request
+    /// reads — `secret` does, straight from the Keychain — so a write that was
+    /// refused leaves the two disagreeing, and `secretIsPersisted` is how the
+    /// settings pane finds out. The plaintext is kept in that case rather than
+    /// cleared: a working token in a plist the user can see and delete beats a
+    /// clean plist and a token that silently 401s.
     @discardableResult
     nonisolated static func storeSecret(_ raw: String) -> String {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else {
+            secretIsPersisted = true
             Keychain.delete(Self.secretAccount)
             UserDefaults.standard.removeObject(forKey: SettingsKeys.memoryArchiveHookSecret)
             return ""
         }
-        Keychain.setThisDeviceOnly(value, account: Self.secretAccount)
-        UserDefaults.standard.removeObject(forKey: SettingsKeys.memoryArchiveHookSecret)
+        let stored = Keychain.setThisDeviceOnly(value, account: Self.secretAccount)
+        if stored {
+            UserDefaults.standard.removeObject(forKey: SettingsKeys.memoryArchiveHookSecret)
+        } else {
+            UserDefaults.standard.set(value, forKey: SettingsKeys.memoryArchiveHookSecret)
+        }
+        secretIsPersisted = stored
         return value
     }
+
+    /// False when the token last typed could not be written to the Keychain and is
+    /// being kept in the settings plist instead. Written only from the settings
+    /// pane and read only from the same pane, both on the main actor; `nonisolated`
+    /// so it can sit on this nonisolated type at all.
+    nonisolated(unsafe) static var secretIsPersisted = true
 
     /// The current secret, for display in the settings field.
     nonisolated static func currentSecret() -> String {
@@ -183,7 +206,11 @@ actor MemoryArchiveHook {
     }
 
     /// Attempts on one archive before the drain gives up until the next launch.
-    /// The backoff totals roughly half an hour at this ceiling.
+    ///
+    /// Doubling from one second, that is 1+2+4+…+128 = 255 seconds, about four
+    /// minutes — not the half hour a larger ceiling would reach, and deliberately
+    /// so: holding `draining` for half an hour is the state this cap exists to
+    /// stop, and anything still queued is delivered by `resume()` next launch.
     private static let maxConsecutiveFailures = 8
 
     private enum Outcome { case delivered, rejected, retry }

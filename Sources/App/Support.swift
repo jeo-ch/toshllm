@@ -691,12 +691,37 @@ enum Keychain {
         ] as CFDictionary)
     }
 
+    /// The key in use when the Keychain refused to store it, for the length of
+    /// this process.
+    ///
+    /// There are six separate readers of `apiKey()`: the engine is launched with
+    /// one copy, the settings pane displays another, the copy button puts a third
+    /// on the pasteboard. If a write fails they would each be handed a freshly
+    /// minted key, and the user has no way to tell which of them is the live one.
+    /// Holding the value here makes them agree, and makes it outlive the process
+    /// being relaunched into a working session.
+    private static let apiKeyLock = NSLock()
+    private nonisolated(unsafe) static var unpersistedAPIKey: String?
+
     /// Returns the stored API key, generating one on first use.
     static func apiKey() -> String {
         if let existing = get("api-key") { return existing }
-        let key = Self.newAPIKey()
-        setThisDeviceOnly(key, account: "api-key")
-        return key
+        return apiKeyLock.withLock {
+            if let existing = get("api-key") { return existing }
+            if let pending = unpersistedAPIKey { return pending }
+            let key = Self.newAPIKey()
+            // A Keychain still locked after boot refuses this, which is not a
+            // failure worth refusing to serve over: the key works for this
+            // session and `apiKeyIsPersisted` says so out loud.
+            if !setThisDeviceOnly(key, account: "api-key") { unpersistedAPIKey = key }
+            return key
+        }
+    }
+
+    /// False when the current key could not be written and lives only in this
+    /// process, so it will be replaced after a relaunch.
+    static var apiKeyIsPersisted: Bool {
+        apiKeyLock.withLock { unpersistedAPIKey == nil }
     }
 
     /// Discards the current key and issues a new one.
@@ -709,10 +734,14 @@ enum Keychain {
     @discardableResult
     static func regenerateAPIKey() -> String {
         delete("api-key")
+        apiKeyLock.withLock { unpersistedAPIKey = nil }
         return apiKey()
     }
 
     private static func newAPIKey() -> String {
+        // `randomElement` draws from SystemRandomNumberGenerator, which is
+        // arc4random_buf on Darwin, and its bounded draw rejects rather than
+        // folding a byte range — so this is a CSPRNG draw with no modulo bias.
         let alphabet = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
         return String((0..<32).compactMap { _ in alphabet.randomElement() })
     }

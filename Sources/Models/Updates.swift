@@ -151,6 +151,7 @@ final class UpdateChecker: ObservableObject {
             // so it only ever caught transmission damage — but it was the only
             // check there was, and it disappeared exactly when the network was
             // already misbehaving.
+            var verified = false
             if let checksumsURL {
                 guard let (data, _) = try? await NetworkManager.session.data(from: checksumsURL),
                       let listing = String(data: data, encoding: .utf8),
@@ -175,9 +176,10 @@ final class UpdateChecker: ObservableObject {
                     installError = "Checksum no coincide: descarga descartada / checksum mismatch: download discarded"
                     return
                 }
+                verified = true
             }
 
-            let installed = try await Task.detached { try Self.install(dmgAt: dest) }.value
+            let installed = try await Task.detached { try Self.install(dmgAt: dest, verified: verified) }.value
             // Installed OK: drop the downloaded DMG so it doesn't pile up in Downloads.
             // Any failure above leaves it in place (the catch keeps it for retry/inspection).
             try? FileManager.default.removeItem(at: dest)
@@ -191,7 +193,12 @@ final class UpdateChecker: ObservableObject {
     /// location when it lives in /Applications, /Applications otherwise) and
     /// unmounts. The old copy is moved aside first so the running process is
     /// never half-overwritten, and restored if the copy fails.
-    nonisolated private static func install(dmgAt dmg: URL) throws -> URL {
+    /// - Parameter verified: whether the image's checksum was actually compared
+    ///   against a published one. A release that publishes no checksum file is not
+    ///   rejected — that would mean no update could ever install — but the bundle
+    ///   then keeps its quarantine attribute, so Gatekeeper still asks about code
+    ///   the app never checked.
+    nonisolated private static func install(dmgAt dmg: URL, verified: Bool) throws -> URL {
         let plist = try run("/usr/bin/hdiutil", ["attach", dmg.path, "-nobrowse", "-readonly", "-plist"])
         guard let data = plist.data(using: .utf8),
               let obj = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
@@ -217,7 +224,7 @@ final class UpdateChecker: ObservableObject {
             try? fm.removeItem(at: aside)
             try fm.moveItem(at: target, to: aside)
             do {
-                try copyStripped(source: source, target: target)
+                try copy(source: source, target: target, verified: verified)
             } catch {
                 try? fm.removeItem(at: target)
                 try? fm.moveItem(at: aside, to: target)
@@ -225,18 +232,22 @@ final class UpdateChecker: ObservableObject {
             }
             try? fm.removeItem(at: aside)
         } else {
-            try copyStripped(source: source, target: target)
+            try copy(source: source, target: target, verified: verified)
         }
         return target
     }
 
-    nonisolated private static func copyStripped(source: String, target: URL) throws {
+    nonisolated private static func copy(source: String, target: URL, verified: Bool) throws {
         _ = try run("/usr/bin/ditto", [source, target.path])
         // The app's own downloads are not quarantined, but the attribute is
-        // stripped so Gatekeeper does not flag the copy. Note this removes the
-        // one signal that the bundle came from elsewhere — it is only reached
-        // after the checksum above has been verified or deliberately skipped, and
-        // it is not a substitute for it.
+        // stripped so Gatekeeper does not flag the copy.
+        //
+        // This removes the one signal that the bundle came from elsewhere, so it
+        // is conditional on having compared a checksum: when the release published
+        // none, the attribute is left in place and Gatekeeper still asks the user
+        // about a bundle the app could not check. The stripping is not a
+        // substitute for the checksum either way — same channel, no signature.
+        guard verified else { return }
         _ = try? run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", target.path])
     }
 

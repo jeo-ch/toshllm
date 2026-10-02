@@ -1751,12 +1751,15 @@ struct NativeChatView: View {
         }
         loadingModalities = true
         let selected = routerMode && !chatSelectedModel.isEmpty ? chatSelectedModel : nil
-        // Asked before the modalities, from the same reader, so the meter's
-        // denominator is the context the engine actually opened rather than the
-        // one the settings asked for. Cleared first: a stale value from the
-        // previous model would be worse than no value.
-        engineContextLimit = await ModelCapabilitiesService.contextTokens(port: port, model: selected)
-        if let fetched = try? await ModelCapabilitiesService.fetch(port: port, model: selected) {
+        // One read of /props for both answers: the meter's denominator is the
+        // context the engine actually opened rather than the one the settings
+        // asked for, and the modalities come out of the same response, so asking
+        // separately meant two round trips to the engine per model change. The
+        // context is cleared first: a stale value from the previous model would
+        // be worse than no value.
+        let props = await ModelCapabilitiesService.fetchProps(port: port, model: selected)
+        engineContextLimit = props?.contextTokens
+        if let props, let fetched = ModelCapabilitiesService.modalities(from: props) {
             modelModalities = fetched
             capabilitiesAreComplete = true
         } else if routerMode,

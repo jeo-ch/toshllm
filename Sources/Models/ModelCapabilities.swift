@@ -69,20 +69,13 @@ enum ModelCapabilitiesService {
         }
     }
 
-    /// The context the engine reports, so a caller can tell what it is really
-    /// running with from what was requested. The router rewrites the context per
-    /// model, so the setting alone is not the truth.
-    nonisolated static func contextTokens(port: Int, model: String?) async -> Int? {
-        await fetchProps(port: port, model: model)?.contextTokens
-    }
-
     /// One read of `/props`, shared by everything that needs it.
-///
-/// The context recall card used to build its own request and read a different
-/// set of fields from the same endpoint, so the two could disagree — and the
-/// card's version did not pass the model, which under the router meant it
-/// described whichever model happened to be resident.
-nonisolated static func fetchProps(port: Int, model: String?) async -> Props? {
+    ///
+    /// The context recall card used to build its own request and read a different
+    /// set of fields from the same endpoint, so the two could disagree — and the
+    /// card's version did not pass the model, which under the router meant it
+    /// described whichever model happened to be resident.
+    nonisolated static func fetchProps(port: Int, model: String?) async -> Props? {
         guard let baseURL = URL(string: "http://127.0.0.1:\(port)/props") else { return nil }
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         if let model, !model.isEmpty {
@@ -107,6 +100,13 @@ nonisolated static func fetchProps(port: Int, model: String?) async -> Props? {
 
     static func fetch(port: Int, model: String?) async throws -> ModelModalities? {
         guard let props = await fetchProps(port: port, model: model) else { return nil }
+        return modalities(from: props)
+    }
+
+    /// Split out so a caller that needs both the context and the modalities reads
+    /// `/props` once: they come from the same response, and asking twice meant two
+    /// round trips to the engine on every model change.
+    nonisolated static func modalities(from props: Props) -> ModelModalities? {
         var capabilities = props.modalities ?? .textOnly
         capabilities.thinking = props.chatTemplate.map(ThinkingSupportDetector.supportsThinking)
         capabilities.reasoning = props.chatTemplate.map(ReasoningEffortDetector.detect)

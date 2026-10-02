@@ -340,6 +340,17 @@ struct ChatAdvancedSettingsSection: View {
                                     if stored != newValue { archiveHookSecret = stored }
                                 }
                         }
+                        // The request reads the token from the Keychain, not from
+                        // this field, so a refused write has to be said out loud
+                        // rather than showing a token that is not in use.
+                        if !MemoryArchiveHook.secretIsPersisted {
+                            Label(loc.t("No se pudo guardar el token en el llavero; se guarda en las preferencias y puede no estar cifrado.",
+                                        "The token could not be saved to the Keychain. It is kept in preferences instead, and may not be encrypted."),
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
             }

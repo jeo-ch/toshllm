@@ -37,7 +37,7 @@ final class NeedleTest: ObservableObject {
         // fields and the model to ask about. Under the router the old bare
         // request described whichever model happened to be resident, so the card
         // offered lengths the selected model could not run.
-        contextTokens = await ModelCapabilitiesService.contextTokens(port: port, model: model)
+        contextTokens = await ModelCapabilitiesService.fetchProps(port: port, model: model)?.contextTokens
     }
 
     func run(port: Int, upTo maxLength: Int) {

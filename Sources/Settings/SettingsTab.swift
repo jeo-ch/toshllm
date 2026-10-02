@@ -640,11 +640,30 @@ struct SettingsView: View {
                         isPresented: $showingKeyWarning, titleVisibility: .visible) {
                         Button(loc.t("Generar otra clave", "Generate a new key"), role: .destructive) {
                             Keychain.regenerateAPIKey()
+                            // The running engine was launched with the old key and
+                            // still answers to it, so without this the key on screen
+                            // would be one no client can use: the user would paste it,
+                            // and every request would 401.
+                            if !serverIsStopped { server.restart(.fromDefaults()) }
                         }
                         Button(loc.t("Cancelar", "Cancel"), role: .cancel) {}
                     } message: {
-                        Text(loc.t("La clave actual dejará de funcionar en cualquier cliente externo que la use.",
-                                    "The current key stops working in any external client that uses it."))
+                        Text(serverIsStopped
+                             ? loc.t("La clave actual dejará de funcionar en cualquier cliente externo que la use.",
+                                     "The current key stops working in any external client that uses it.")
+                             : loc.t("La clave actual dejará de funcionar en cualquier cliente externo que la use, y el servidor se reiniciará para empezar a usar la nueva.",
+                                     "The current key stops working in any external client that uses it, and the server will restart to start using the new one."))
+                    }
+                    // The engine is launched with this key and the next launch
+                    // would mint a different one, so a refused write is the
+                    // difference between a working client and a silent 401.
+                    if !Keychain.apiKeyIsPersisted {
+                        Label(loc.t("No se pudo guardar la clave en el llavero. Funcionará hasta que reinicies la app, y luego cambiará.",
+                                    "The key could not be saved to the Keychain. It works until you restart the app, and will change afterwards."),
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }

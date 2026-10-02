@@ -34,6 +34,19 @@ final class CredentialStorageTests: XCTestCase {
         XCTAssertNotEqual(Keychain.regenerateAPIKey(), Keychain.regenerateAPIKey())
     }
 
+    /// A Keychain that has not been unlocked since boot refuses the write. The
+    /// engine, the settings pane and the copy button each read the key
+    /// independently, so a fresh one per read would leave the user with a key
+    /// that is not the one their engine is using and no way to tell.
+    func testAKeyIsTheSameEveryTimeItIsReadWithinTheProcess() {
+        let first = Keychain.apiKey()
+        for _ in 0..<8 {
+            XCTAssertEqual(Keychain.apiKey(), first)
+        }
+        XCTAssertEqual(Keychain.regenerateAPIKey().count, 32)
+        XCTAssertEqual(Keychain.apiKey().count, 32)
+    }
+
     // MARK: - The archive hook's bearer token is not in a plist
 
     func testTheArchiveSecretRoundTripsThroughTheKeychain() {
