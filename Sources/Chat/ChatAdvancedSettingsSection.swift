@@ -18,9 +18,14 @@ struct ChatAdvancedSettingsSection: View {
     @State private var blockedToolModels: [String] = ToolSupport.blockedModels
     @AppStorage(SettingsKeys.memoryArchiveHookURL) private var archiveHookURL = ""
     /// A bearer token, so it is kept in the Keychain rather than in a plist
-    /// every process running as this user can read. Seeded from there and written
-    /// back on submit, which is what the field did through @AppStorage before.
-    @State private var archiveHookSecret = MemoryArchiveHook.currentSecret()
+    /// every process running as this user can read.
+    ///
+    /// Seeded to empty and filled in `loadArchiveSecret()` rather than in the
+    /// initialiser: a @State initialiser runs on every construction of this
+    /// struct, and the parent redraws often, so a Keychain read in it would run
+    /// dozens of times a second while the user types in another field.
+    @State private var archiveHookSecret = ""
+    @State private var archiveSecretLoaded = false
     @AppStorage(SettingsKeys.chatSystem) private var systemPrompt = ""
     @AppStorage(SettingsKeys.chatTopP) private var topP = 0.95
     @AppStorage(SettingsKeys.chatMinP) private var minP = 0.05
@@ -58,6 +63,16 @@ struct ChatAdvancedSettingsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            // Once per appearance rather than in the @State initialiser: this
+            // struct is rebuilt on every redraw and reading the Keychain is not
+            // free.
+            Color.clear
+                .frame(width: 0, height: 0)
+                .onAppear {
+                    guard !archiveSecretLoaded else { return }
+                    archiveSecretLoaded = true
+                    archiveHookSecret = MemoryArchiveHook.currentSecret()
+                }
             if destination == .general {
             SettingsRowGroup {
                 SettingsRow(icon: "arrow.down.right.and.arrow.up.left",
@@ -97,7 +112,6 @@ struct ChatAdvancedSettingsSection: View {
                 }
             }
             }
-
             if destination == .general {
                 ChatSettingsGroup(title: loc.t("Prompt de sistema global", "Global system prompt")) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -322,7 +336,8 @@ struct ChatAdvancedSettingsSection: View {
                             DeferredSettingsTextField("", text: $archiveHookSecret, width: 220)
                                 .autocorrectionDisabled()
                                 .onChange(of: archiveHookSecret) { _, newValue in
-                                    archiveHookSecret = MemoryArchiveHook.storeSecret(newValue)
+                                    let stored = MemoryArchiveHook.storeSecret(newValue)
+                                    if stored != newValue { archiveHookSecret = stored }
                                 }
                         }
                     }

@@ -115,12 +115,21 @@ final class EngineContractTests: XCTestCase {
         XCTAssertEqual(args.lastIndex(of: "--port"), args.count - 2)
     }
 
-    /// A value that merely starts with the letters of a flag is not the flag.
-    func testAValueThatLooksLikeAFlagIsNotMistakenForOne() {
+    /// A flag value that looks like another flag cannot be told apart from the
+    /// flag itself, and does not need to be: restating the canonical value is the
+    /// direction this function always wants. What must hold is that the canonical
+    /// value is the one the engine ends up with.
+    func testAFlagValueThatLooksLikeAFlagStillLeavesTheCanonicalHost() {
         let args = settings(extraArgs: "--override-kv --host=0.0.0.0").arguments
-        // It was an override value, not a host flag, so nothing is restated and the
-        // single --host the app wrote is still the last one.
-        XCTAssertEqual(args.lastIndex(of: "--host"), args.count - 2)
-        XCTAssertTrue(args.contains("--override-kv"))
+        XCTAssertTrue(args.contains("--override-kv"), "the user's own flag still applies")
+        XCTAssertEqual(args[args.lastIndex(of: "--host")! + 1], "127.0.0.1")
+    }
+
+    /// With the feature off there is no key to restate, so a key typed into the
+    /// field is the user's own way of turning authentication on.
+    func testAManualKeySurvivesWhenTheFeatureIsOff() {
+        let args = settings(extraArgs: "--api-key=typed-by-hand", apiKeyEnabled: false).arguments
+        XCTAssertTrue(args.contains("--api-key=typed-by-hand"))
+        XCTAssertNil(args.firstIndex(of: "--api-key"), "nothing to restate when the switch is off")
     }
 }

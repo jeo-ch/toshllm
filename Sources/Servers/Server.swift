@@ -325,26 +325,27 @@ struct ServerSettings {
     /// authenticate as are reasserted. Everything else the user typed still takes
     /// effect, which is the point of the field.
     private func reassertingManagedOptions(_ args: [String], extra: [String]) -> [String] {
-        func isSet(_ names: [String]) -> Bool {
-            var index = 0
-            while index < extra.count {
-                let token = extra[index]
-                if names.contains(where: { token == $0 || token.hasPrefix($0 + "=") }) {
-                    return true
-                }
-                // A bare word is the value of the flag before it, not a flag.
-                index += token.hasPrefix("-") ? 1 : 2
+        // Whether the field mentions one of these options anywhere. Pairing a flag
+        // with its value is not decidable from the tokens alone — `--override-kv
+        // --port` may be a value that looks like a flag — and it does not have to
+        // be: a false positive only means the canonical value is restated, which is
+        // the direction this function always wants. It stays deliberately simple
+        // rather than pretending to parse the grammar.
+        func mentions(_ names: [String]) -> Bool {
+            extra.contains { token in
+                names.contains { token == $0 || token.hasPrefix($0 + "=") }
             }
-            return false
         }
         var out = args
-        if isSet(["--host", "-h"]) {
+        if mentions(["--host", "-h"]) {
             out += ["--host", localNetworkDiscovery ? "0.0.0.0" : "127.0.0.1"]
         }
-        if isSet(["--port"]) {
+        if mentions(["--port"]) {
             out += ["--port", String(port)]
         }
-        if isSet(["--api-key"]), apiKeyEnabled {
+        // Only when the feature is on: with it off there is no key to restate, and
+        // a key typed here is the user's own way of turning authentication on.
+        if mentions(["--api-key"]), apiKeyEnabled {
             out += ["--api-key", Keychain.apiKey()]
         }
         return out

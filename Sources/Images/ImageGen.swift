@@ -736,7 +736,11 @@ final class ImageGenerator: ObservableObject {
         // SIGTERM is advisory: a wedged Metal kernel ignores it, and then the slot
         // stays reserved for the rest of the session with no way back. This is the
         // escalation Server.swift already uses for the engine.
-        Self.killIfStillRunning(pid, after: Self.terminationGraceSeconds)
+        Self.killIfStillRunning(pid, after: Self.terminationGraceSeconds) {
+            // Only while the reservation still points at this pid: once the slot
+            // is free the number may belong to another process.
+            self.terminatingPID == pid
+        }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + Self.terminationGraceSeconds) {
             // A backstop for a process that somehow never reports its exit. The
             // guard makes this a no-op when the termination handler got there first.
@@ -753,12 +757,21 @@ final class ImageGenerator: ObservableObject {
     /// How long a cancelled engine gets to exit on SIGTERM before it is killed.
     static let terminationGraceSeconds: TimeInterval = 6
 
-    /// Sends SIGKILL to `pid` once the grace period is up, if it is still running.
-    static func killIfStillRunning(_ pid: Int32, after seconds: TimeInterval) {
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) {
+/// Sends SIGKILL to `pid` once the grace period is up, if it is still running.
+///
+/// `expected` is the identity the caller still holds; if the slot has since been
+/// released the pid may already belong to something else, and a pid on its own is
+/// not a safe thing to signal six seconds late — the kernel is free to hand the
+/// same number to a new process in the meantime.
+static func killIfStillRunning(_ pid: Int32, after seconds: TimeInterval,
+                               whileStillOurs expected: @escaping @MainActor () -> Bool) {
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) {
+        Task { @MainActor in
+            guard expected() else { return }
             if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
         }
     }
+}
 
     /// True while a cancelled run's engine has not exited yet. The pool treats
     /// this as busy: two Metal contexts on one GPU can hang the driver.
@@ -1702,7 +1715,7 @@ final class ImageUpscaler: ObservableObject {
         pending = []
         if let p = process {
             ImageGenerator.killIfStillRunning(
-                p.processIdentifier, after: ImageGenerator.terminationGraceSeconds)
+                p.processIdentifier, after: ImageGenerator.terminationGraceSeconds) { true }
         }
         process?.terminate()
     }
