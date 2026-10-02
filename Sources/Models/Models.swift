@@ -60,7 +60,6 @@ enum ResumableDownload {
         case alreadyComplete
         case reject
     }
-
     static func request(remote: URL, partialBytes: Int64) -> URLRequest {
         var request = URLRequest(url: remote)
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -132,9 +131,21 @@ private final class DownloadSink: @unchecked Sendable {
     }
 }
 
+/// What a finished transfer's integrity check could establish.
+///
+/// `digestVerified` and `sizeVerified` are kept apart from `unverified` because
+/// the download list shows a different label for each: a transfer with a
+/// confirmed size is checked, and one with nothing to check against is not.
+/// A digest is only published for LFS-backed files, so a plain GGUF lands here.
+private enum TransferCheck: Equatable {
+    case digestVerified
+    case sizeVerified
+    case unverified
+    case failed(String)
+}
+
 @MainActor
-final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDataDelegate {
-    enum Phase: Equatable {
+final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDataDelegate {    enum Phase: Equatable {
         case preparing, downloading, paused, verifying, finished
         case failed(String)
     }
@@ -148,6 +159,11 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
     @Published var progress: Double = 0
     @Published var receivedMB: Double = 0
     @Published var totalMB: Double = 0
+    /// True only when the finished transfer was actually checked — a digest match,
+    /// or a size match when the source published no digest. The download list
+    /// reads this so a transfer with nothing to check against is not labelled
+    /// "verified".
+    @Published private(set) var integrityVerified = false
 
     var onFinish: (() -> Void)?
 
@@ -163,6 +179,10 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
 
     private var expectedSHA256: String?
     private var expectedBytes: Int64?
+    /// The full size the server stated for this transfer (Content-Range total on a
+    /// resume, Content-Length on a fresh one). Independent of the catalogue
+    /// metadata, so it is available for sources that publish no digest.
+    private var serverDeclaredBytes: Int64?
     private var task: URLSessionDataTask?
     private var requestedOffset: Int64 = 0
     private let sink: DownloadSink
@@ -325,6 +345,7 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
                 return
             }
             completionHandler(plan == .alreadyComplete ? .cancel : .allow)
+            serverDeclaredBytes = total
             if let total, total > 0 { totalMB = Double(total) / 1_048_576 }
             if plan == .alreadyComplete { finishTransfer() }
         } catch {
@@ -390,18 +411,32 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
         sink.close()
         phase = .verifying
         let expected = expectedSHA256
+        // The digest is only published for LFS-backed files, so a plain GGUF has
+        // none and used to skip the check entirely while the UI still claimed the
+        // download was verified. Fall back to the size the server itself declared.
+        let expectedSize = serverDeclaredBytes ?? expectedBytes
         let staging = sink.url
         Task {
-            let ok: Bool = await Task.detached(priority: .userInitiated) {
-                guard let expected else { return true }
-                return FileHash.sha256(of: staging)?.lowercased() == expected.lowercased()
+            let check: TransferCheck = await Task.detached(priority: .userInitiated) {
+                if let expected {
+                    guard let actual = FileHash.sha256(of: staging) else { return .failed("no-lee") }
+                    return actual.lowercased() == expected.lowercased()
+                        ? .digestVerified : .failed("digest")
+                }
+                guard let expectedSize, expectedSize > 0 else { return .unverified }
+                let attributes = try? FileManager.default.attributesOfItem(atPath: staging.path)
+                guard let actual = (attributes?[.size] as? NSNumber)?.int64Value else { return .failed("no-lee") }
+                return actual == expectedSize ? .sizeVerified : .failed("size")
             }.value
 
-            if ok {
+            switch check {
+            case .unverified:
+                // Nothing to check against. Keep the download — the size is unknown,
+                // not wrong — but do not let the UI call it verified.
                 try? FileManager.default.removeItem(at: destination)
                 do {
                     try FileManager.default.moveItem(at: staging, to: destination)
-                    if let expected { ModelStore.recordDigest(expected, forFile: destination.lastPathComponent) }
+                    self.integrityVerified = false
                     self.progress = 1
                     self.phase = .finished
                     self.session.finishTasksAndInvalidate()
@@ -410,12 +445,38 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
                     self.phase = .failed(error.localizedDescription)
                     self.session.finishTasksAndInvalidate()
                 }
-            } else {
+            case .digestVerified, .sizeVerified:
+                try? FileManager.default.removeItem(at: destination)
+                do {
+                    try FileManager.default.moveItem(at: staging, to: destination)
+                    if let expected { ModelStore.recordDigest(expected, forFile: destination.lastPathComponent) }
+                    self.integrityVerified = true
+                    self.progress = 1
+                    self.phase = .finished
+                    self.session.finishTasksAndInvalidate()
+                    self.onFinish?()
+                } catch {
+                    self.phase = .failed(error.localizedDescription)
+                    self.session.finishTasksAndInvalidate()
+                }
+            case .failed(let reason):
                 try? FileManager.default.removeItem(at: staging)
-                AppLog.downloads.error("checksum mismatch for \(self.fileName)")
-                self.phase = .failed("Checksum SHA-256 no coincide: descarga corrupta, reintenta / checksum mismatch: corrupt download, retry")
+                AppLog.downloads.error("integrity check failed for \(self.fileName): \(reason)")
+                self.phase = .failed(Self.integrityFailureMessage(reason))
                 self.session.finishTasksAndInvalidate()
             }
+        }
+    }
+
+    /// Bilingual reason a completed transfer was rejected.
+    private static func integrityFailureMessage(_ reason: String) -> String {
+        switch reason {
+        case "size":
+            return "El tamaño no coincide con el que declara el servidor: descarga truncada, reintenta / size does not match what the server declared: truncated download, retry"
+        case "no-lee":
+            return "No se pudo leer la descarga para verificarla: reintenta / could not read the download to verify it: retry"
+        default:
+            return "Checksum SHA-256 no coincide: descarga corrupta, reintenta / checksum mismatch: corrupt download, retry"
         }
     }
 
@@ -433,8 +494,12 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
                     let backoff = min(30.0, Double(1 << self.retryCount)) // 2, 4, 8, 16, 30s
                     AppLog.downloads.error("download error (retry \(self.retryCount)/\(Self.maxAutoRetries)): \(error.localizedDescription), backoff \(Int(backoff))s")
                     try? await Task.sleep(for: .seconds(backoff))
-                    // Verify task wasn't cancelled during sleep
-                    guard self.phase != .failed("Cancelada / cancelled") else { return }
+                    // Only `.downloading` is a legitimate continuation: it is what
+                    // startTask() set, so nothing intervened during the sleep. A
+                    // pause() here (or any terminal state) must survive the wake-up
+                    // — comparing against the cancel message missed `.paused` and
+                    // silently resumed a download the user had just stopped.
+                    guard self.phase == .downloading else { return }
                     self.startTask()
                     return
                 }

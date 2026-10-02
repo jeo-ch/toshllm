@@ -1571,6 +1571,7 @@ struct ImageCanvas: View {
     @State private var selectedResultID: GeneratedImage.ID?
     @State private var galleryOrder = ImageGalleryOrder.recent
     @State private var presentsFullscreenImage = false
+    @State private var saveError: String? = nil
     @AppStorage(SettingsKeys.imageStudioMode) private var studioModeRaw = ImageStudioMode.create.rawValue
     @AppStorage(SettingsKeys.imagenCanvasGrid) private var canvasGrid = false
 
@@ -1595,6 +1596,11 @@ struct ImageCanvas: View {
         }
         .buttonStyle(GlassPillButtonStyle())
         .animation(.easeOut(duration: 0.16), value: presentsFullscreenImage)
+        .alert(loc.t("No se pudo guardar", "Could not save"), isPresented: saveErrorBinding) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(saveError ?? "")
+        }
         .onChange(of: pool.gallery.map(\.id)) {
             selectedResultID = orderedGallery.first?.id
         }
@@ -2156,13 +2162,17 @@ struct ImageCanvas: View {
     }
 
     private func saveAs(_ source: URL, format: ImageFormat) {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "toshllm.\(format.ext)"
-        panel.allowedContentTypes = [format == .jpg ? .jpeg : .png]
-        if panel.runModal() == .OK, let dest = panel.url {
-            try? FileManager.default.removeItem(at: dest)
-            try? FileManager.default.copyItem(at: source, to: dest)
+        // Both copies used to be `try?`, so a full or read-only volume closed the
+        // panel and silently wrote nothing — a 200 MB upscale just vanished.
+        if case .failed(let message) = FileExport.copy(source,
+                                                        suggestedName: "toshllm.\(format.ext)",
+                                                        contentTypes: [format == .jpg ? .jpeg : .png]) {
+            saveError = message
         }
+    }
+
+    private var saveErrorBinding: Binding<Bool> {
+        Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })
     }
 
     private var studioMode: ImageStudioMode {

@@ -4,6 +4,70 @@
 
 import SwiftUI
 
+/// A memoised `contentsOfDirectory` for the span of one models scan.
+///
+/// Pairing a projector and looking for an MTP head both start by listing the
+/// model's own directory, and a warm pass asks about every model in turn, so a
+/// flat folder of N models used to run roughly 3N full directory listings — the
+/// single largest syscall multiplier in a scan.
+///
+/// The cache exists **only inside `withCache`**. The same lookups are also made
+/// at launch and from view bodies, where a stale listing would be a wrong answer
+/// rather than a slow one: pairing a projector reads the directory, decides, and
+/// is then asked again after a download changed what is there. So outside a pass
+/// every read goes to the file system, exactly as before.
+///
+/// Values are value types and no caller mutates them in place, so handing the
+/// same array to several readers is safe.
+enum ModelDirectoryListing {
+    private static let lock = NSLock()
+    /// nil outside a pass, which is what makes an uncached read the default.
+    nonisolated(unsafe) private static var cache: [String: [URL]]?
+
+    /// Directory entries, or an empty array when the directory cannot be read —
+    /// the same result the call sites already handled by falling back to `[]`.
+    static func entries(in dir: URL) -> [URL] {
+        let key = dir.standardizedFileURL.path
+        lock.lock()
+        if let cache, let cached = cache[key] {
+            lock.unlock()
+            return cached
+        }
+        let caching = cache != nil
+        lock.unlock()
+
+        let listed = (try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil)) ?? []
+
+        if caching {
+            lock.lock()
+            cache?[key] = listed
+            lock.unlock()
+        }
+        return listed
+    }
+
+    /// True when `dir` holds an entry with this name, so a caller can skip the
+    /// probe for a subdirectory it already listed.
+    static func contains(_ name: String, in dir: URL) -> Bool {
+        entries(in: dir).contains { $0.lastPathComponent == name }
+    }
+
+    /// Runs `body` with listings reused, then drops them.
+    static func withCache<T>(_ body: () -> T) -> T {
+        lock.lock()
+        let outer = cache
+        cache = [:]
+        lock.unlock()
+        defer {
+            lock.lock()
+            cache = outer
+            lock.unlock()
+        }
+        return body()
+    }
+}
+
 /// What a downloaded GGUF brings with it: experts, vision projector, MTP head, DFlash draft.
 struct ModelTraits {
     let isMoE: Bool
@@ -61,9 +125,12 @@ enum ModelTraitsCache {
 
     static func warm(paths: [String], then done: @escaping () -> Void) {
         Task.detached(priority: .utility) {
-            for path in paths {
-                autoreleasepool {
-                    _ = traits(for: path)
+            // One listing per directory for the whole pass, not one per model.
+            ModelDirectoryListing.withCache {
+                for path in paths {
+                    autoreleasepool {
+                        _ = traits(for: path)
+                    }
                 }
             }
             await MainActor.run { done() }

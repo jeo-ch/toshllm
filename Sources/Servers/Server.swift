@@ -376,9 +376,6 @@ struct ServerSettings {
         if defaultMaxTokens > 0 { args += ["-n", String(defaultMaxTokens)] }
         if apiKeyEnabled { args += ["--api-key", Keychain.apiKey()] }
         // A compatible downloaded DFlash draft takes precedence over embedded MTP.
-        // Dynamic MoE plans memory without a separate draft model, so DFlash only joins a
-        // full-GPU plan; the plan counts an MTP head, built in or in its own file.
-        let draftAllowed = !usesAutoPlan || plannedMode == "full_gpu"
         if draftAllowed, let selection = dflashSelection(modelPath: modelPath, ncmoe: ncmoe) {
             // Quantize the draft's KV cache: it doubles KV pressure at high ctx, and
             // q8_0 halves that footprint at no measurable quality cost for a draft.
@@ -511,6 +508,9 @@ struct ServerSettings {
             if reasoningInline { lines.append("reasoning-format = none") }
             if let kwargs = defaultTemplateKwargs { lines.append("chat-template-kwargs = \(kwargs)") }
             if defaultMaxTokens > 0 { lines.append("n-predict = \(defaultMaxTokens)") }
+            // No `draftAllowed` gate here: `usesAutoPlan` requires `!routerMode`, so the
+            // gate is vacuously true on this path. Kept ungated on purpose — if that ever
+            // stops holding, this block needs the same gate the argument list uses.
             if let selection = dflashSelection(modelPath: path, ncmoe: ncmoeByPath[path] ?? 0) {
                 lines.append("model-draft = \(selection.draft)")
                 lines.append("spec-type = draft-dflash")
@@ -752,7 +752,9 @@ struct ServerSettings {
         // A DFlash draft runs its selector over the target's logits, so a head split by
         // vocabulary leaves no card holding a whole row and the engine aborts. Keep the head
         // on every card for that pairing; it costs its size per card and nothing otherwise.
-        if isSplitting, effectiveSplitMode == "tensor",
+        // Gated like the argument list: when the plan withheld the draft, mirroring the
+        // head would spend a head's worth of VRAM per card for a draft that is not loaded.
+        if draftAllowed, isSplitting, effectiveSplitMode == "tensor",
            dflashSelection(modelPath: modelPath, ncmoe: ncmoe) != nil {
             env["TOSH_MIRROR_OUTPUT_HEAD"] = "1"
         }
@@ -984,6 +986,12 @@ struct ServerSettings {
     }
     /// Full GPU chosen by hand: no expert offload, even where Auto would reject the headroom.
     var manualFullGPU: Bool { dynamicMoeEnabled && executionMode == "full" }
+    /// A separately downloaded DFlash draft may join the launch. Dynamic MoE plans
+    /// memory without one, so it only fits a full-GPU plan; the plan already counts
+    /// an MTP head, built in or in its own file, which is why only DFlash is gated.
+    /// Both the argument list and the environment read this, so a plan that withheld
+    /// `-md` cannot still ask the engine to mirror an output head per card.
+    var draftAllowed: Bool { !usesAutoPlan || plannedMode == "full_gpu" }
     /// Cache types the launch passes itself; under the plan the engine picks them.
     var launchKV: (k: String, v: String) {
         if manualFullGPU {
@@ -1163,13 +1171,11 @@ struct ServerSettings {
         let dir = modelURL.deletingLastPathComponent()
         let modelStem = mtpStem(modelURL.lastPathComponent)
 
-        let fm = FileManager.default
-        var files: [URL] = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        var files: [URL] = ModelDirectoryListing.entries(in: dir)
         for sub in ["MTP", "mtp"] {
             let subDir = dir.appendingPathComponent(sub)
-            var isDir: ObjCBool = false
-            if fm.fileExists(atPath: subDir.path, isDirectory: &isDir), isDir.boolValue {
-                files += (try? fm.contentsOfDirectory(at: subDir, includingPropertiesForKeys: nil)) ?? []
+            if ModelDirectoryListing.contains(sub, in: dir) {
+                files += ModelDirectoryListing.entries(in: subDir)
             }
         }
 
@@ -1418,7 +1424,7 @@ struct ServerSettings {
         }
 
         let dir = url.deletingLastPathComponent()
-        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return nil }
+        let files = ModelDirectoryListing.entries(in: dir)
         var projectors = files.filter {
             $0.pathExtension.lowercased() == "gguf" && $0.lastPathComponent.lowercased().contains("mmproj")
         }
@@ -1730,6 +1736,14 @@ final class ServerController: ObservableObject {
     private var healthTask: Task<Void, Never>?
     private var dflashMemoryTask: Task<Void, Never>?
     private var launchedSettings: ServerSettings?
+    /// The argument list the running engine was launched with, or nil before the
+    /// first launch. Read by the paths that only need to know what is in effect.
+    private var launchedArguments: [String]?
+    /// The launched list when there is one, so a caller outside `launch()` still
+    /// gets the real arguments instead of rebuilding them.
+    private func effectiveArguments(for settings: ServerSettings) -> [String] {
+        launchedArguments ?? settings.arguments
+    }
     private var lastStoppedPID: Int32?
     /// After a projector load failure, makes the next launch drop `--mmproj`
     /// (text-only). Reset on every fresh `start()`.
@@ -1864,6 +1878,13 @@ final class ServerController: ObservableObject {
 
         log = ""
         retryWithoutMmproj = false
+        // Both are per-launch budgets that outlived their launch: without this a
+        // single executor starvation (or crash) consumed the retry for the rest
+        // of the session, so a later Stop -> Start came back still broken. The
+        // crash relaunch calls launch() directly, so resetting here does not
+        // loosen the ten-minute window that guards the relaunch loop itself.
+        recoveredFromExecutorFailure = false
+        lastCrashRelaunch = nil
         promptSpeed = nil
         genSpeed = nil
         genHistory = []
@@ -2067,6 +2088,11 @@ final class ServerController: ObservableObject {
         p.arguments = args
         p.environment = env
         launchedSettings = settings
+        // `arguments` is not a pure function of the settings: it stats the model,
+        // lists the models directory and reads the API key from the Keychain, so
+        // rebuilding it for a later question costs tens of syscalls and an IPC per
+        // call. Keep the exact list this engine was launched with.
+        launchedArguments = args
         activeDflashModelPath = args.contains("draft-dflash") ? settings.modelPath : nil
         dflashAcceptance = nil
 
@@ -2417,7 +2443,7 @@ final class ServerController: ObservableObject {
     private func startDflashMemoryCheck() {
         dflashMemoryTask?.cancel()
         guard let settings = launchedSettings,
-              settings.arguments.contains("draft-dflash") else { return }
+              effectiveArguments(for: settings).contains("draft-dflash") else { return }
         let monitoredGPUIndices = settings.selectedGPUIndices
         dflashMemoryTask = Task { [weak self] in
             var peak: GPUStat?
@@ -2455,8 +2481,9 @@ final class ServerController: ObservableObject {
     }
 
     private func dflashWarningSignature(settings: ServerSettings) -> String {
-        let ngld = settings.arguments.firstIndex(of: "-ngld").flatMap {
-            settings.arguments.indices.contains($0 + 1) ? settings.arguments[$0 + 1] : nil
+        let args = effectiveArguments(for: settings)
+        let ngld = args.firstIndex(of: "-ngld").flatMap {
+            args.indices.contains($0 + 1) ? args[$0 + 1] : nil
         } ?? "none"
         let gpus = settings.selectedGPUIndices.sorted().map(String.init).joined(separator: ",")
         return "\(settings.modelPath)|\(settings.ctx)|\(settings.ncmoe)|\(settings.cacheTypeK)|\(settings.cacheTypeV)|\(ngld)|gpus=\(gpus)"

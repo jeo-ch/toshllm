@@ -1266,12 +1266,22 @@ struct DownloadRow: View {
                         .font(.caption).foregroundStyle(.secondary)
                 case .verifying:
                     ProgressView().controlSize(.small)
-                    Text(loc.t("Verificando SHA-256…", "Verifying SHA-256…"))
+                    Text(loc.t("Verificando la descarga…", "Verifying the download…"))
                         .font(.caption).foregroundStyle(.secondary)
                 case .finished:
-                    Label(loc.t("Completada y verificada", "Done and verified"),
-                          systemImage: "checkmark.seal.fill")
-                        .foregroundStyle(.green).font(.caption)
+                    // Two labels: a transfer with no published digest is checked
+                    // against the size the server declared, and one with nothing to
+                    // check against is not checked at all. Calling both "verified"
+                    // claimed an integrity guarantee the second one never had.
+                    if item.integrityVerified {
+                        Label(loc.t("Completada y verificada", "Done and verified"),
+                              systemImage: "checkmark.seal.fill")
+                            .foregroundStyle(.green).font(.caption)
+                    } else {
+                        Label(loc.t("Completada (sin verificación)", "Done (not verified)"),
+                              systemImage: "checkmark.circle")
+                            .foregroundStyle(.secondary).font(.caption)
+                    }
                 case .failed(let message):
                     Text(message).font(.caption).foregroundStyle(.red)
                         .lineLimit(2).frame(maxWidth: 300, alignment: .trailing)

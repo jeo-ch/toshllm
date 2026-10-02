@@ -643,6 +643,100 @@ final class ResumableDownloadTests: XCTestCase {
         XCTAssertNil(ranges[0])
         XCTAssertEqual(ranges[1], "bytes=65536-")
     }
+
+    // MARK: integrity of a finished transfer
+
+    /// Declares a total that is not what it sends, so the size gate has something
+    /// to reject. `declaredTotal` of 0 means "say nothing about the total".
+    private final class LyingLengthProtocol: URLProtocol, @unchecked Sendable {
+        static let payload = Data((0..<(32 * 1024)).map { UInt8($0 % 251) })
+        nonisolated(unsafe) static var declaredTotal = 0
+
+        override class func canInit(with request: URLRequest) -> Bool {
+            request.url?.host == "lying.test"
+        }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {
+            var headers = ["Content-Length": String(Self.payload.count)]
+            if Self.declaredTotal > 0 {
+                headers["Content-Range"] = "bytes 0-\(Self.payload.count - 1)/\(Self.declaredTotal)"
+                // A 206 makes responsePlan take the declared total as authoritative.
+                let response = HTTPURLResponse(url: request.url!, statusCode: 206,
+                                               httpVersion: "HTTP/1.1", headerFields: headers)!
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            } else {
+                // A 200 with no usable length leaves nothing to check against.
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200,
+                                               httpVersion: "HTTP/1.1",
+                                               headerFields: ["Content-Length": "0"])!
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            }
+            client?.urlProtocol(self, didLoad: Self.payload)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        override func stopLoading() {}
+        static func reset() { declaredTotal = 0 }
+    }
+
+    @MainActor
+    private func makeLyingItem() throws -> (DownloadItem, URL, URL) {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [LyingLengthProtocol.self]
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("download-verify-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let destination = dir.appendingPathComponent("model.gguf")
+        let item = DownloadItem(remote: URL(string: "https://lying.test/model.gguf")!,
+                                destination: destination, sessionConfiguration: config)
+        return (item, destination, dir)
+    }
+
+    /// The digest is only published for LFS-backed files, so a plain GGUF arrives
+    /// with none. The size the server declared is then the only thing to check, and
+    /// a transfer that matches it counts as verified.
+    @MainActor
+    func testTransferIsVerifiedAgainstTheSizeTheServerDeclared() async throws {
+        LyingLengthProtocol.reset()
+        LyingLengthProtocol.declaredTotal = LyingLengthProtocol.payload.count
+        let (item, destination, dir) = try makeLyingItem()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let reached_finished = await waitUntil({ item.finished }, timeout: 5)
+        XCTAssertTrue(reached_finished)
+        XCTAssertEqual(try Data(contentsOf: destination), LyingLengthProtocol.payload)
+        XCTAssertTrue(item.integrityVerified)
+    }
+
+    /// A truncated download is caught by the same gate instead of being promoted
+    /// to the destination as if it were whole.
+    @MainActor
+    func testTransferWhoseSizeDisagreesWithTheServerIsRejected() async throws {
+        LyingLengthProtocol.reset()
+        LyingLengthProtocol.declaredTotal = LyingLengthProtocol.payload.count * 4
+        let (item, destination, dir) = try makeLyingItem()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let reached_rejected = await waitUntil({ item.error != nil }, timeout: 5)
+        XCTAssertTrue(reached_rejected)
+        XCTAssertFalse(item.integrityVerified)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path),
+                       "a rejected transfer must not leave a file at the destination")
+    }
+
+    /// With neither a digest nor a stated size there is nothing to check. The
+    /// download is kept — the size is unknown, not wrong — but it is not reported
+    /// as verified, which is what the list's second label is for.
+    @MainActor
+    func testTransferWithNothingToCheckAgainstIsNotCalledVerified() async throws {
+        LyingLengthProtocol.reset()
+        let (item, destination, dir) = try makeLyingItem()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let reached_finished = await waitUntil({ item.finished }, timeout: 5)
+        XCTAssertTrue(reached_finished)
+        XCTAssertEqual(try Data(contentsOf: destination), LyingLengthProtocol.payload)
+        XCTAssertFalse(item.integrityVerified)
+    }
 }
 
 final class DflashPolicyTests: XCTestCase {
@@ -1343,6 +1437,35 @@ final class ServerSettingsTests: XCTestCase {
         s.modelPath = makeGGUF(nextnLayers: 1, tensorName: "blk.0.nextn.eh_proj.weight").path
         s.plannedMode = "dmoe_bounded"
         XCTAssertTrue(s.arguments.contains("draft-mtp"))
+    }
+
+    /// One predicate now gates both the argument list and the environment, so a
+    /// plan that withheld the draft cannot still ask the engine to mirror an
+    /// output head per card. Pinned on both sides of the boundary.
+    func testASeparateDraftIsOnlyAllowedWhenThePlanIsFullGPU() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("draft-gate-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let base = dir.appendingPathComponent("MoE-00001-of-00001.gguf")
+        try writeMinimalMoEGGUF(base)
+
+        var s = makeSettings()
+        s.modelPath = base.path
+        s.dynamicMoeEnabled = true
+        s.executionMode = "auto"
+        s.plannedMode = "dmoe_bounded"
+        XCTAssertTrue(s.usesAutoPlan)
+        XCTAssertFalse(s.draftAllowed, "a bounded plan has no room for a separate draft")
+
+        s.plannedMode = "dmoe"
+        XCTAssertFalse(s.draftAllowed)
+        s.plannedMode = "full_gpu"
+        XCTAssertTrue(s.draftAllowed, "a full-GPU plan can hold one")
+
+        s.dynamicMoeEnabled = false
+        XCTAssertFalse(s.usesAutoPlan)
+        XCTAssertTrue(s.draftAllowed, "without the plan there is nothing to make room for")
     }
 
     func testMTPAppliesAutomaticallyWithExpertOffload() {

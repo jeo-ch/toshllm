@@ -106,14 +106,18 @@ enum GGUFFile {
             let assistant = metadata?.string(for: "general.architecture")?.hasSuffix("assistant") == true
             return assistant || metadata?.holdsWholeLayers != true
         }
+        // One read for both header probes below: `metadata(at:)` stats the file
+        // on every call, so asking twice cost a redundant syscall per candidate
+        // and a scan of the catalogue runs this for every model.
+        let metadata = GGUFMetadataCache.metadata(at: path)
         // A head packaged under its own name only differs from a model in the header: it
         // borrows the target's embeddings and output instead of carrying its own.
-        if GGUFMetadataCache.metadata(at: path)?.string(for: "nextn_shared_target_tensors") != nil {
+        if metadata?.string(for: "nextn_shared_target_tensors") != nil {
             return true
         }
         // Drafts ship under many names, so the name alone lets them into the picker.
         // The architecture is what says it is one.
-        return GGUFMetadataCache.metadata(at: path)?.string(for: "general.architecture") == "dflash"
+        return metadata?.string(for: "general.architecture") == "dflash"
     }
 
     private static func isModelFile(_ path: String) -> Bool {
