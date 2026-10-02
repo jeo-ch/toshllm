@@ -53,11 +53,51 @@ actor MemoryArchiveHook {
         return url
     }
 
+    /// Sent as `Authorization: Bearer …`, so it is a credential rather than a
+    /// preference. It lives in the Keychain: a bearer token in UserDefaults is a
+    /// plaintext plist any process running as this user can read with `defaults
+    /// read`, which is the same exposure the API key did not have. A value written
+    /// before this existed is still read once from UserDefaults so nobody has to
+    /// retype it, and then removed from there.
     private nonisolated static var secret: String? {
-        let s = UserDefaults.standard.string(forKey: SettingsKeys.memoryArchiveHookSecret)?
+        if let fromKeychain = Keychain.get(Self.secretAccount)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !fromKeychain.isEmpty {
+            // Also drop a plaintext copy left behind by an earlier build, or by a
+            // settings import: the Keychain is the source of truth, so anything
+            // still in the plist is a stale secret nothing should keep serving.
+            UserDefaults.standard.removeObject(forKey: SettingsKeys.memoryArchiveHookSecret)
+            return fromKeychain
+        }
+        // One-time migration off the plist, so the token is not left lying there.
+        let legacy = UserDefaults.standard.string(forKey: SettingsKeys.memoryArchiveHookSecret)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return (s?.isEmpty ?? true) ? nil : s
+        guard let legacy, !legacy.isEmpty else { return nil }
+        Keychain.setThisDeviceOnly(legacy, account: Self.secretAccount)
+        UserDefaults.standard.removeObject(forKey: SettingsKeys.memoryArchiveHookSecret)
+        return legacy
     }
+
+    /// Mirrors a value typed in settings into the Keychain, or removes the
+    /// Keychain copy when it is cleared.
+    @discardableResult
+    nonisolated static func storeSecret(_ raw: String) -> String {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else {
+            Keychain.delete(Self.secretAccount)
+            UserDefaults.standard.removeObject(forKey: SettingsKeys.memoryArchiveHookSecret)
+            return ""
+        }
+        Keychain.setThisDeviceOnly(value, account: Self.secretAccount)
+        UserDefaults.standard.removeObject(forKey: SettingsKeys.memoryArchiveHookSecret)
+        return value
+    }
+
+    /// The current secret, for display in the settings field.
+    nonisolated static func currentSecret() -> String {
+        secret ?? ""
+    }
+
+    private nonisolated static let secretAccount = "memoryArchiveHookSecret"
 
     /// Queues one archive. Returns immediately: the chat must not wait on a receiver.
     nonisolated static func send(conversationID: String, title: String,

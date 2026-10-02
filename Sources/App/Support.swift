@@ -694,10 +694,27 @@ enum Keychain {
     /// Returns the stored API key, generating one on first use.
     static func apiKey() -> String {
         if let existing = get("api-key") { return existing }
-        let fresh = (0..<32).map { _ in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".randomElement()! }
-        let key = String(fresh)
-        set(key, account: "api-key")
+        let key = Self.newAPIKey()
+        setThisDeviceOnly(key, account: "api-key")
         return key
+    }
+
+    /// Discards the current key and issues a new one.
+    ///
+    /// Until this existed there was no way to change the key from inside the app,
+    /// so a key that leaked through a pasted log or a shared settings file stayed
+    /// valid forever — and removing it by hand in Keychain Access meant the next
+    /// launch quietly minted a replacement, which 401s every client the user had
+    /// already configured without saying anything about it.
+    @discardableResult
+    static func regenerateAPIKey() -> String {
+        delete("api-key")
+        return apiKey()
+    }
+
+    private static func newAPIKey() -> String {
+        let alphabet = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+        return String((0..<32).compactMap { _ in alphabet.randomElement() })
     }
 }
 

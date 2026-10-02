@@ -17,7 +17,10 @@ struct ChatAdvancedSettingsSection: View {
     @AppStorage(SettingsKeys.toolResultLimit) private var toolResultLimit = ToolResultLimit.defaultCharacters
     @State private var blockedToolModels: [String] = ToolSupport.blockedModels
     @AppStorage(SettingsKeys.memoryArchiveHookURL) private var archiveHookURL = ""
-    @AppStorage(SettingsKeys.memoryArchiveHookSecret) private var archiveHookSecret = ""
+    /// A bearer token, so it is kept in the Keychain rather than in a plist
+    /// every process running as this user can read. Seeded from there and written
+    /// back on submit, which is what the field did through @AppStorage before.
+    @State private var archiveHookSecret = MemoryArchiveHook.currentSecret()
     @AppStorage(SettingsKeys.chatSystem) private var systemPrompt = ""
     @AppStorage(SettingsKeys.chatTopP) private var topP = 0.95
     @AppStorage(SettingsKeys.chatMinP) private var minP = 0.05
@@ -318,6 +321,9 @@ struct ChatAdvancedSettingsSection: View {
                                                 "Sent as Authorization: Bearer with each delivery, for receivers that ask for one.")) {
                             DeferredSettingsTextField("", text: $archiveHookSecret, width: 220)
                                 .autocorrectionDisabled()
+                                .onChange(of: archiveHookSecret) { _, newValue in
+                                    archiveHookSecret = MemoryArchiveHook.storeSecret(newValue)
+                                }
                         }
                     }
                 }
@@ -462,6 +468,8 @@ struct ChatAdvancedSettingsSection: View {
         maxImageMegapixels = 1; pdfAsImages = false
         autoCompact = true; smoothTyping = true; agentToolsEnabled = false; jsSandboxEnabled = false
         memoryToolsEnabled = true; toolsRuntime = ""; toolResultLimit = ToolResultLimit.defaultCharacters
-        archiveHookURL = ""; archiveHookSecret = ""
+        archiveHookURL = ""
+        MemoryArchiveHook.storeSecret("")
+        archiveHookSecret = ""
     }
 }

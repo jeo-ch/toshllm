@@ -73,6 +73,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.menuBarGPU) private var menuBarGPU = "panel"
     @AppStorage(SettingsKeys.autoStart) private var autoStart = false
     @AppStorage(SettingsKeys.apiKeyEnabled) private var apiKeyEnabled = false
+    @State private var showingKeyWarning = false
     @AppStorage(SettingsKeys.localNetworkDiscovery) private var localNetworkDiscovery = false
     @AppStorage(SettingsKeys.downloadSource) private var downloadSource = "huggingface"
     @AppStorage(SettingsKeys.customMirrorURL) private var customMirrorURL = ""
@@ -625,8 +626,26 @@ struct SettingsView: View {
                             .accessibilityLabel(loc.t("Copiar la clave", "Copy the key"))
                             .infoTip(loc.t("Copiar para usarla desde otros clientes (Authorization: Bearer …).",
                                         "Copy to use from other clients (Authorization: Bearer …)."))
+                        Button {
+                            showingKeyWarning = true
+                        } label: { Image(systemName: "arrow.triangle.2.circlepath") }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel(loc.t("Generar otra clave", "Generate a new key"))
+                            .infoTip(loc.t("Invalida la actual. Los clientes que la tengan guardada dejarán de funcionar hasta que vuelvas a copiarla.",
+                                        "Invalidates the current one. Clients holding it stop working until you copy the new one."))
                     }
                     .font(.caption)
+                    .confirmationDialog(
+                        loc.t("¿Generar otra clave?", "Generate a new key?"),
+                        isPresented: $showingKeyWarning, titleVisibility: .visible) {
+                        Button(loc.t("Generar otra clave", "Generate a new key"), role: .destructive) {
+                            Keychain.regenerateAPIKey()
+                        }
+                        Button(loc.t("Cancelar", "Cancel"), role: .cancel) {}
+                    } message: {
+                        Text(loc.t("La clave actual dejará de funcionar en cualquier cliente externo que la use.",
+                                    "The current key stops working in any external client that uses it."))
+                    }
                 }
             }
             .padding(.horizontal, 16)
