@@ -87,6 +87,25 @@ struct AboutView: View {
                     if let error = updates.installError ?? updates.checkError {
                         Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
                     }
+                    // An install that did not come up. The copy it replaced is
+                    // still on disk next to the app; nothing else would tell the
+                    // user it is there.
+                    if let broken = updates.brokenInstall {
+                        HStack(spacing: 8) {
+                            Text(loc.t("La versión instalada no se pudo iniciar (se instaló %@ y ahora corre %@).",
+                                       "The installed version would not start (installed %@, running %@).",
+                                       broken.installedVersion, UpdateChecker.runningVersion))
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button(loc.t("Restaurar la anterior", "Restore the previous version")) {
+                                Task { await updates.restorePrevious() }
+                            }
+                            .glassButton()
+                            .help(loc.t("Vuelve a copiar la versión anterior y cierra la app.",
+                                        "Puts the previous copy back and quits the app."))
+                        }
+                    }
                 }
                 .frame(maxWidth: 650, alignment: .leading)
             }

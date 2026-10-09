@@ -1917,6 +1917,19 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    /// Where `id` sits in `branches`, taking `hint` only when it really points there.
+    ///
+    /// The hint comes from a map shared by every conversation, so on a duplicated
+    /// branch id it names a slot in whichever array wrote it last. Checking the id
+    /// at that slot — not just that the slot is in range — is what makes the hit
+    /// trustworthy: in range but holding a different branch would have put the
+    /// transcript on the wrong one, and out of range dropped the conversation
+    /// silently. Both fall back to the scan, which is the previous behaviour.
+    nonisolated static func branchSlot(_ id: UUID, in branches: [ChatBranch], hint: Int?) -> Int? {
+        if let hint, branches.indices.contains(hint), branches[hint].id == id { return hint }
+        return branches.firstIndex(where: { $0.id == id })
+    }
+
     private func applyCompaction(conversation id: UUID, cutoff: Int, summary: String?) {
         compacting = false
         guard let summary, let i = conversations.firstIndex(where: { $0.id == id }),
@@ -2214,8 +2227,7 @@ final class ChatStore: ObservableObject {
         // lookup was a per-conversation `firstIndex` scan, which made every
         // keystroke's save O(conversations x branches) on the main thread; with a
         // long history that is hundreds of conversations. Branch ids are UUIDs, so
-        // one map serves the whole list — the bounds are still checked per
-        // conversation, since the index belongs to that conversation's own array.
+        // one map serves the whole list.
         var branchIndex: [UUID: Int] = [:]
         var totalBranches = 0
         for conversation in conversations { totalBranches += conversation.branches?.count ?? 0 }
@@ -2228,8 +2240,7 @@ final class ChatStore: ObservableObject {
         for i in conversations.indices {
             guard let active = conversations[i].activeBranchID,
                   let branches = conversations[i].branches else { continue }
-            let j = branchIndex[active] ?? branches.firstIndex(where: { $0.id == active })
-            guard let j, branches.indices.contains(j) else { continue }
+            guard let j = Self.branchSlot(active, in: branches, hint: branchIndex[active]) else { continue }
             conversations[i].branches?[j].messages = conversations[i].messages
         }
         let snapshot = conversations

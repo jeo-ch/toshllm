@@ -26,6 +26,9 @@ final class UpdateChecker: ObservableObject {
     @Published var checking = false
     @Published var installing = false
     @Published var installError: String?
+    /// An install whose version is not the one running: the new app did not start,
+    /// or the user put the old copy back. The previous version is still on disk.
+    @Published var brokenInstall: UpdateChecker.PendingInstall?
     /// Why the last check could not complete. Non-nil means "unknown", not
     /// "up to date", so the UI can say so instead of showing a green badge.
     @Published var checkError: String?
@@ -55,6 +58,12 @@ final class UpdateChecker: ObservableObject {
         guard !checking else { return }
         checking = true
         defer { checking = false }
+
+        // Before anything else: if a record is naming the version now running,
+        // this build started and the copy it replaced can go. Anything else keeps
+        // its record, which is what `brokenInstall` then reports.
+        UpdateChecker.resolvePendingInstall(running: UpdateChecker.runningVersion)
+        brokenInstall = UpdateChecker.readPendingInstall()
 
         // The three failure modes are reported apart: "no update" and "could not
         // ask" look identical otherwise, and a broken check used to read as
@@ -228,11 +237,100 @@ final class UpdateChecker: ObservableObject {
                 try? fm.moveItem(at: aside, to: target)
                 throw error
             }
-            try? fm.removeItem(at: aside)
+            // The previous copy is kept until this build has been seen running.
+            // Deleting it here left nothing to go back to when the new app would
+            // not start — wrong architecture, a bundle this machine refuses, a
+            // signature it rejects — and the user was left reinstalling by hand.
+            try? Self.recordPendingInstall(version: version(of: target), replaced: aside, target: target)
         } else {
             try copy(source: source, target: target, verified: verified)
         }
         return target
+    }
+
+    /// What the updater leaves behind so a build that cannot start is recoverable.
+    struct PendingInstall: Codable {
+        let installedVersion: String
+        let replaced: String
+        let target: String
+    }
+
+    nonisolated static func pendingInstallURL() -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ToshLLM", isDirectory: true)
+            .appendingPathComponent("pending-install.json")
+    }
+
+    nonisolated private static func recordPendingInstall(version: String, replaced: URL, target: URL) throws {
+        let dir = pendingInstallURL().deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let record = PendingInstall(installedVersion: version, replaced: replaced.path, target: target.path)
+        try JSONEncoder().encode(record).write(to: pendingInstallURL(), options: .atomic)
+    }
+
+    nonisolated static func readPendingInstall() -> PendingInstall? {
+        guard let data = try? Data(contentsOf: pendingInstallURL()) else { return nil }
+        return try? JSONDecoder().decode(PendingInstall.self, from: data)
+    }
+
+    nonisolated private static func version(of bundle: URL) -> String {
+        let info = bundle.appendingPathComponent("Contents/Info.plist")
+        guard let data = try? Data(contentsOf: info),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let short = plist["CFBundleShortVersionString"] as? String else { return "" }
+        return short
+    }
+
+    /// Called once the app is up. A record naming the version now running means
+    /// this build started, so the copy it replaced can go.
+    ///
+    /// A record naming a *different* version means the install did not take: the
+    /// new app refused to start and the user relaunched the old one, or the copy
+    /// was put back by hand. Either way the record stays and `restorePreviousVersion()`
+    /// is offered, because that is the state it exists to describe.
+    @discardableResult
+    nonisolated static func resolvePendingInstall(running: String) -> Bool {
+        guard let record = readPendingInstall(), !record.installedVersion.isEmpty,
+              record.installedVersion == running else { return false }
+        try? FileManager.default.removeItem(atPath: record.replaced)
+        try? FileManager.default.removeItem(at: pendingInstallURL())
+        AppLog.updates.notice("update \(record.installedVersion, privacy: .public) started; previous copy removed")
+        return true
+    }
+
+    nonisolated static var runningVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    }
+
+    /// Puts the replaced copy back, for an install that never came up.
+    nonisolated static func restorePreviousVersion() throws {
+        guard let record = readPendingInstall() else {
+            throw UpdateError(message: "No hay una versión anterior que restaurar / there is no previous version to restore")
+        }
+        let fm = FileManager.default
+        let replaced = URL(fileURLWithPath: record.replaced)
+        let target = URL(fileURLWithPath: record.target)
+        guard fm.fileExists(atPath: replaced.path) else {
+            throw UpdateError(message: "No se encontró la copia anterior / the previous copy could not be found")
+        }
+        let discarded = target.deletingPathExtension().appendingPathExtension("failed.app")
+        try? fm.removeItem(at: discarded)
+        if fm.fileExists(atPath: target.path) { try fm.moveItem(at: target, to: discarded) }
+        try fm.moveItem(at: replaced, to: target)
+        try? fm.removeItem(at: pendingInstallURL())
+        AppLog.updates.notice("previous version restored from \(record.replaced, privacy: .public)")
+    }
+
+    /// Swaps the old copy back in and quits, so the user is not left running a
+    /// build they just declared broken.
+    func restorePrevious() async {
+        do {
+            try UpdateChecker.restorePreviousVersion()
+            brokenInstall = nil
+            NSApp.terminate(nil)
+        } catch {
+            installError = error.localizedDescription
+        }
     }
 
     /// The digest `checksums.txt` records for `name`, or nil if it records none.
