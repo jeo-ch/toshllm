@@ -108,8 +108,16 @@ enum ChatToolsService {
         "file_glob_search", "grep_search", "exec_shell_command", "run_javascript"
     ]
 
-    static func isAlwaysAllowed(_ name: String) -> Bool {
-        UserDefaults.standard.bool(forKey: permissionKey(name))
+    /// `bundled` is false for tools of the user's own MCP servers. The math tools of the bundled helpers
+    /// run without asking unless the user turned that off: they only compute, and the engine's agent,
+    /// which runs math turns, cannot ask.
+    static func isAlwaysAllowed(_ name: String, bundled: Bool = true) -> Bool {
+        if UserDefaults.standard.bool(forKey: permissionKey(name)) { return true }
+        return bundled && mathToolsAllowed && MathTranscriptionService.isMathTool(name)
+    }
+
+    static var mathToolsAllowed: Bool {
+        UserDefaults.standard.object(forKey: SettingsKeys.mathToolsAllowed) as? Bool ?? true
     }
 
     static func allowAlways(_ name: String) {
@@ -156,6 +164,21 @@ enum ChatToolsService {
     private static let listTTL: TimeInterval = 30
     private static let listCacheQueue = DispatchQueue(label: "dev.engel.toshllm.tools-list-cache")
     nonisolated(unsafe) private static var listCache: (port: Int, at: Date, tools: [BuiltinToolInfo])?
+
+    /// The engine tools the settings allow. File tools and the math tools share the /tools endpoint.
+    static func listEnabled(port: Int) async throws -> [BuiltinToolInfo] {
+        let agent = UserDefaults.standard.bool(forKey: SettingsKeys.agentToolsEnabled)
+        let sympy = SymPyToolsService.isEnabled
+        let scientific = ScientificToolsService.isEnabled
+        guard agent || sympy || scientific else { return [] }
+        // a server started before a math switch was turned on has no /tools: not worth failing the chat
+        let tools = agent ? try await list(port: port) : ((try? await list(port: port)) ?? [])
+        return tools.filter {
+            if SymPyToolsService.isTool($0.name) { return sympy }
+            if ScientificToolsService.isTool($0.name) { return scientific }
+            return agent
+        }
+    }
 
     static func execute(name: String, arguments: [String: Any], port: Int,
                         workingDirectory: String? = nil) async throws -> ToolExecutionResult {

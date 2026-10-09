@@ -8,6 +8,7 @@ on:
       - "Tests/**"
       - "Package.swift"
       - "Package.resolved"
+      - "helpers/**"
       - ".github/workflows/build.yml"
       - "patches/**"
       - "scripts/build-engines.sh"
@@ -46,6 +47,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: swift test
+      - name: Math helper tests
+        run: |
+          ./scripts/build-sympy.sh
+          vendor/tosh-sympy/python/bin/python3 -I helpers/tosh-sympy/tests/test_helper.py
+          vendor/tosh-sympy/python/bin/python3 -I helpers/tosh-scientific/tests/test_scientific.py
+          vendor/tosh-sympy/python/bin/python3 -I helpers/tosh-sympy/tests/test_agent.py
 
   # Performance regression tests - run on PRs and manual triggers
   performance:
@@ -112,6 +119,24 @@ jobs:
             engines-${{ matrix.variant }}-
             engines-
 
+      # Pinned CPython, SymPy, NumPy and SciPy, checked against their SHA-256. Rebuilt every
+      # time: it is a download and an unpack, and the helper sources live outside the engine cache key.
+      - name: Build math runtime (x86_64)
+        if: github.event_name != 'pull_request' || steps.scope.outputs.build == 'true'
+        run: |
+          ARCH=x86_64 ./scripts/build-sympy.sh
+          PY=vendor/tosh-sympy/python/bin/python3
+          if "$PY" -I -c pass 2>/dev/null; then
+            # On an arm64 runner the first import pays for the Rosetta translation of every
+            # extension, which is longer than the helper's call timeout.
+            "$PY" -I -c "import sympy, numpy, scipy.fft, scipy.signal, scipy.integrate, scipy.optimize, scipy.interpolate, scipy.stats, scipy.linalg"
+            "$PY" -I helpers/tosh-sympy/tests/test_helper.py
+            "$PY" -I helpers/tosh-scientific/tests/test_scientific.py
+            "$PY" -I helpers/tosh-sympy/tests/test_agent.py
+          else
+            echo "x86_64 runtime cannot run on this runner; its tests ran in the unit test job"
+          fi
+
       - name: Run unit tests
         if: github.event_name == 'pull_request' && steps.scope.outputs.build == 'true'
         run: swift test
@@ -149,6 +174,8 @@ jobs:
           fi
           echo "$CERT_P12" | base64 -d > /tmp/cert.p12
           security create-keychain -p ci tosh.keychain
+          # a new keychain locks itself after 5 minutes, and codesign then waits for a password nobody can type
+          security set-keychain-settings -lut 21600 tosh.keychain
           security default-keychain -s tosh.keychain
           security list-keychains -d user -s tosh.keychain login.keychain-db
           security unlock-keychain -p ci tosh.keychain
@@ -161,13 +188,21 @@ jobs:
           # Sign inside out: --deep is deprecated and does not apply the hardened
           # runtime to the engine binaries, which notarization rejects.
           APP=dist/ToshLLM.app
-          for exe in "$APP/Contents/Resources/bin/"* "$APP/Contents/Resources/bin-image/"* "$APP/Contents/Resources/bin-audio/"*; do
+          # the math runtime is CPython plus the extension modules and libraries of NumPy and SciPy:
+          # every one of them is a Mach-O the notary service checks
+          find "$APP/Contents/Resources/tosh-sympy" -type f \( -name '*.so' -o -name '*.dylib' \) -print0 2>/dev/null |
+            xargs -0 -n 20 codesign --force --timestamp --options runtime -s "$IDENTITY"
+          for exe in "$APP/Contents/Resources/bin/"* "$APP/Contents/Resources/bin-image/"* "$APP/Contents/Resources/bin-audio/"* \
+                     "$APP/Contents/Resources/tosh-sympy/python/bin/python3"; do
             [ -f "$exe" ] || continue
             case "$exe" in *.metallib) continue;; esac
             codesign --force --timestamp --options runtime -s "$IDENTITY" "$exe"
           done
-          codesign --force --timestamp --options runtime -s "$IDENTITY" "$APP"
+          # under the hardened runtime macOS never asks for the microphone without this entitlement
+          codesign --force --timestamp --options runtime --entitlements ToshLLM.entitlements -s "$IDENTITY" "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -d --entitlements - "$APP" 2>/dev/null | grep -q 'com.apple.security.device.audio-input' ||
+            { echo "::error::the signed app lost its microphone entitlement"; exit 1; }
 
           # Name it per variant: the notary history lists submissions by filename.
           ZIP=/tmp/ToshLLM-${{ matrix.variant }}.zip
@@ -209,12 +244,34 @@ jobs:
             spctl -a -vvv -t open --context context:primary-signature "$dmg"
           done
 
+      # The app needs macOS 14; on macOS 12 the engine runs alone. Only this zip is built for
+      # macOS 12 and Metal 2.4, in its own directory: the DMGs above are unchanged.
+      - name: Package macOS 12 engine
+        if: matrix.variant == 'noavx2' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+        env:
+          SIGN_IDENTITY: ${{ steps.sign.outputs.identity }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          [[ "$VERSION" == v* ]] || VERSION="dev-${GITHUB_SHA::7}"
+          [ -z "$SIGN_IDENTITY" ] || security unlock-keychain -p ci tosh.keychain
+          ./scripts/make-engine-zip.sh "$VERSION"
+          if [ -n "$SIGN_IDENTITY" ]; then
+            xcrun notarytool submit dist/toshllm-engine-*-macos12-x86_64.zip \
+              --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
+              --password "$NOTARY_PASSWORD" --wait
+          fi
+
       - name: Upload artifact
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v7
         with:
           name: dmg-${{ matrix.variant }}
-          path: dist/*.dmg
+          path: |
+            dist/*.dmg
+            dist/toshllm-engine-*.zip
 
       - name: Upload build metrics
         if: always()
@@ -245,7 +302,7 @@ jobs:
           merge-multiple: true
 
       - name: Checksums
-        run: (cd dist && shasum -a 256 *.dmg > checksums.txt && cat checksums.txt)
+        run: (cd dist && shasum -a 256 *.dmg *.zip > checksums.txt && cat checksums.txt)
 
       # Pull the section for this tag's version out of CHANGELOG.md so the
       # release body shows the human-written notes; generate_release_notes then
@@ -269,6 +326,7 @@ jobs:
         with:
           files: |
             dist/*.dmg
+            dist/toshllm-engine-*.zip
             dist/checksums.txt
           body_path: release-notes.md
           generate_release_notes: true

@@ -530,6 +530,43 @@ final class EstimatorTests: XCTestCase {
         XCTAssertEqual(Estimator.estimate(spec: spec, hw: smallRAM).level, .no)
     }
 
+    func testTableReadOnDemandIsNotCountedAsRAM() {
+        // Qwen3.8-Flash-Next Q2_0: 61.9 GiB on disk, 26.8 of them a table the engine reads from disk
+        var spec = ModelSpec(fileGB: 61.85, paramsB: 66, layers: 48, isMoE: true, activeParamsB: 6)
+        spec.lazyGB = 26.82
+        spec.expertGB = 31.64
+        func hw(_ ram: Double) -> HardwareInfo {
+            HardwareInfo(cpuBrand: "Test", physicalCores: 6, logicalCores: 12, ramGB: ram, arch: "x86_64",
+                         model: "", osVersion: "", gpus: [GPUDevice(index: 0, name: "Test GPU", vramMB: 12868)])
+        }
+        XCTAssertEqual(Estimator.estimate(spec: spec, hw: hw(32), ctx: 8192).level, .no)
+        XCTAssertNotEqual(Estimator.estimate(spec: spec, hw: hw(48), ctx: 8192).level, .no)
+        XCTAssertNotEqual(Estimator.estimate(spec: spec, hw: hw(64), ctx: 8192).level, .no)
+        spec.lazyGB = 0
+        spec.expertGB = 0
+        XCTAssertEqual(Estimator.estimate(spec: spec, hw: hw(64), ctx: 8192).level, .no,
+                       "counted as weights, the table keeps the model off a 64 GB Mac")
+    }
+
+    func testWeightSplitReadsSizesFromOffsets() {
+        var d = Data("GGUF".utf8)
+        func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        func u64(_ v: UInt64) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        func str(_ s: String) { u64(UInt64(s.utf8.count)); d.append(contentsOf: s.utf8) }
+        u32(3); u64(3); u64(1)
+        str("general.alignment"); u32(4); u32(64)
+        let tensors: [(String, UInt64)] = [("blk.0.ffn_up_exps.weight", 0),
+                                           ("per_layer_token_embd.weight", 1 << 20),
+                                           ("blk.0.attn_q.weight", (1 << 20) + (5 << 30))]
+        for (name, offset) in tensors { str(name); u32(2); u64(16); u64(16); u32(8); u64(offset) }
+        let start = (UInt64(d.count) + 63) / 64 * 64
+        let split = GGUFMetadataCache.weightSplit(from: d, fileSize: start + (1 << 20) + (5 << 30) + 4096)
+        XCTAssertEqual(split?.expertBytes, 1 << 20)
+        XCTAssertEqual(split?.lazyBytes, 5 << 30)
+        XCTAssertNil(GGUFMetadataCache.weightSplit(from: d.prefix(40), fileSize: 1 << 40),
+                     "a header cut short is no answer, not an empty model")
+    }
+
     func testMoEFitsFullyAcrossMultiGPU() {
         // Two 16 GB cards (Lance's rig): the 35B MoE needs expert offload on one
         // card, but fits entirely in combined VRAM with the split enabled.
@@ -1208,6 +1245,8 @@ final class ServerSettingsTests: XCTestCase {
         // One slot by default: retries resume aborted prefills (VS Code).
         XCTAssertEqual(args[args.firstIndex(of: "--parallel")! + 1], "1")
         XCTAssertEqual(args[args.firstIndex(of: "--cache-reuse")! + 1], "256")
+        XCTAssertTrue(args.contains("--no-reasoning-preserve"),
+                      "an empty reasoning block in every past turn makes the model stop mid-answer")
     }
 
     func testAutoMemoryPlanOwnsOffloadBatchAndCacheOnMoEModels() throws {
@@ -1854,6 +1893,7 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertEqual(URL(fileURLWithPath: args[args.firstIndex(of: "-md")! + 1])
             .resolvingSymlinksInPath().path, canonicalDraft)
         XCTAssertEqual(args[args.firstIndex(of: "--spec-type")! + 1], "draft-mtp")
+        XCTAssertEqual(args[args.firstIndex(of: "--spec-draft-sampling")! + 1], "probabilistic")
     }
 
     func testModelPublishDateReadsCreationAndBaseModel() {
@@ -2991,6 +3031,8 @@ final class RouterModeTests: XCTestCase {
         XCTAssertTrue(ini.contains("[moe-a3b]"))
         XCTAssertTrue(ini.contains("model = /models/dense-4b.gguf"))
         XCTAssertTrue(ini.contains("n-cpu-moe = 12"))
+        XCTAssertEqual(ini.components(separatedBy: "reasoning-preserve = false").count - 1, 2,
+                       "every model the router loads drops preserved reasoning")
         // Dense entry has no ncmoe line: no false n-cpu-moe on a model with no experts.
         let denseSection = ini.components(separatedBy: "\n\n").first { $0.contains("dense-4b") } ?? ""
         XCTAssertFalse(denseSection.contains("n-cpu-moe"))

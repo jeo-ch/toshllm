@@ -115,6 +115,7 @@ final class NeedleTest: ObservableObject {
         var req = URLRequest(url: url, timeoutInterval: 3600)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("off", forHTTPHeaderField: "X-Tosh-Agent")
         if let key = ServerSettings.activeAPIKey() { req.setValue("Bearer " + key, forHTTPHeaderField: "Authorization") }
         let body: [String: Any] = requestBody(prompt: prompt)
         req.httpBody = try JSONSerialization.data(withJSONObject: body)

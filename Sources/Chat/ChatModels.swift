@@ -82,11 +82,39 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var attachments: [ChatAttachment]? = nil
     // Attached images as data URIs (data:image/jpeg;base64,…) for vision models.
     var imageURIs: [String]? = nil
+    /// What the model wrote before the tool calls of this round. It is not an answer, so it is never
+    /// the body; it is dropped once a math call of the round does not succeed.
+    var interim: String? = nil
 
     var estimatedTokens: Int {
-        let text = role == "assistant" ? parts.body : wireContent
+        let text = role == "assistant" ? parts.body + (settledInterim ?? "") : wireContent
         let attached = (attachments ?? []).reduce(0) { $0 + $1.estimatedTokens }
         return max(1, text.count / 4) + attached
+    }
+
+    /// The interim text once it may be shown and sent back: every math call of the round succeeded.
+    var settledInterim: String? {
+        guard let interim, !interim.isEmpty,
+              (toolCalls ?? []).allSatisfy({ !MathTranscriptionService.isMathTool($0.name)
+                  || MathTranscriptionService.succeeded($0) })
+        else { return nil }
+        return interim
+    }
+
+    /// Discards the interim text as soon as a math call of the round ends without a result.
+    mutating func settleInterim() {
+        let failed = (toolCalls ?? []).contains { call in
+            MathTranscriptionService.isMathTool(call.name) && ![.pending, .awaitingPermission, .running].contains(call.state)
+                && !MathTranscriptionService.succeeded(call)
+        }
+        if failed { interim = nil }
+    }
+
+    /// A round that ends in tool calls has not answered yet: its text is held apart from the body.
+    static func toolRound(reasoning: String, visible: String) -> (content: String, interim: String?) {
+        let text = visible.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return ("", nil) }
+        return (reasoning.isEmpty ? "" : "<think>" + reasoning + "</think>", text)
     }
 
     var wireContent: String {

@@ -29,7 +29,11 @@ actor ToshMCPService {
     private static let toolCacheTTL: TimeInterval = 30
 
     func discoverTools() async -> [BuiltinToolInfo] {
-        let servers = MCPServerStore.load().filter(\.enabled)
+        // A server shared with the engine is reached through its agent instead, so
+        // it is dropped here rather than in the loop below: the cache is keyed on
+        // this list, and filtering only the loop would let it hand back the tools
+        // of a server this run is not going to connect to.
+        let servers = MCPServerStore.load().filter { $0.enabled && !$0.sharedWithEngine }
         if let hit = toolCache, hit.servers == servers,
            Date().timeIntervalSince(hit.at) < Self.toolCacheTTL {
             return hit.tools

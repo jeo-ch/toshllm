@@ -12,6 +12,20 @@ import AVFoundation
 // MARK: - Main chat view
 
 /// How far the conversation's end sits past the bottom of the view, in points.
+// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import SwiftUI
+import AppKit
+import PDFKit
+import Vision
+import UniformTypeIdentifiers
+import AVFoundation
+
+// MARK: - Main chat view
+
+/// How far the conversation's end sits past the bottom of the view, in points.
 private struct EndOffsetKey: PreferenceKey {
     static let defaultValue: CGFloat? = nil
     static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) { value = nextValue() ?? value }
@@ -684,10 +698,17 @@ struct NativeChatView: View {
                     .font(.caption).foregroundStyle(.red)
                     .flippedUpsideDown()
             }
-            ForEach(messages.reversed()) { msg in
-                messageRow(msg, isNewest: msg.id == newestID)
-                    .flippedUpsideDown()
-                    .id(msg.id)
+            ForEach(TranscriptRow.rows(messages).reversed()) { row in
+                switch row {
+                case .message(let msg):
+                    messageRow(msg, isNewest: msg.id == newestID)
+                        .flippedUpsideDown()
+                        .id(msg.id)
+                case .tools(let rounds):
+                    toolsRow(rounds)
+                        .flippedUpsideDown()
+                        .id(row.id)
+                }
             }
             if showSystemMessage {
                 let prompt = chat.effectiveSystemPrompt(global: systemPrompt)
@@ -726,6 +747,20 @@ struct NativeChatView: View {
     private static let leaveSlack: CGFloat = 120
     /// Coming back, on the other hand, means actually reaching the end.
     private static let returnSlack: CGFloat = 12
+
+    private func toolsRow(_ rounds: [ChatMessage]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if let boundary = compactionBoundaryID, rounds.contains(where: { $0.id == boundary }) {
+                Label(loc.t("Mensajes anteriores resumidos para liberar contexto",
+                            "Earlier messages summarized to free context"),
+                      systemImage: "archivebox")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .help(loc.t("Lo anterior a esta marca se envía al modelo como un resumen automático; aquí sigue visible íntegro.",
+                                "History above this mark is sent to the model as an automatic summary; it remains fully visible here."))
+            }
+            ToolRoundsGroup(rounds: rounds).equatable()
+        }
+    }
 
     @ViewBuilder
     private func messageRow(_ msg: ChatMessage, isNewest: Bool) -> some View {
@@ -1728,8 +1763,7 @@ struct NativeChatView: View {
     private func refreshAvailableTools() async {
         loadingTools = true
         var tools: [BuiltinToolInfo] = []
-        if UserDefaults.standard.bool(forKey: SettingsKeys.agentToolsEnabled),
-           let builtins = try? await ChatToolsService.list(port: port) {
+        if let builtins = try? await ChatToolsService.listEnabled(port: port) {
             tools += builtins
         }
         if UserDefaults.standard.bool(forKey: SettingsKeys.jsSandboxEnabled) {
