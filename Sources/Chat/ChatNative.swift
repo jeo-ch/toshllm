@@ -718,6 +718,7 @@ final class ChatStore: ObservableObject {
             var accumulator = ChatStreamAccumulator()
             var availableTools = agentRun?.tools ?? []
             var hold = holdText
+            var dropLeadingSpace = false
             var gate = false
             var agentTurn = false
             var retryWithoutAgent = false
@@ -771,7 +772,7 @@ final class ChatStore: ObservableObject {
                         bytesReceived += line.bytes
                         if Task.isCancelled { throw CancellationError() }
                         let text = line.text
-                        // the agent sends no tokens until its answer is checked; its keep-alives show it is working
+                        // between the passes the agent sends keep-alives, which show it is working
                         if agentTurn, text.hasPrefix(":") {
                             let owner = self
                             await MainActor.run { owner?.lastStreamActivity = Date() }
@@ -788,11 +789,38 @@ final class ChatStore: ObservableObject {
                             if event["type"] as? String == "pass", event["state"] as? String == "end" {
                                 agentPassTokens = ((event["prompt_tokens"] as? Int) ?? 0) + ((event["completion_tokens"] as? Int) ?? 0)
                             }
+                            continue
+                        }
+                        if agentTurn, text.hasPrefix("data: "), text.contains("\"tosh\""),
+                           let object = try? JSONSerialization.jsonObject(with: Data(text.dropFirst(6).utf8)) as? [String: Any],
+                           let tosh = object["tosh"] as? [String: Any] {
+                            guard let event = tosh["event"] as? [String: Any] else {
+                                agentMeta = tosh
+                                if let event = try accumulator.consume(text), event.completed { return true }
+                                continue
+                            }
+                            if event["type"] as? String == "pass", event["state"] as? String == "end" {
+                                agentPassTokens = ((event["prompt_tokens"] as? Int) ?? 0) + ((event["completion_tokens"] as? Int) ?? 0)
+                            }
+                            // a pass whose answer needs no check streams; its text goes if the pass ends in tool calls
+                            if event["type"] as? String == "pass", event["state"] as? String == "start" {
+                                hold = event["live"] as? Bool != true
+                            } else if event["type"] as? String == "retract" {
+                                accumulator.visible = ""
+                                dropLeadingSpace = true
+                                lastFlush = .distantPast
+                                flush()
+                            }
                             let owner = self
                             await MainActor.run { owner?.agentEvent(event, conversation: convID) }
                             continue
                         }
                         guard let event = try accumulator.consume(text) else { continue }
+                        // the engine separates the answer from retracted text for clients that keep it
+                        if dropLeadingSpace, !accumulator.visible.isEmpty {
+                            accumulator.visible = String(accumulator.visible.drop(while: \.isWhitespace))
+                            dropLeadingSpace = accumulator.visible.isEmpty
+                        }
                         if let progress = event.progress { buffer.writeProgress(progress) }
                         if event.receivedContent {
                             let now = Date()
@@ -800,12 +828,9 @@ final class ChatStore: ObservableObject {
                             nTokens += 1
                             stamps.append(now)
                             flush()
-                        } else if event.receivedToolCall {
-                            // A tool call streams arguments with no content at all, and a long
-                            // one can pass 30s without text: without this heartbeat the
-                            // watchdog reads silence, stops the engine and drops the call.
-                            await self?.noteStreamActivity()
                         }
+                        // No per-event heartbeat here: upstream moved it to the
+                        // buffer pump, which ticks whether or not a token arrives.
                         if event.completed { return true }
                     }
                     return false

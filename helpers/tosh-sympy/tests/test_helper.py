@@ -23,7 +23,7 @@ KEY = "test-trust-key"
 # CI runners are virtual and run this x86 runtime translated: wall-clock limits get three times the room
 SLOW = 3 if os.environ.get("CI") else 1
 SHARED = {"TOSH_SYMPY_TIMEOUT_MS": 20000} if SLOW > 1 else {}
-# a budget no calculation of these tests fits in on a worker that just started, yet the next small one does
+# a budget the next small calculation fits in; the heavy ones take seconds even on a fast machine
 SHORT = 100*SLOW
 
 
@@ -390,10 +390,10 @@ def test_timed_out_indefinite_integral(_):
 def test_timed_out_definite_integral_gets_a_number(_):
     helper = Helper(TOSH_SYMPY_TIMEOUT_MS=SHORT)
     try:
-        reply = expression(helper, "integrate", "x**x", variable="x", lower="0", upper="1")
+        reply = expression(helper, "integrate", "1/(1 + x**3 + exp(x))", variable="x", lower="0", upper="1")
         assert reply["success"] is True and reply["exact"] is None, reply
         assert reply["timed_out_symbolic"] is True and reply["method"] == "numerical_integration", reply
-        assert reply["numeric"] == "0.783430510712134", reply
+        assert reply["numeric"] == "0.358524569912696", reply
         assert expression(helper, "expand", "(x + 1)**2")["exact"] == "x**2 + 2*x + 1"
         # trigonometric functions get a second symbolic attempt after the number, which a slow machine
         # stops as well, worker included: nothing may be asked of this helper after it
@@ -407,10 +407,10 @@ def test_timed_out_definite_integral_gets_a_number(_):
 def test_timed_out_series_reports_what_finished(_):
     helper = Helper(TOSH_SYMPY_TIMEOUT_MS=SHORT)
     try:
-        reply = expression(helper, "series", "log(x)*exp(sin(x))", point="1", order=6)
+        reply = expression(helper, "series", "exp(exp(sin(x)))*log(x)", point="1", order=8)
         assert error_code(reply) == "timeout" and reply["timed_out"] is True and reply["exact"] is None, reply
         assert (reply["expression"], reply["variable"], reply["point"], reply["order"]) == \
-            ("exp(sin(x))*log(x)", "x", "1", 6), reply
+            ("exp(exp(sin(x)))*log(x)", "x", "1", 8), reply
         assert reply["partial"]["order"] == 4 and "O((x - 1)**4" in reply["partial"]["exact"], reply
         assert expression(helper, "factor", "x**2 - 1")["success"] is True
     finally:
@@ -420,9 +420,9 @@ def test_timed_out_series_reports_what_finished(_):
 def test_timed_out_ode(_):
     helper = Helper(TOSH_SYMPY_TIMEOUT_MS=SHORT)
     try:
-        reply = helper.call("solve", operation="dsolve", equations=["y'' + y = tan(x)"])
+        reply = helper.call("solve", operation="dsolve", equations=["y''' + y = tan(x)"])
         assert error_code(reply) == "timeout" and reply["timed_out"] is True, reply
-        assert reply["unevaluated"] == ["y(x) + Derivative(y(x), (x, 2)) = tan(x)"], reply
+        assert reply["unevaluated"] == ["y(x) + Derivative(y(x), (x, 3)) = tan(x)"], reply
         assert helper.call("solve", operation="solve", equations=["x = 1"])["success"] is True
     finally:
         helper.close()

@@ -744,13 +744,10 @@ index e7332f2e5..8e43dc07d 100644
      ~server_tools();
  };
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index 6e2d8ff9d..d4032bf9a 100644
+index 6e2d8ff9d..608627cc9 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
-@@ -7,18 +7,23 @@
- 
- #include "arg.h"
- #include "build-info.h"
+@@ -10,12 +10,17 @@
  #include "common.h"
  #include "fit.h"
  #include "llama.h"
@@ -768,13 +765,7 @@ index 6e2d8ff9d..d4032bf9a 100644
  #include <thread> // for std::thread::hardware_concurrency
  
  #if defined(_WIN32)
- #include <windows.h>
- #endif
- 
-@@ -45,16 +50,236 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
- void llama_server_terminate();
- void llama_server_terminate() {
-     if (shutdown_handler) {
+@@ -48,10 +53,274 @@ void llama_server_terminate() {
          shutdown_handler(0);
      }
  }
@@ -838,19 +829,29 @@ index 6e2d8ff9d..d4032bf9a 100644
 +    return answer;
 +}
 +
-+// the answer goes out only once the agent has checked it; before that only progress events and keep-alives
-+static std::vector<std::string> tosh_agent_chunks(const json & answer, int status) {
++// the answer goes out once the agent has checked it, except the text of a pass it streamed live; before that
++// only progress events and keep-alives. `streamed` is the text already sent since the last retracted pass
++static std::vector<std::string> tosh_agent_chunks(const json & answer, int status, const json & head,
++                                                  const std::string & streamed, bool retracted, bool started) {
 +    if (status != 200) {
 +        return {"data: " + answer.dump() + "\n\n", "data: [DONE]\n\n"};
 +    }
-+    json head = {{"id", answer.value("id", "")}, {"object", "chat.completion.chunk"},
-+                 {"created", answer.value("created", 0)}, {"model", answer.value("model", "")}};
 +    std::string content;
 +    if (answer.contains("choices") && answer.at("choices").is_array() && !answer.at("choices").empty()) {
 +        content = answer.at("choices").at(0).value("message", json::object()).value("content", "");
 +    }
++    if (!streamed.empty() && content.compare(0, streamed.size(), streamed) == 0) {
++        content.erase(0, streamed.size());
++    } else if (retracted || !streamed.empty()) {
++        // a client that cannot drop the text it was shown reads the answer after it
++        content = "\n\n" + content;
++    }
++    json delta = {{"content", content}};
++    if (!started) {
++        delta["role"] = "assistant";
++    }
 +    json first = head;
-+    first["choices"] = json::array({{{"index", 0}, {"delta", {{"role", "assistant"}, {"content", content}}}, {"finish_reason", nullptr}}});
++    first["choices"] = json::array({{{"index", 0}, {"delta", delta}, {"finish_reason", nullptr}}});
 +    json last = head;
 +    last["choices"] = json::array({{{"index", 0}, {"delta", json::object()}, {"finish_reason", "stop"}}});
 +    for (const char * key : {"usage", "tosh"}) {
@@ -958,7 +959,11 @@ index 6e2d8ff9d..d4032bf9a 100644
 +        res->state = state;
 +        res->content_type = "text/event-stream";
 +        res->status = 200;
-+        res->next = [state, gone = req.should_stop, finals = std::vector<std::string>(), sent = size_t(0)](std::string & output) mutable -> bool {
++        json head = {{"id", "chatcmpl-tosh-" + tosh_agent_key().substr(0, 32)}, {"object", "chat.completion.chunk"},
++                     {"created", (int64_t) time(nullptr)},
++                     {"model", body.contains("model") && body.at("model").is_string() ? body.at("model").get<std::string>() : "tosh-agent"}};
++        res->next = [state, gone = req.should_stop, head, finals = std::vector<std::string>(), sent = size_t(0),
++                     streamed = std::string(), retracted = false, started = false](std::string & output) mutable -> bool {
 +            if (finals.empty()) {
 +                std::unique_lock<std::mutex> lock(state->mutex);
 +                // a keep-alive every 5 s, but a client that went away is noticed within a second
@@ -980,6 +985,36 @@ index 6e2d8ff9d..d4032bf9a 100644
 +                        } catch (const std::exception &) {
 +                        }
 +                    }
++                    const std::string type = event.is_object() ? event.value("type", "") : "";
++                    // text of a pass the agent streams live goes out as the model writes it
++                    if (type == "delta") {
++                        json delta = json::object();
++                        for (const char * field : {"content", "reasoning_content"}) {
++                            if (event.contains(field) && event.at(field).is_string()) {
++                                std::string text = event.at(field).get<std::string>();
++                                if (std::string(field) == "content") {
++                                    streamed += text;
++                                    if (retracted && streamed.size() == text.size()) {
++                                        text = "\n\n" + text;
++                                    }
++                                }
++                                delta[field] = text;
++                            }
++                        }
++                        if (!started) {
++                            delta["role"] = "assistant";
++                            started = true;
++                        }
++                        json chunk = head;
++                        chunk["choices"] = json::array({{{"index", 0}, {"delta", delta}, {"finish_reason", nullptr}}});
++                        output = "data: " + chunk.dump() + "\n\n";
++                        return true;
++                    }
++                    // that pass ended in tool calls: its text was not the answer
++                    if (type == "retract") {
++                        retracted = retracted || !streamed.empty();
++                        streamed.clear();
++                    }
 +                    json chunk = {{"object", "chat.completion.chunk"},
 +                                  {"choices", json::array({{{"index", 0}, {"delta", json::object()}, {"finish_reason", nullptr}}})},
 +                                  {"tosh", {{"version", 1}, {"event", event}}}};
@@ -991,7 +1026,7 @@ index 6e2d8ff9d..d4032bf9a 100644
 +                    return true;
 +                }
 +                int status = 502;
-+                finals = tosh_agent_chunks(tosh_agent_answer(state->out, status), status);
++                finals = tosh_agent_chunks(tosh_agent_answer(state->out, status), status, head, streamed, retracted, started);
 +            }
 +            output = finals[sent++];
 +            return sent < finals.size();
@@ -1005,13 +1040,7 @@ index 6e2d8ff9d..d4032bf9a 100644
  static server_http_context::handler_t ex_wrapper(server_http_context::handler_t func) {
      return [func = std::move(func)](const server_http_req & req) -> server_http_res_ptr {
          std::string message;
-         error_type error;
-         try {
-             return func(req);
-@@ -265,18 +490,22 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
-     ctx_http.get ("/metrics",                  ex_wrapper(routes.get_metrics));
-     ctx_http.get ("/props",                    ex_wrapper(routes.get_props));
-     ctx_http.post("/props",                    ex_wrapper(routes.post_props));
+@@ -268,12 +537,16 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
      ctx_http.get ("/models",                   ex_wrapper(routes.get_models));
      ctx_http.get ("/v1/models",                ex_wrapper(routes.get_models));
      ctx_http.post("/completion",               ex_wrapper(routes.post_completions)); // legacy
@@ -1030,13 +1059,7 @@ index 6e2d8ff9d..d4032bf9a 100644
      ctx_http.post("/responses",                ex_wrapper(routes.post_responses_oai));
      ctx_http.post("/v1/audio/transcriptions",  ex_wrapper(routes.post_transcriptions_oai));
      ctx_http.post("/audio/transcriptions",     ex_wrapper(routes.post_transcriptions_oai));
-     ctx_http.post("/v1/messages",              ex_wrapper(routes.post_anthropic_messages)); // anthropic messages API
-     ctx_http.post("/infill",                   ex_wrapper(routes.post_infill));
-     ctx_http.post("/embedding",                ex_wrapper(routes.post_embeddings)); // legacy
-@@ -360,17 +589,23 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
-         mcp_mgr.start(params);
-     } catch (const std::exception & e) {
-         SRV_ERR("MCP starting failed: %s\n", e.what());
+@@ -363,11 +636,17 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
          return 1;
      }
  
@@ -1055,6 +1078,3 @@ index 6e2d8ff9d..d4032bf9a 100644
              return 1;
          }
          ctx_http.get ("/tools",           ex_wrapper(tools.handle_get));
-         ctx_http.post("/tools",           ex_wrapper(tools.handle_post));
-         if (!params.server_tools.empty()) {
-             warn_names.push_back("server tools (experimental)");

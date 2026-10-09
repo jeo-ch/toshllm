@@ -3,6 +3,16 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.19] - 2026-10-08
+
+### Improved
+
+- **LLMs: with the math tools on, answers that need no calculation stream again.** Only calculations wait for their check now, in the app's chat, the web chat and API clients.
+
+### Fixed
+
+- **LLMs: Llama 4 no longer stops with an error when the chat offers it tools.** Its text answers go out as such, and its tool calls are read in either of the two formats it writes.
+
 ## [0.87.18] - 2026-10-07
 
 ### Fixed

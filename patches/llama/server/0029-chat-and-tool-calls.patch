@@ -1,11 +1,8 @@
 diff --git a/common/chat-auto-parser-generator.cpp b/common/chat-auto-parser-generator.cpp
-index b78789d8c..72a8a3d20 100644
+index b78789d8c..c4a8fcdae 100644
 --- a/common/chat-auto-parser-generator.cpp
 +++ b/common/chat-auto-parser-generator.cpp
-@@ -229,17 +229,19 @@ common_peg_parser analyze_tools::build_tool_parser_json_native(parser_build_cont
- 
-     std::string tool_start = "{";
-     if (!format.section_start.empty()) {
+@@ -232,11 +232,13 @@ common_peg_parser analyze_tools::build_tool_parser_json_native(parser_build_cont
          tool_start = format.section_start;
      } else if (!format.per_call_start.empty()) {
          tool_start = format.per_call_start;
@@ -20,13 +17,7 @@ index b78789d8c..72a8a3d20 100644
  common_peg_parser analyze_tools::build_func_parser(common_chat_peg_builder & p, const std::string & name,
                                                      const common_peg_parser & call_id_section, bool have_call_id,
                                                      const common_peg_parser & args,
-                                                     std::optional<common_peg_parser> atomic_peek) const {
-     auto              open           = p.tool_open(function.name_prefix + p.tool_name(p.literal(name)) + function.name_suffix);
-     bool              matched_atomic = false;
-@@ -348,17 +350,19 @@ common_peg_parser analyze_tools::build_tool_parser_tag_json(parser_build_context
-     }
- 
-     if (!require_calls) {
+@@ -351,11 +353,13 @@ common_peg_parser analyze_tools::build_tool_parser_tag_json(parser_build_context
          tool_calls = p.optional(tool_calls);
      }
  
@@ -41,17 +32,23 @@ index b78789d8c..72a8a3d20 100644
  common_peg_parser analyze_tools::build_tool_parser_tag_tagged(parser_build_context & ctx) const {
      auto &       p           = ctx.p;
      const auto & inputs      = ctx.inputs;
- 
-     auto until_suffix = p.rule("until-suffix", p.until(arguments.value_suffix));
- 
-@@ -467,12 +471,14 @@ common_peg_parser analyze_tools::build_tool_parser_tag_tagged(parser_build_conte
+@@ -464,15 +468,22 @@ common_peg_parser analyze_tools::build_tool_parser_tag_tagged(parser_build_conte
+             tool_calls = p.trigger_rule(
+                 "tool-call", format.section_start + p.space() + tool_choice + p.space() + format.section_end);
+         }
      }
  
++    std::string trigger_marker = !format.section_start.empty() ? format.section_start : format.per_call_start;
++    // nothing marks where a call starts, so an answer that does not parse as calls is text
++    if (trigger_marker.empty() && !require_tools) {
++        return ctx.reasoning_parser + p.choice({ tool_calls + p.end(), p.content(p.rest()) + p.end() });
++    }
++
      if (!require_tools) {
          tool_calls = p.optional(tool_calls);
      }
  
-     std::string trigger_marker       = !format.section_start.empty() ? format.section_start : format.per_call_start;
+-    std::string trigger_marker       = !format.section_start.empty() ? format.section_start : format.per_call_start;
      auto        content_before_tools = trigger_marker.empty() ? p.eps() : p.until(trigger_marker);
 -    return ctx.reasoning_parser + p.optional(p.content(content_before_tools)) + tool_calls + p.end();
 +    auto        content              = p.required_preamble(p.optional(p.content(content_before_tools)), trigger_marker, inputs,
@@ -195,13 +192,10 @@ index 114fa049f..b75417d0e 100644
      // function_is_key: if true, function name is the JSON key (e.g., {"func_name": {...}})
      // call_id_key: JSON key for string call ID (e.g., "id")
 diff --git a/common/chat.cpp b/common/chat.cpp
-index 3502b96eb..3f3ca3ef6 100644
+index 3502b96eb..0550ae2be 100644
 --- a/common/chat.cpp
 +++ b/common/chat.cpp
-@@ -1024,16 +1024,30 @@ static void system_message_not_supported(json & messages) {
-             messages.erase(0);
-         } else {
-             LOG_WRN("Removing system prompt due to template not supporting system role\n");
+@@ -1027,10 +1027,24 @@ static void system_message_not_supported(json & messages) {
              messages.erase(0);
          }
      }
@@ -226,13 +220,23 @@ index 3502b96eb..3f3ca3ef6 100644
      for (auto & message : messages) {
          if (message.contains("tool_calls") && !message.contains("content")) {
              message["content"] = "";
-         }
+@@ -1154,10 +1168,15 @@ std::optional<common_chat_params> common_chat_try_specialized_template(
+         src.find("<|START_ACTION|>") != std::string::npos) {
+         LOG_DBG("Using specialized template: Cohere2 MoE\n");
+         return common_chat_params_init_cohere2moe(tmpl, params);
      }
- }
-@@ -1280,16 +1294,20 @@ static common_chat_params common_chat_templates_apply_jinja(const struct common_
-         // map developer to system for all models except for GPT-OSS
-         workaround::map_developer_role_to_system(params.messages);
+ 
++    if (is_llama4_template(src)) {
++        LOG_DBG("Using specialized template: Llama 4\n");
++        return common_chat_params_init_llama4(tmpl, params);
++    }
++
+     if (is_lfm2_template(src)) {
+         LOG_DBG("Using specialized template: LFM2\n");
+         return common_chat_params_init_lfm2(tmpl, params, /* tool_list_tokens = */ true);
      }
+ 
+@@ -1283,10 +1302,14 @@ static common_chat_params common_chat_templates_apply_jinja(const struct common_
  
      if (!tmpl.original_caps().supports_system_role) {
          workaround::system_message_not_supported(params.messages);
@@ -247,9 +251,6 @@ index 3502b96eb..3f3ca3ef6 100644
          // to still be non-null, this puts an empty string everywhere where the
          // content field is null
          workaround::requires_non_null_content(params.messages);
-     }
- 
-     if (tmpl.original_caps().supports_object_arguments) {
 diff --git a/common/jinja/caps.cpp b/common/jinja/caps.cpp
 index c5962ab77..5a2f438c6 100644
 --- a/common/jinja/caps.cpp
@@ -431,6 +432,159 @@ index 280788509..7ee73d490 100644
  
      if (include_grammar) {
          data.grammar_lazy = !(has_response_format || (has_tools && inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED));
+diff --git a/common/parsers/llama4.cpp b/common/parsers/llama4.cpp
+new file mode 100644
+index 000000000..ff1f1b081
+--- /dev/null
++++ b/common/parsers/llama4.cpp
+@@ -0,0 +1,147 @@
++#include "parsers.h"
++
++// Llama 4 writes tool calls as a bare Python list, [name(arg="value"), ...], with no token around it
++bool is_llama4_template(const std::string & src) {
++    return src.find("<|header_start|>") != std::string::npos &&
++           src.find("tool_call.name + '('") != std::string::npos;
++}
++
++// The template keeps Meta's answer rules only when there is no system message; without them the model
++// can answer a question that needs no tool with an empty list.
++static const std::string LLAMA4_ANSWER_RULES =
++    "\n\nWhen you use the functions below:\n"
++    "- For pure function requests matching a listed function: ONLY output the function call(s)\n"
++    "- For knowledge questions: ONLY output text\n"
++    "- For missing parameters: ONLY request the specific missing parameters\n"
++    "- NEVER combine text and function calls in the same response\n"
++    "- NEVER respond with empty brackets";
++
++// {"type": "function", "name": ..., "parameters": {...}}, the JSON form the model also writes
++static common_peg_parser llama4_json_call(common_chat_peg_builder & p, const json & tool) {
++    const auto & function = tool.at("function");
++    std::string  name     = function.at("name");
++    auto field = [&](const std::string & key) { return p.literal("\"" + key + "\"") + p.space() + p.literal(":") + p.space(); };
++    auto body  = p.tool_open(p.literal("{")) + p.space() +
++                 p.optional(field("type") + p.literal("\"function\"") + p.space() + p.literal(",") + p.space()) +
++                 field("name") + p.atomic(p.literal("\"") + p.tool_name(p.literal(name)) + p.literal("\"")) +
++                 p.space() + p.literal(",") + p.space() +
++                 p.choice({ p.literal("\"parameters\""), p.literal("\"arguments\"") }) + p.space() + p.literal(":") + p.space() +
++                 p.tool_args(p.schema(p.json(), "llama4-json-" + name + "-schema", common_chat_tool_parameters(function))) +
++                 p.space() + p.tool_close(p.literal("}"));
++    return p.rule("llama4-json-" + name, p.tool(body));
++}
++
++// The template asks for either calls or text, but the model also writes text before the calls and calls as JSON.
++common_chat_params common_chat_params_init_llama4(const common_chat_template &          tmpl,
++                                                  const autoparser::generation_params & inputs) {
++    common_chat_params data;
++
++    const std::string GEN_PROMPT = "<|header_start|>assistant<|header_end|>\n\n";
++
++    auto has_tools           = inputs.tools.is_array() && !inputs.tools.empty();
++    auto has_response_format = !inputs.json_schema.is_null() && inputs.json_schema.is_object();
++    auto use_tools           = has_tools && inputs.tool_choice != COMMON_CHAT_TOOL_CHOICE_NONE;
++    auto require_tools       = use_tools && inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED;
++
++    // the template iterates a content that is not a string, and a call message often has none
++    auto adjusted_messages = json::array();
++    for (auto msg : inputs.messages) {
++        if (msg.contains("tool_calls") && (!msg.contains("content") || msg.at("content").is_null())) {
++            msg["content"] = "";
++        }
++        if (use_tools && adjusted_messages.empty() && msg.contains("role") && msg.at("role") == "system" && msg.contains("content")) {
++            auto & content = msg.at("content");
++            if (content.is_string()) {
++                content = content.get<std::string>() + LLAMA4_ANSWER_RULES;
++            } else if (content.is_array() && !content.empty() && content[0].contains("text") && content[0].at("text").is_string()) {
++                content[0]["text"] = content[0].at("text").get<std::string>() + LLAMA4_ANSWER_RULES;
++            }
++        }
++        adjusted_messages.push_back(msg);
++    }
++
++    data.prompt            = common_chat_template_direct_apply_impl(tmpl, inputs, adjusted_messages);
++    data.generation_prompt = common_chat_template_generation_prompt_impl(tmpl, inputs, adjusted_messages);
++    data.format            = COMMON_CHAT_FORMAT_PEG_NATIVE;
++    data.supports_thinking = false;
++    data.preserved_tokens  = { "<|header_start|>", "<|header_end|>", "<|eot|>" };
++
++    if (inputs.has_continuation()) {
++        data.generation_prompt = GEN_PROMPT + inputs.continue_msg.render_content();
++        data.prompt += data.generation_prompt;
++    }
++
++    std::vector<std::string> names;
++    for (const auto & tool : inputs.tools) {
++        if (tool.contains("function") && tool.at("function").contains("name")) {
++            names.push_back(tool.at("function").at("name"));
++        }
++    }
++
++    auto parser = build_chat_peg_parser([&](common_chat_peg_builder & p) {
++        auto generation_prompt = p.literal(GEN_PROMPT);
++        auto end = p.end();
++
++        if (!use_tools) {
++            if (has_response_format) {
++                return generation_prompt + p.content(p.schema(p.json(), "response-format-schema", inputs.json_schema)) + end;
++            }
++            return generation_prompt + p.content(p.rest()) + end;
++        }
++
++        auto json_call = p.choice();
++        for (const auto & tool : inputs.tools) {
++            if (tool.contains("function")) {
++                json_call |= llama4_json_call(p, tool);
++            }
++        }
++        auto separator  = p.space() + p.optional(p.choice({ p.literal(","), p.literal(";") })) + p.space();
++        auto json_calls = inputs.parallel_tool_calls ? json_call + p.zero_or_more(separator + json_call) : json_call;
++        auto json_list  = p.literal("[") + p.space() + json_calls + p.space() + p.literal("]");
++
++        auto tool_calls = p.trigger_rule("tool-calls", p.choice({
++            p.python_style_tool_calls(inputs.tools, inputs.parallel_tool_calls, /* allow_json_literals = */ true),
++            json_list,
++            json_calls,
++        }) + p.space());
++        if (require_tools) {
++            return generation_prompt + tool_calls + end;
++        }
++
++        std::vector<std::string> call_starts = { "{\"name\"", "{\"type\"", "[{" };
++        for (const auto & name : names) {
++            call_starts.push_back("[" + name + "(");
++        }
++        auto empty_list = p.literal("[") + p.space() + p.literal("]");
++        return generation_prompt + p.choice({
++            // an empty list means no call; what follows it on a new line is the answer
++            empty_list + p.space() + end,
++            empty_list + p.literal("\n") + p.space() + p.content(p.rest()) + end,
++            p.content(p.until_one_of(call_starts)) + tool_calls + end,
++            p.content(p.rest()) + end,
++        });
++    });
++
++    data.parser = parser.save();
++
++    if (has_response_format || use_tools) {
++        data.grammar_lazy = use_tools && !require_tools;
++        data.grammar      = build_grammar([&](const common_grammar_builder & builder) {
++            parser.build_grammar(builder, data.grammar_lazy);
++        });
++        if (data.grammar_lazy) {
++            // only a known tool's call starts the grammar, so text with brackets or braces stays free
++            std::string alternatives;
++            for (const auto & name : names) {
++                alternatives += (alternatives.empty() ? "" : "|") + regex_escape(name);
++            }
++            data.grammar_triggers = {
++                { COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN, "(\\[\\s*(?:" + alternatives + ")\\()" },
++                { COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN,
++                  "((?:\\[\\s*)?\\{\\s*(?:\"type\"\\s*:\\s*\"function\"\\s*,\\s*)?\"name\"\\s*:\\s*\"(?:" + alternatives + ")\")" },
++            };
++        }
++    }
++
++    return data;
++}
 diff --git a/common/parsers/minicpm5.cpp b/common/parsers/minicpm5.cpp
 index 4d18d3d96..fb6659f7e 100644
 --- a/common/parsers/minicpm5.cpp
@@ -500,6 +654,35 @@ index 8bcd204c6..27a923703 100644
      });
  
      data.parser = parser.save();
+diff --git a/common/parsers/parsers.h b/common/parsers/parsers.h
+index 0caf62d8c..506b9ab2e 100644
+--- a/common/parsers/parsers.h
++++ b/common/parsers/parsers.h
+@@ -37,10 +37,11 @@ std::string common_chat_template_generation_prompt_impl(
+     const autoparser::generation_params & inputs,
+     const std::optional<json> & messages_override = std::nullopt,
+     const std::optional<json> & tools_override = std::nullopt,
+     const std::optional<json> & additional_context = std::nullopt);
+ 
++bool is_llama4_template(const std::string & src);
+ bool is_lfm2_template(const std::string & src);
+ 
+ namespace workaround {
+ 
+ void convert_tool_responses_gemma4(json & messages);
+@@ -63,10 +64,12 @@ common_chat_params common_chat_params_init_kimi_k2(const common_chat_template &
+ 
+ common_chat_params common_chat_params_init_kimi_k3(const common_chat_template & tmpl, const autoparser::generation_params & inputs);
+ 
+ common_chat_params common_chat_params_init_ling3(const common_chat_template & tmpl, const autoparser::generation_params & inputs);
+ 
++common_chat_params common_chat_params_init_llama4(const common_chat_template & tmpl, const autoparser::generation_params & inputs);
++
+ // tool_list_tokens preserves the LFM2 system tool-list markers; LFM2.5 renders without them
+ common_chat_params common_chat_params_init_lfm2(const common_chat_template & tmpl, const autoparser::generation_params & inputs, bool tool_list_tokens);
+ 
+ common_chat_params common_chat_params_init_llm_jp_harmony(const common_chat_template & tmpl, const autoparser::generation_params & inputs);
+ 
 diff --git a/common/parsers/qwen3-coder.cpp b/common/parsers/qwen3-coder.cpp
 index 208f551f1..5e2c3945c 100644
 --- a/common/parsers/qwen3-coder.cpp
@@ -526,16 +709,145 @@ index 208f551f1..5e2c3945c 100644
  
      data.parser = parser.save();
  
+diff --git a/common/parsers/sources.cmake b/common/parsers/sources.cmake
+index 5815939d6..eae1b77d7 100644
+--- a/common/parsers/sources.cmake
++++ b/common/parsers/sources.cmake
+@@ -11,10 +11,11 @@ set(LLAMA_CHAT_PARSERS_SOURCES
+     ${CMAKE_CURRENT_LIST_DIR}/gpt-oss.cpp
+     ${CMAKE_CURRENT_LIST_DIR}/kimi-k2.cpp
+     ${CMAKE_CURRENT_LIST_DIR}/kimi-k3.cpp
+     ${CMAKE_CURRENT_LIST_DIR}/ling3.cpp
+     ${CMAKE_CURRENT_LIST_DIR}/lfm2.cpp
++    ${CMAKE_CURRENT_LIST_DIR}/llama4.cpp
+     ${CMAKE_CURRENT_LIST_DIR}/llm-jp-harmony.cpp
+     ${CMAKE_CURRENT_LIST_DIR}/minicpm5.cpp
+     ${CMAKE_CURRENT_LIST_DIR}/minimax-m3.cpp
+     ${CMAKE_CURRENT_LIST_DIR}/ministral3.cpp
+     ${CMAKE_CURRENT_LIST_DIR}/muse-glimmer.cpp
+diff --git a/models/templates/unsloth-Llama-4-Scout-17B-16E-Instruct.jinja b/models/templates/unsloth-Llama-4-Scout-17B-16E-Instruct.jinja
+new file mode 100644
+index 000000000..c1510ac1d
+--- /dev/null
++++ b/models/templates/unsloth-Llama-4-Scout-17B-16E-Instruct.jinja
+@@ -0,0 +1,111 @@
++{{- bos_token }}
++{%- if custom_tools is defined and custom_tools%}
++    {%- set tools = custom_tools %}
++{%- endif %}
++{%- if tools is defined and tools %}
++    {%- set tool_definition = (tool_definition|string) + ((tools | tojson(indent=4))|string) %}
++{%- else %}
++    {%- set tools = none %}
++{%- endif %}
++
++
++{#- This block extracts the system message, so we can slot it into the right place. #}
++{%- if messages[0]['role'] == 'system' %}
++    {%- set user_provided_system_message = true %}
++    {%- if messages[0]['content'] is string %}
++        {%- set system_message = messages[0]['content']|trim %}
++    {%- else %}
++        {%- set system_message = messages[0]['content'][0]['text']|trim %}
++    {%- endif %}
++    {%- set messages = messages[1:] %}
++{%- else %}
++    {%- if tools is not none  %}
++        {#- Since not system_message was provided by user, if tool is provided, system_message is now default tool system message #}
++        {#- This system message is from llama website:https://www.llama.com/docs/model-cards-and-prompt-formats/llama4/  #}
++        {%- set system_message = "You are a helpful assistant and an expert in function composition. You can answer general questions using your internal knowledge OR invoke functions when necessary. Follow these strict guidelines:\n\n1. FUNCTION CALLS:\n- ONLY use functions that are EXPLICITLY listed in the function list below\n- If NO functions are listed (empty function list []), respond ONLY with internal knowledge or \"I don't have access to [Unavailable service] information\"\n- If a function is not in the list, respond ONLY with internal knowledge or \"I don't have access to [Unavailable service] information\"\n- If ALL required parameters are present AND the query EXACTLY matches a listed function's purpose: output ONLY the function call(s)\n- Use exact format: [func_name1(param1=value1, param2=value2), func_name2(...)]\nExamples:\nCORRECT: [get_weather(location=\"Vancouver\"), calculate_route(start=\"Boston\", end=\"New York\")] <- Only if get_weather and calculate_route are in function list\nINCORRECT: get_weather(location=\"New York\")\nINCORRECT: Let me check the weather: [get_weather(location=\"New York\")]\nINCORRECT: [get_events(location=\"Singapore\")] <- If function not in list\n\n2. RESPONSE RULES:\n- For pure function requests matching a listed function: ONLY output the function call(s)\n- For knowledge questions: ONLY output text\n- For missing parameters: ONLY request the specific missing parameters\n- For unavailable services (not in function list): output ONLY with internal knowledge or \"I don't have access to [Unavailable service] information\". Do NOT execute a function call.\n- If the query asks for information beyond what a listed function provides: output ONLY with internal knowledge about your limitations\n- NEVER combine text and function calls in the same response\n- NEVER suggest alternative functions when the requested service is unavailable\n- NEVER create or invent new functions not listed below\n\n3. STRICT BOUNDARIES:\n- ONLY use functions from the list below - no exceptions\n- NEVER use a function as an alternative to unavailable information\n- NEVER call functions not present in the function list\n- NEVER add explanatory text to function calls\n- NEVER respond with empty brackets\n- Use proper Python/JSON syntax for function calls\n- Check the function list carefully before responding\n\n4. TOOL RESPONSE HANDLING:\n- When receiving tool responses: provide concise, natural language responses\n- Don't repeat tool response verbatim\n- Don't add supplementary information\n\nHere is a list of functions in JSON format that you can invoke:\n" %}
++    {%- else %}
++        {%- set system_message = "" %}
++    {%- endif %}
++{%- endif %}
++{#- Now writing the system message: use the user provided system message if user_provided_system_message, else default tool system message if tools presented #}
++{%- if system_message %}
++    {#- always use user provided system message to override default tool system message #}
++    {{- "<|header_start|>system<|header_end|>\n\n" }}
++    {{- system_message }}
++    {%- if user_provided_system_message and tools %}
++        {{- "\nHere is a list of functions in JSON format that you can invoke. Use exact format: [func_name1(param1=value1, param2=value2), func_name2(...)]\n" }}
++        {{- tool_definition -}}
++        {%- elif tool_definition %}
++        {{- tool_definition -}}
++    {%- endif %}
++    {{- "<|eot|>" }}
++{%- endif %}
++
++{#- Now deal with all other messages #}
++{%- for message in messages %}
++    {#- Base case: messages that are not from tool role and has empty tool_call list  #}
++    {%- if not (message.role == 'ipython' or message.role == 'tool' or ('tool_calls' in message and  message.tool_calls|length != 0 )) %}
++        {{- '<|header_start|>' + message['role'] + '<|header_end|>\n\n' }}
++        {%- if message['content'] is string %}
++            {{- message['content'] }}
++        {%- else %}
++            {%- for content in message['content'] %}
++                {%- if content['type'] == 'image' %}
++                    {{- '<|image|>' }}
++                {%- elif content['type'] == 'text' %}
++                    {{- content['text'] | trim }}
++                {%- endif %}
++            {%- endfor %}
++        {%- endif %}
++    {{- "<|eot|>" }}
++    {#- Tool case: messages has non-empty tool_call list, must from assistant #}
++    {%- elif 'tool_calls' in message %}
++        {#- assume tool_calls are always coming from assistant #}
++        {%- if message.role == 'assistant' %}
++            {{- '<|header_start|>assistant<|header_end|>\n\n' -}}
++        {%- if message['content'] is string %}
++            {{- message['content'] }}
++        {%- else %}
++            {%- for content in message['content'] %}
++                {%- if content['type'] == 'image' %}
++                    {{- '<|image|>' }}
++                {%- elif content['type'] == 'text' %}
++                    {{- content['text'] }}
++                {%- endif %}
++            {%- endfor %}
++        {%- endif %}
++            {{- "[" }}
++        {%- for tool_call in message.tool_calls %}
++            {%- if tool_call.function is defined %}
++                {%- set tool_call = tool_call.function %}
++            {%- endif %}
++                {{-  tool_call.name + '(' -}}
++            {%- for param in tool_call.arguments %}
++                {{- param + '="' -}}
++                {{- "%s" | format(tool_call.arguments[param]) -}}
++                {{- '"' -}}
++                {% if not loop.last %}, {% endif %}
++            {%- endfor %}
++            {{- ')' -}}
++            {% if not loop.last %}, {% endif %}
++        {%- endfor %}
++        {{- "]<|eot|>" }}
++{%- endif %}
++{#- Tool_response case: messages are from tool_response  #}
++    {%- elif message.role == "tool" or message.role == "ipython" %}
++        {{- "<|header_start|>ipython<|header_end|>\n\n" }}
++        {%- if message.content is string %}
++            {{-  message.content  | tojson }}
++        {%- else %}
++            {%- for content in message['content']  %}
++                {%- if content['type']  == 'text' %}
++                    {{-  content['text'] | tojson }}
++                {%- endif %}
++            {%- endfor %}
++        {%- endif %}
++        {{- "<|eot|>" }}
++    {%- endif %}
++{%- endfor %}
++{%- if add_generation_prompt %}
++    {{- '<|header_start|>assistant<|header_end|>\n\n' }}
++{%- endif %}
+\ No newline at end of file
 diff --git a/tests/test-chat.cpp b/tests/test-chat.cpp
-index c7edf0c2d..3d8d313bd 100644
+index c7edf0c2d..d7e4ae327 100644
 --- a/tests/test-chat.cpp
 +++ b/tests/test-chat.cpp
-@@ -1882,16 +1882,74 @@ static void test_convert_responses_to_chatcmpl() {
-         assert_equals(std::string("text"), msg2.at("content")[0].at("type").get<std::string>());
-         assert_equals(std::string("hi"), msg2.at("content")[0].at("text").get<std::string>());
- 
-         // Verify other fields preserved
-         assert_equals(std::string("gpt-5-mini"), result.at("model").get<std::string>());
+@@ -1887,6 +1887,64 @@ static void test_convert_responses_to_chatcmpl() {
          assert_equals(false, result.at("stream").get<bool>());
      }
  
@@ -600,17 +912,7 @@ index c7edf0c2d..3d8d313bd 100644
      // Test string input
      {
          json input = json::parse(R"({
-             "input": "Hello, world!",
-             "model": "test-model"
-         })");
- 
-         json result = server_chat_convert_responses_to_chatcmpl(input);
-@@ -2122,16 +2180,49 @@ static void test_lfm2_parser(const std::string & template_path, bool detailed_de
-     // Tool call with empty arguments
-     tst.test("<|tool_call_start|>[empty_args()]<|tool_call_end|>")
-         .tools({ empty_args_tool })
-         .expect(simple_assist_msg("", "", "empty_args", "{}"))
-         .run();
+@@ -2127,6 +2185,39 @@ static void test_lfm2_parser(const std::string & template_path, bool detailed_de
  
  }
  
@@ -650,17 +952,107 @@ index c7edf0c2d..3d8d313bd 100644
  static void test_template_output_peg_parsers(bool detailed_debug) {
      LOG_DBG("%s\n", __func__);
  
-     // JSON schemas
-     const char * invoice_schema = R"({
-         "type": "object",
-         "properties": {
-             "amount": {"type": "number"},
-@@ -7748,12 +7839,13 @@ int main(int argc, char ** argv) {
-         test_developer_role_to_system_workaround();
-         test_deepseek_v4_thinking_retention();
-         test_deepseek_v4_tool_result_ordering();
-         test_template_generation_prompt();
-         test_reasoning_effort_caps();
+@@ -6897,6 +6988,99 @@ static void test_template_output_peg_parsers(bool detailed_debug) {
+             .run();
+     }
+ 
++    // Llama 4 - bare Python-style call list with no marker; the model also writes JSON calls and text before them
++    {
++        auto tst = peg_tester("models/templates/unsloth-Llama-4-Scout-17B-16E-Instruct.jinja", detailed_debug);
++        tst.test("Hello, world!\nWhat's up?").expect(message_assist).run();
++        // with tools offered, text is still the answer
++        tst.test("Hello, world!\nWhat's up?").tools({ special_function_tool }).expect(message_assist).run();
++        // an empty list is no call, and what follows it on a new line is the answer
++        tst.test("[]").tools({ special_function_tool }).expect(simple_assist_msg("")).run();
++        tst.test("[]\n\nHello, world!\nWhat's up?").tools({ special_function_tool }).expect(message_assist).run();
++        tst.test("[Wikipedia](https://www.wikipedia.org) has it.")
++            .tools({ get_time_tool })
++            .expect(simple_assist_msg("[Wikipedia](https://www.wikipedia.org) has it."))
++            .run();
++        tst.test("[special_function(arg1=1)]").tools({ special_function_tool }).expect(message_assist_call).run();
++        tst.test("[get_time(city=\"Paris\")]")
++            .tools({ get_time_tool })
++            .expect(message_with_tool_calls("get_time", "{\"city\":\"Paris\"}"))
++            .run();
++        tst.test("[special_function(arg1=1), get_time(city=\"Paris\")]")
++            .tools({ special_function_tool, get_time_tool })
++            .parallel_tool_calls(true)
++            .expect_tool_calls({
++                { "special_function", R"({"arg1": 1})", {} },
++                { "get_time", R"({"city": "Paris"})", {} },
++            })
++            .run();
++        tst.test("Hello, world!\nWhat's up?\n\n[special_function(arg1=1)]")
++            .tools({ special_function_tool })
++            .expect(simple_assist_msg("Hello, world!\nWhat's up?\n\n", "", "special_function", R"({"arg1": 1})"))
++            .run();
++        tst.test(R"({"type": "function", "name": "special_function", "parameters": {"arg1": 1}})")
++            .tools({ special_function_tool })
++            .expect(message_assist_call)
++            .run();
++        tst.test(R"([{"name": "special_function", "parameters": {"arg1": 1}}])")
++            .tools({ special_function_tool })
++            .expect(message_assist_call)
++            .run();
++        tst.test(R"({"name": "special_function", "parameters": {"arg1": 1}}; {"name": "get_time", "parameters": {"city": "Paris"}})")
++            .tools({ special_function_tool, get_time_tool })
++            .parallel_tool_calls(true)
++            .expect_tool_calls({
++                { "special_function", R"({"arg1": 1})", {} },
++                { "get_time", R"({"city": "Paris"})", {} },
++            })
++            .run();
++        tst.test("Let me check.\n\n" R"({"type": "function", "name": "get_time", "parameters": {"city": "Paris"}})")
++            .tools({ get_time_tool })
++            .expect(simple_assist_msg("Let me check.\n\n", "", "get_time", R"({"city": "Paris"})"))
++            .run();
++        // a JSON object that is not a call stays text
++        tst.test(R"(Use {"name": "Ana", "age": 3} as the input.)")
++            .tools({ get_time_tool })
++            .expect(simple_assist_msg(R"(Use {"name": "Ana", "age": 3} as the input.)"))
++            .run();
++        tst.test("[special_function(arg1=1)]")
++            .tools({ special_function_tool })
++            .tool_choice(COMMON_CHAT_TOOL_CHOICE_REQUIRED)
++            .expect(message_assist_call)
++            .run();
++
++        // a call in the history renders, though the template iterates a content it may not get
++        common_chat_msg tool_result;
++        tool_result.role         = "tool";
++        tool_result.content      = "Sunny";
++        tool_result.tool_call_id = "call0";
++        tst.test("It is sunny.")
++            .tools({ special_function_tool })
++            .messages({ message_user, message_assist_call, tool_result })
++            .expect(simple_assist_msg("It is sunny."))
++            .run();
++
++        // a system message of the chat's own gets the answer rules the template keeps only for its default one
++        auto tmpls = read_templates("models/templates/unsloth-Llama-4-Scout-17B-16E-Instruct.jinja");
++        common_chat_msg system_msg;
++        system_msg.role    = "system";
++        system_msg.content = "You are a helpful assistant.";
++        common_chat_templates_inputs inputs;
++        inputs.messages              = { system_msg, message_user };
++        inputs.tools                 = { special_function_tool };
++        inputs.add_generation_prompt = true;
++        auto prompt = common_chat_templates_apply(tmpls.get(), inputs).prompt;
++        auto rules  = prompt.find("NEVER respond with empty brackets");
++        if (prompt.find("You are a helpful assistant.") == std::string::npos || rules == std::string::npos ||
++            rules > prompt.find("Here is a list of functions")) {
++            throw std::runtime_error("Llama 4: the answer rules are missing from a system message of the chat's own");
++        }
++        inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE;
++        if (common_chat_templates_apply(tmpls.get(), inputs).prompt.find("NEVER respond with empty brackets") != std::string::npos) {
++            throw std::runtime_error("Llama 4: the answer rules were added with tools turned off");
++        }
++    }
++
+     // GigaChat V3
+     {
+         auto tst = peg_tester("models/templates/GigaChat3-10B-A1.8B.jinja", detailed_debug);
+@@ -7753,6 +7937,7 @@ int main(int argc, char ** argv) {
          test_reasoning_budget_tokens_per_request();
          test_reasoning_budget_message_per_request();
          test_template_output_peg_parsers(detailed_debug);
@@ -668,7 +1060,6 @@ index c7edf0c2d..3d8d313bd 100644
          std::cout << "\n[chat] All tests passed!" << '\n';
      }
      return 0;
- }
 diff --git a/tools/server/server-chat.cpp b/tools/server/server-chat.cpp
 index a3a4ea152..87c250992 100644
 --- a/tools/server/server-chat.cpp

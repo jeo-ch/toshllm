@@ -71,7 +71,9 @@ class Engine:
             except OSError:
                 pass
 
-    def _send(self, method, path, body=None, timeout=3600):
+    def _send(self, method, path, body=None, timeout=3600, on_line=None):
+        """The engine's JSON reply. With on_line, a 200 reply is read as server-sent events, each line to
+        on_line, and None is returned."""
         if self.cancelled.is_set():
             raise Cancelled()
         connection = http.client.HTTPConnection(self.host, self.port, timeout=timeout)
@@ -90,7 +92,13 @@ class Engine:
             self._connection = connection
         try:
             connection.request(method, path, None if body is None else json.dumps(body), headers)
-            data = connection.getresponse().read()
+            response = connection.getresponse()
+            if on_line is not None and response.status == 200:
+                for line in response:
+                    on_line(line.decode("utf-8", "replace").rstrip("\r\n"))
+                data = None
+            else:
+                data = response.read()
         except (OSError, http.client.HTTPException):
             if self.cancelled.is_set():
                 raise Cancelled()
@@ -101,6 +109,8 @@ class Engine:
             connection.close()
         if self.cancelled.is_set():
             raise Cancelled()
+        if on_line is not None and data is None:
+            return None
         try:
             return json.loads(data or b"null")
         except ValueError:
@@ -108,6 +118,38 @@ class Engine:
 
     def complete(self, body):
         return self._send("POST", "/v1/chat/completions", dict(body, stream=False))
+
+    def stream(self, body, on_delta):
+        """A completion generated as a stream: on_delta gets each piece of text as (field, text), with field
+        "content" or "reasoning_content". Returns the reply in the shape of complete()'s."""
+        message, usage, failure = {"role": "assistant", "content": ""}, {}, []
+
+        def on_line(line):
+            if not line.startswith("data: ") or line == "data: [DONE]":
+                return
+            try:
+                chunk = json.loads(line[6:])
+            except ValueError:
+                return
+            if not isinstance(chunk, dict):
+                return
+            if "error" in chunk:
+                failure.append(chunk)
+                return
+            if isinstance(chunk.get("usage"), dict):
+                usage.update(chunk["usage"])
+            for choice in chunk.get("choices") or []:
+                delta = choice.get("delta") if isinstance(choice, dict) else None
+                if isinstance(delta, dict):
+                    _merge(message, delta, on_delta)
+
+        reply = self._send("POST", "/v1/chat/completions",
+                           dict(body, stream=True, stream_options={"include_usage": True}), on_line=on_line)
+        if reply is not None:
+            return reply
+        if failure:
+            return failure[0]
+        return {"choices": [{"message": message}], "usage": usage}
 
     def tools(self):
         listed = self._send("GET", "/tools", timeout=60)
@@ -126,6 +168,27 @@ class Engine:
             if isinstance(reply.get("error"), str):
                 return reply["error"], False
         return json.dumps(reply), False
+
+
+def _merge(message, delta, on_delta):
+    for field in ("content", "reasoning_content"):
+        text = delta.get(field)
+        if isinstance(text, str) and text:
+            message[field] = message.get(field, "") + text
+            on_delta(field, text)
+    for fragment in delta.get("tool_calls") or []:
+        if not isinstance(fragment, dict):
+            continue
+        calls = message.setdefault("tool_calls", [])
+        index = fragment.get("index") if isinstance(fragment.get("index"), int) else len(calls)
+        while len(calls) <= index:
+            calls.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+        if fragment.get("id"):
+            calls[index]["id"] = fragment["id"]
+        function = fragment.get("function") if isinstance(fragment.get("function"), dict) else {}
+        for key in ("name", "arguments"):
+            if isinstance(function.get(key), str):
+                calls[index]["function"][key] += function[key]
 
 
 def approved(name):
@@ -201,10 +264,19 @@ class Turn:
             body["tool_choice"] = choice
         return body
 
-    def _generate(self, body):
+    def _generate(self, body, live=False):
+        """One model pass. A live pass streams its text to the client as it is generated, for a round
+        whose answer goes out unchecked; if it ends in tool calls, the client is told to drop that text."""
         self.passes += 1
-        self.emit({"type": "pass", "n": self.passes, "state": "start"})
-        reply = self.engine.complete(body)
+        self.emit({"type": "pass", "n": self.passes, "state": "start", "live": live})
+        shown = False
+
+        def on_delta(field, text):
+            nonlocal shown
+            shown = shown or field == "content"
+            self.emit({"type": "delta", field: text})
+
+        reply = self.engine.stream(body, on_delta) if live else self.engine.complete(body)
         if not isinstance(reply, dict) or not reply.get("choices"):
             error = reply.get("error") if isinstance(reply, dict) and isinstance(reply.get("error"), dict) else {}
             # a request the engine refuses (no model in router mode, a context too small...) is the client's to fix
@@ -216,7 +288,10 @@ class Turn:
         self.usage["completion_tokens"] += usage.get("completion_tokens", 0)
         self.emit({"type": "pass", "n": self.passes, "state": "end", "prompt_tokens": usage.get("prompt_tokens", 0),
                    "completion_tokens": usage.get("completion_tokens", 0)})
-        return reply["choices"][0].get("message") or {}
+        message = reply["choices"][0].get("message") or {}
+        if shown and message.get("tool_calls"):
+            self.emit({"type": "retract", "n": self.passes})
+        return message
 
     def _rounds(self):
         """The client's own limit on model passes ("tosh": {"max_rounds": n}), as the app's agent turns setting."""
@@ -361,7 +436,7 @@ class Turn:
         self.definitions = {t.get("tool"): t.get("definition") for t in listed}
         if not listed:
             # no math tools on this engine: the model answers as it is
-            message = self._generate(self._body(None, None, None))
+            message = self._generate(self._body(None, None, None), live=True)
             return message.get("content") or "", "answered"
         tools = [t["definition"] for t in listed if isinstance(t.get("definition"), dict)]
         # with an approved server the model may also ask for what its tools need, in any round
@@ -382,7 +457,9 @@ class Turn:
                 standing = note or (policy.STANDING_NOTE if any(policy.is_math(c["name"]) for c in self.calls) else None)
                 body = self._body(tools + ([policy.CLARIFY_TOOL] if clarify_anywhere else []), "auto", standing)
             note = None
-            message = self._generate(body)
+            # nothing checks the answer of a turn that needs no tools until a math tool has run in it
+            live = not (required or finalizing or any(policy.is_math(c["name"]) for c in self.calls))
+            message = self._generate(body, live)
             content = message.get("content") or ""
             calls = message.get("tool_calls") or []
             names = [c.get("function", {}).get("name", "") for c in calls]

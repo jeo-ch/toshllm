@@ -36,7 +36,7 @@ class Engine:
 
     def __init__(self, rounds, results, tools=True, review="inconsistent", intent=None):
         self.rounds, self.results, self.review, self.intent = list(rounds), dict(results), review, intent
-        self.bodies, self.calls, self.side = [], [], []
+        self.bodies, self.calls, self.side, self.live = [], [], [], []
         self.listed = [{"tool": n, "definition": {"type": "function", "function": {"name": n, "parameters": {}}}}
                        for n in ("sympy_expression", "scientific_compute")] if tools else []
 
@@ -54,6 +54,17 @@ class Engine:
         self.bodies.append(body)
         message = self.rounds.pop(0)
         return {"choices": [{"message": message}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+
+    def stream(self, body, on_delta):
+        self.live.append(len(self.bodies))
+        reply = self.complete(body)
+        if not reply.get("choices"):
+            return reply
+        message = reply["choices"][0]["message"]
+        for field in ("reasoning_content", "content"):
+            if message.get(field):
+                on_delta(field, message[field])
+        return reply
 
     def call(self, name, params):
         self.calls.append((name, params))
@@ -237,6 +248,94 @@ def test_progress_events_and_cancellation():
     reply = agent.run({"request": {"messages": [{"role": "user", "content": "Solve x + 1 = 2."}]}, "base_url": "http://127.0.0.1:9"},
                       register=lambda e: e.cancel())
     assert reply["status"] == 499 and reply["error"]["type"] == "cancelled", reply
+
+
+def _events(engine, question):
+    events = []
+    turn = agent.Turn(engine, {"messages": [{"role": "user", "content": question}]}, events.append)
+    content, outcome = turn.run()
+    return events, content, outcome
+
+
+def test_a_turn_that_needs_no_tools_streams_its_answer():
+    engine = Engine([{"content": "An eigenvalue is a scale factor."}], {})
+    events, content, outcome = _events(engine, "What is an eigenvalue?")
+    deltas = [e for e in events if e["type"] == "delta"]
+    assert "".join(e.get("content", "") for e in deltas) == content and outcome == "answered", events
+    assert [e["live"] for e in events if e["type"] == "pass" and e["state"] == "start"] == [True], events
+    assert not any(e["type"] == "retract" for e in events), events
+    # without the math tools every answer goes out as it is generated
+    engine = Engine([{"content": "x = 2 or x = -2"}], {}, tools=False)
+    events, content, outcome = _events(engine, "Solve x^2 - 4 = 0.")
+    assert [e.get("content") for e in events if e["type"] == "delta"] == ["x = 2 or x = -2"], events
+
+
+def test_a_calculation_is_never_streamed():
+    engine = Engine([
+        {"content": "", "tool_calls": [call("scientific_compute", operation="integrate", expression="x**3/(exp(x)-1)",
+                                            lower=0, upper="oo")]},
+        {"content": "6.49393940227"},
+    ], {})
+    events, content, outcome = _events(engine, REPORTED)
+    assert engine.live == [] and not any(e["type"] == "delta" for e in events), events
+
+
+def test_text_streamed_before_a_math_call_is_retracted():
+    engine = Engine([
+        {"content": "Let me check with 3 terms.", "tool_calls": [call("sympy_expression", operation="factor",
+                                                                       expression="x**2 - 5*x + 6")]},
+        {"content": "It factors as (x - 3)*(x - 2)."},
+    ], {"x**2 - 5*x + 6": json.dumps({"success": True, "operation": "factor", "exact": "(x - 3)*(x - 2)",
+                                      "result_kind": "exact", "interpreted_input": ["expression: x**2 - 5*x + 6"]})})
+    events, content, outcome = _events(engine, "What is an eigenvalue?")
+    kinds = [e["type"] for e in events]
+    assert kinds.index("retract") == kinds.index("tool_call") - 1, kinds
+    # once a math tool has run the answer is checked, so it is no longer streamed
+    assert engine.live == [0] and kinds.count("delta") == 1, (engine.live, kinds)
+    assert content == "It factors as (x - 3)*(x - 2).", content
+
+
+def test_a_streamed_reply_is_read_like_a_complete_one():
+    import http.server
+    import threading
+    chunks = [
+        {"choices": [{"delta": {"role": "assistant", "content": "Hi"}}]},
+        {"choices": [{"delta": {"reasoning_content": "hm"}}]},
+        {"choices": [{"delta": {"content": " there"}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "a", "function": {"name": "sympy_", "arguments": "{\"x\""}}]}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"name": "expression", "arguments": ": 1}"}}]}}]},
+        {"choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 3}},
+    ]
+    seen = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            seen.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            for chunk in chunks:
+                self.wfile.write(b"data: " + json.dumps(chunk).encode() + b"\n\n")
+            self.wfile.write(b"data: [DONE]\n\n")
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.handle_request, daemon=True).start()
+    try:
+        pieces = []
+        reply = agent.Engine(f"http://127.0.0.1:{server.server_port}", "").stream({"messages": []},
+                                                                                   lambda f, t: pieces.append((f, t)))
+    finally:
+        server.server_close()
+    message = reply["choices"][0]["message"]
+    assert seen[0]["stream"] is True and seen[0]["stream_options"] == {"include_usage": True}, seen
+    assert message["content"] == "Hi there" and message["reasoning_content"] == "hm", message
+    assert message["tool_calls"] == [{"id": "a", "type": "function",
+                                      "function": {"name": "sympy_expression", "arguments": '{"x": 1}'}}], message
+    assert reply["usage"] == {"prompt_tokens": 7, "completion_tokens": 3}, reply
+    assert pieces == [("content", "Hi"), ("reasoning_content", "hm"), ("content", " there")], pieces
 
 
 def test_every_pass_goes_to_the_requested_model_with_its_sampling():
