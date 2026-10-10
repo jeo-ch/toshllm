@@ -1214,6 +1214,14 @@ struct ImageInstanceConfig: Codable, Identifiable, Equatable {
     var aspectValue: ImageAspect { ImageAspect(rawValue: aspect) ?? .square }
     var formatValue: ImageFormat { ImageFormat(rawValue: format) ?? .png }
     var fastModeValue: ImageFastMode { ImageFastMode(rawValue: fastMode) ?? .off }
+
+    /// The fast mode in effect was chosen for whichever model was selected before.
+    /// `stepScale` is the only thing that reads it, and it has no effect on a model
+    /// that cannot serve it, so the selection is cleared rather than left looking as
+    /// though it still applies.
+    mutating func clearUnsupportedFastMode(_ model: ImageGenModel) {
+        if !fastModeValue.supports(model) { fastMode = ImageFastMode.off.rawValue }
+    }
     var dimensions: (Int, Int) {
         aspectValue == .custom
             ? ImageAspect.customDimensions(ratio: customAspect, base: baseSize)

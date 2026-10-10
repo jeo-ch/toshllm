@@ -1705,7 +1705,7 @@
   "This limit reserves more than half the context for a single response.": "Questo limite riserva più della metà del contesto per una singola risposta.",
   "This model can animate a still: it becomes the first frame.": "Questo modello può animare un'immagine fissa: diventa il primo fotogramma.",
   "This model does not declare optional accelerators.": "Questo modello non dichiara acceleratori opzionali.",
-  "This model runs a fixed %@ steps: it ships its own noise schedule, and any other one spoils the image.": "",
+  "This model runs a fixed %@ steps: it ships its own noise schedule, and any other one spoils the image.": "Questo modello esegue fissi %@ passi: porta il proprio calendario di rumore, e qualsiasi altro rovina l'immagine.",
   "This model runs at CFG %@ and ignores the negative prompt. It needs a model with CFG above 1 (SD 1.5, Qwen-Image), or a higher CFG on your own model.": "Questo modello gira a CFG %@ e ignora il prompt negativo. Serve un modello con CFG sopra 1 (SD 1.5, Qwen-Image), oppure un CFG più alto sul tuo modello.",
   "This model was trained on square frames only (%@x%@): any other shape comes back with colour blotches however many steps you give it. That is the model's limit, not the app's.": "Questo modello è stato addestrato solo su fotogrammi quadrati (%@x%@): qualsiasi altra forma torna con macchie di colore per quanti passi tu gli dia. È un limite del modello, non dell'app.",
   "This older result did not store its quant": "Questo risultato più vecchio non ha salvato la sua quantizzazione.",

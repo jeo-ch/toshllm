@@ -1705,7 +1705,7 @@
   "This limit reserves more than half the context for a single response.": "该上限会为单条回复预留超过一半的上下文。",
   "This model can animate a still: it becomes the first frame.": "此模型可以让静态图像动起来：该图像会成为第一帧。",
   "This model does not declare optional accelerators.": "此模型未声明可选的加速器。",
-  "This model runs a fixed %@ steps: it ships its own noise schedule, and any other one spoils the image.": "",
+  "This model runs a fixed %@ steps: it ships its own noise schedule, and any other one spoils the image.": "此模型固定执行 %@ 步：自带噪声调度，换成其他调度会导致图像损坏。",
   "This model runs at CFG %@ and ignores the negative prompt. It needs a model with CFG above 1 (SD 1.5, Qwen-Image), or a higher CFG on your own model.": "该模型以 CFG %@ 运行，会忽略负面提示词。需要 CFG 大于 1 的模型（SD 1.5、Qwen-Image），或把你自己模型的 CFG 调高。",
   "This model was trained on square frames only (%@x%@): any other shape comes back with colour blotches however many steps you give it. That is the model's limit, not the app's.": "该模型只在正方形画面上训练过（%@x%@）：换成其他形状时，无论给多少步数都会出现色块。这是模型本身的限制，而非应用的问题。",
   "This older result did not store its quant": "这条较早的结果没有记录量化方式",

@@ -1705,7 +1705,7 @@
   "This limit reserves more than half the context for a single response.": "この上限は、1つの応答にコンテキストの半分以上を確保します。",
   "This model can animate a still: it becomes the first frame.": "このモデルは静止画をアニメーション化できます。その画像が最初のフレームになります。",
   "This model does not declare optional accelerators.": "このモデルはオプションのアクセラレータを宣言していません。",
-  "This model runs a fixed %@ steps: it ships its own noise schedule, and any other one spoils the image.": "",
+  "This model runs a fixed %@ steps: it ships its own noise schedule, and any other one spoils the image.": "このモデルは固定の %@ ステップで実行します。独自のノイズスケジュールを搭載しており、それ以外を使うと画像が崩れます。",
   "This model runs at CFG %@ and ignores the negative prompt. It needs a model with CFG above 1 (SD 1.5, Qwen-Image), or a higher CFG on your own model.": "このモデルは CFG %@ で動作し、ネガティブプロンプトを無視します。CFG が 1 より大きいモデル（SD 1.5、Qwen-Image）か、自分のモデルで CFG を上げる必要があります。",
   "This model was trained on square frames only (%@x%@): any other shape comes back with colour blotches however many steps you give it. That is the model's limit, not the app's.": "このモデルは正方形のフレームだけで学習されています（%@x%@）。他の形では、ステップ数をいくら増やしても色ムラが出ます。これはアプリではなくモデルの限界です。",
   "This older result did not store its quant": "この古い結果には量子化が記録されていません",

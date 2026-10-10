@@ -981,7 +981,7 @@ struct ImageInstanceForm: View {
             .labelsHidden()
             .onChange(of: cfg.modelID) {
                 if !cfg.isCustom { cfg.steps = model.defaultSteps }
-                if !cfg.fastModeValue.supports(model) { cfg.fastMode = ImageFastMode.off.rawValue }
+                cfg.clearUnsupportedFastMode(model)
                 // a square-trained model renders any other shape with colour blotches, so
                 // land on the one it knows instead of keeping the previous model's framing
                 if model.trainedSquareOnly { cfg.aspect = ImageAspect.square.rawValue }
