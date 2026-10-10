@@ -984,6 +984,35 @@ final class ImageGenTests: XCTestCase {
         XCTAssertEqual(ImageInstanceConfig().fastModeValue, .off)
     }
 
+    func testQwenImage21TurboRunsItsOwnSchedule() {
+        let base = ImageGenCatalog.qwenImage21Q4
+        let turbo = ImageGenCatalog.qwenImage21TurboQ4
+        XCTAssertEqual(turbo.sigmas.first, 1.0)
+        XCTAssertEqual(turbo.sigmas.last, 0.0)
+        XCTAssertEqual(turbo.defaultSteps, 8)
+        // the schedule fixes the count whatever the instance asks for
+        XCTAssertEqual(turbo.steps(25), 8)
+        XCTAssertEqual(turbo.steps(4), 8)
+        XCTAssertEqual(base.steps(25), 25)
+        XCTAssertTrue(base.sigmas.isEmpty)
+        XCTAssertEqual(turbo.cfgScale, 1.0)
+        XCTAssertFalse(turbo.extraArgs.contains("--scheduler"))
+        XCTAssertTrue(base.extraArgs.contains("--scheduler"))
+        XCTAssertEqual(ImageFastMode.easycache.args(for: turbo), [])
+        XCTAssertEqual(ImageFastMode.spectrum.args(for: turbo), [])
+        // the download stays on the commit whose files were checked against the official weights
+        XCTAssertEqual(turbo.components.first?.urlString,
+                       "https://huggingface.co/AtomicChat/Qwen-Image-2.1-Turbo-GGUF/resolve/bb25d06bc74119c12207243d68917951e6d9c232/Qwen-Image-2.1-Turbo-AD-Q4_K.gguf")
+        XCTAssertTrue(base.components.first!.urlString.contains("/resolve/main/"))
+        for m in [ImageGenCatalog.qwenImage21TurboQ3, ImageGenCatalog.qwenImage21TurboQ6, ImageGenCatalog.qwenImage21TurboQ8] {
+            XCTAssertEqual(m.steps(25), 8)
+            XCTAssertTrue(ImageGenCatalog.models.contains { $0.id == m.id })
+        }
+        // same VAE and encoder files as the base, so an installed base only adds the denoiser
+        XCTAssertEqual(Array(turbo.components.dropFirst().map(\.fileName)),
+                       Array(base.components.dropFirst().map(\.fileName)))
+    }
+
     func testReferenceImagesShareAPixelBudget() {
         XCTAssertNil(ImageGenLimits.referencePixels(count: 0, resolution: 1024))
         // one or two references keep full size, as the model was tuned
@@ -1146,10 +1175,12 @@ final class ImageGenTests: XCTestCase {
     }
 
     func testCommandBufferSplitClearsWatchdog() {
-        // 1024x1024 runs as one buffer; larger frames split, capped at 4.
-        XCTAssertEqual(ImageGenLimits.nCB(width: 1024, height: 1024), 1)
-        XCTAssertGreaterThan(ImageGenLimits.nCB(width: 1600, height: 900), 1)
-        XCTAssertLessThanOrEqual(ImageGenLimits.nCB(width: 1600, height: 1600), 4)
+        // small frames stay in one buffer
+        XCTAssertEqual(ImageGenLimits.nCB(width: 512, height: 512), 1)
+        // a 1024 frame already splits, and the largest use the engine's maximum
+        XCTAssertGreaterThan(ImageGenLimits.nCB(width: 1024, height: 1024), 1)
+        XCTAssertEqual(ImageGenLimits.nCB(width: 1920, height: 1920), 8)
+        XCTAssertEqual(ImageGenLimits.nCB(width: 2048, height: 2048), 8)
     }
 
     func testQueueTargetingRunsOnlyOnItsOwnInstance() {

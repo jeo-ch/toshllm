@@ -981,6 +981,7 @@ struct ImageInstanceForm: View {
             .labelsHidden()
             .onChange(of: cfg.modelID) {
                 if !cfg.isCustom { cfg.steps = model.defaultSteps }
+                if !cfg.fastModeValue.supports(model) { cfg.fastMode = ImageFastMode.off.rawValue }
                 // a square-trained model renders any other shape with colour blotches, so
                 // land on the one it knows instead of keeping the previous model's framing
                 if model.trainedSquareOnly { cfg.aspect = ImageAspect.square.rawValue }
@@ -1330,9 +1331,14 @@ struct ImageInstanceForm: View {
                 }
             }
             row(loc.t("Pasos", "Steps"),
-                loc.t("Iteraciones de muestreo. Los modelos turbo/distilled están afinados para pocos pasos.",
-                      "Sampling iterations. Turbo/distilled models are tuned for few steps.")) {
-                Stepper(value: $cfg.steps, in: 4...30) { Text("\(cfg.steps)").monospacedDigit() }.frame(width: 96)
+                model.sigmas.isEmpty
+                    ? loc.t("Iteraciones de muestreo. Los modelos turbo/distilled están afinados para pocos pasos.",
+                            "Sampling iterations. Turbo/distilled models are tuned for few steps.")
+                    : loc.t("Este modelo va a %@ pasos fijos: trae su propio calendario de ruido y con otro la imagen sale mal.",
+                            "This model runs a fixed %@ steps: it ships its own noise schedule, and any other one spoils the image.",
+                            "\(model.steps(cfg.steps))")) {
+                Stepper(value: $cfg.steps, in: 4...30) { Text("\(model.steps(cfg.steps))").monospacedDigit() }.frame(width: 96)
+                    .disabled(!model.sigmas.isEmpty)
             }
             row(loc.t("Semilla", "Seed"),
                 loc.t("-1 = aleatoria. Fija un número para reproducir la misma imagen; distinta semilla = variación.",

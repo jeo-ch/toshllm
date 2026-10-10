@@ -483,7 +483,10 @@ def test_memory_limit(_):
     helper = Helper(TOSH_SYMPY_MEMORY_MB=64, TOSH_SYMPY_TIMEOUT_MS=20000)
     try:
         big = {name: {"linspace": [0, 1, 1000000]} for name in "abcdefgh"}
-        reply = helper.call("compute", "evaluate", expression="a + b + c + d + f + g + h", data=big)
+        # the server samples the footprint every 50 ms, which a plain sum can finish under: this holds the
+        # arrays for about a second
+        reply = helper.call("compute", "evaluate", data=big,
+                            expression="LambertW(a) + LambertW(b) + LambertW(c) + LambertW(d) + LambertW(f) + LambertW(g) + LambertW(h)")
         assert code(reply) == "memory_limit", reply
         assert helper.call("linalg", "determinant", matrix=[[1, 2], [3, 4]])["determinant"] == -2.0
     finally:

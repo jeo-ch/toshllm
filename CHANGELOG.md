@@ -3,6 +3,28 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.21] - 2026-10-10
+
+### Added
+
+- **Images: Qwen-Image 2.1 Turbo, in four sizes from 8 GB up.** It draws in 8 steps instead of 25, so a 1024x1024 image takes about a minute on a Radeon RX 6700 XT; like Qwen-Image 2.1 it writes text, edits from reference images and has a non-commercial license.
+
+### Improved
+
+- **Images: large images generate faster on Radeon RX 6000 and Radeon Pro W6000.** On a Radeon RX 6700 XT each step of a 1920x1920 Qwen-Image 2.1 Turbo image takes 32.6 seconds instead of 37.1, with the same image.
+- **Images: the last stage of every image takes about half the time.** On a Radeon RX 6700 XT it goes from 12.6 to 5.7 seconds for Qwen-Image 2.1 Turbo at 1024x1024 and from 18.6 to 9.9 for Z-Image Turbo, with the same image.
+- **Video: Wan videos take less time, with the same frames.** On a Radeon RX 6700 XT a 17-frame 832x480 Wan 2.1 1.3B video at 10 steps takes 187 seconds instead of 206.
+
+### Fixed
+
+- **Images: large images no longer stop with a GPU timeout on a card that also draws the desktop.** On a Radeon RX 6700 XT, Qwen-Image 2.1 Turbo at 1920x1920 failed halfway through and now completes, at the same speed.
+
+## [0.87.20] - 2026-10-09
+
+### Improved
+
+- **LLMs: i-quant, Q2_0, MXFP4 and Q8_0 MoE models with an MTP head generate faster when experts run on the CPU.** With MoE offload on a Radeon RX 6700 XT, Qwen3.6-35B-A3B writes 8-11% faster in UD-IQ2_M and UD-IQ3_XXS; under Dynamic MoE it gains 7-10% with 42% of the experts in video memory and nothing with the whole 12 GB card.
+
 ## [0.87.19] - 2026-10-08
 
 ### Improved

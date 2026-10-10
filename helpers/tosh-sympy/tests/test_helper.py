@@ -378,10 +378,12 @@ def test_nsolve_never_guesses(h):
 def test_timed_out_indefinite_integral(_):
     helper = Helper(TOSH_SYMPY_TIMEOUT_MS=SHORT)
     try:
-        reply = expression(helper, "integrate", "1/(1 + x**3 + sin(x))", variable="x")
+        # slow under every hash order: the worker runs with -I, so its seed is random and some orders
+        # let SymPy give up on simpler integrands in milliseconds
+        reply = expression(helper, "integrate", "exp(sin(x))/(1 + x + x**5)", variable="x")
         assert error_code(reply) == "timeout" and reply["timed_out"] is True, reply
         assert reply["exact"] is None and "numeric" not in reply, reply
-        assert reply["unevaluated"] == "Integral(1/(x**3 + sin(x) + 1), x)", reply
+        assert reply["unevaluated"] == "Integral(exp(sin(x))/(x**5 + x + 1), x)", reply
         assert expression(helper, "factor", "x**2 - 1")["exact"] == "(x - 1)*(x + 1)"
     finally:
         helper.close()
@@ -390,10 +392,10 @@ def test_timed_out_indefinite_integral(_):
 def test_timed_out_definite_integral_gets_a_number(_):
     helper = Helper(TOSH_SYMPY_TIMEOUT_MS=SHORT)
     try:
-        reply = expression(helper, "integrate", "1/(1 + x**3 + exp(x))", variable="x", lower="0", upper="1")
+        reply = expression(helper, "integrate", "exp(sin(x)**2)/(1 + x**3)", variable="x", lower="0", upper="1")
         assert reply["success"] is True and reply["exact"] is None, reply
         assert reply["timed_out_symbolic"] is True and reply["method"] == "numerical_integration", reply
-        assert reply["numeric"] == "0.358524569912696", reply
+        assert reply["numeric"] == "1.07619861679014", reply
         assert expression(helper, "expand", "(x + 1)**2")["exact"] == "x**2 + 2*x + 1"
         # trigonometric functions get a second symbolic attempt after the number, which a slow machine
         # stops as well, worker included: nothing may be asked of this helper after it

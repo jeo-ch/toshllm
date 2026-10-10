@@ -1705,6 +1705,7 @@
   "This limit reserves more than half the context for a single response.": "",
   "This model can animate a still: it becomes the first frame.": "",
   "This model does not declare optional accelerators.": "",
+  "This model runs a fixed %@ steps: it ships its own noise schedule, and any other one spoils the image.": "",
   "This model runs at CFG %@ and ignores the negative prompt. It needs a model with CFG above 1 (SD 1.5, Qwen-Image), or a higher CFG on your own model.": "",
   "This model was trained on square frames only (%@x%@): any other shape comes back with colour blotches however many steps you give it. That is the model's limit, not the app's.": "",
   "This older result did not store its quant": "",
