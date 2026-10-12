@@ -1016,7 +1016,10 @@ struct ImageInstanceForm: View {
             ForEach(model.components) { componentRow($0) }
             Button {
                 for comp in model.components {
-                    models.downloadImageComponent(urlString: comp.currentDownloadURL, fileName: comp.fileName)
+                    // currentDownloadURL picks among the mirrors; formerFileNames lets a
+                    // Turbo already downloaded from AtomicChat still count as installed.
+                    models.downloadImageComponent(urlString: comp.currentDownloadURL, fileName: comp.fileName,
+                                                  formerFileNames: comp.formerFileNames)
                 }
             } label: {
                 Label(loc.t("Descargar todo (%.1f GB)", "Download all (%.1f GB)")
