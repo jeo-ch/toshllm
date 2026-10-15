@@ -8,7 +8,6 @@ import PDFKit
 import Vision
 import UniformTypeIdentifiers
 import AVFoundation
-
 // MARK: - Main chat view
 
 /// How far the conversation's end sits past the bottom of the view, in points.
@@ -703,7 +702,7 @@ struct NativeChatView: View {
                 case .message(let msg):
                     messageRow(msg, isNewest: msg.id == newestID)
                         .flippedUpsideDown()
-                        .id(msg.id)
+                        .id(row.id)
                 case .tools(let rounds):
                     toolsRow(rounds)
                         .flippedUpsideDown()
@@ -815,6 +814,11 @@ struct NativeChatView: View {
                         chat.deleteMessageAndFollowing(msg.id)
                     })
                     .equatable()
+                if msg.role == "assistant", msg.map != nil || msg.mapRequest != nil {
+                    ChatMapSection(message: msg, loading: chat.mapLoading.contains(msg.id),
+                                   failed: chat.mapFailed.contains(msg.id),
+                                   onShow: { chat.loadMap(for: msg.id, port: port) })
+                }
             }
         }
     }
@@ -1735,6 +1739,14 @@ struct NativeChatView: View {
                     chat.enableAllTools()
                 }
                 .buttonStyle(.borderless)
+            }
+            if let agent = EngineExtensions.active().first(where: \.hasAgent) {
+                Label(loc.t("%@ recibe cada mensaje primero; los que no son de lo suyo pueden volver a estas herramientas.",
+                            "%@ gets every message first; the ones outside its own field can come back to these tools.",
+                            agent.manifest.name.pick(spanish: loc.isSpanish)),
+                      systemImage: "puzzlepiece.extension")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Divider()
             ForEach(availableTools) { tool in

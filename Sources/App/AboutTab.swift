@@ -7,7 +7,7 @@ import SwiftUI
 // MARK: - About
 
 enum AppInfo {
-    static let version = "0.87.22"
+    static let version = "0.87.24"
     /// True for the pre-AVX2 legacy build (Info.plist TOSHNoAVX2). Kept on its own
     /// update channel so it never pulls an AVX2 DMG that would SIGILL on those CPUs.
     static let isNoAVX2 = Bundle.main.object(forInfoDictionaryKey: "TOSHNoAVX2") as? Bool ?? false
@@ -23,6 +23,25 @@ enum AppInfo {
     static let usdtTRC20 = "TFUG271bbbQEmFu4wkFHyvNNkYRZC5JDUf"
     static let donateNoteES = "Si ToshLLM te resulta útil, puedes apoyar el desarrollo con una donación."
     static let donateNoteEN = "If ToshLLM is useful to you, you can support development with a donation."
+
+    // A build packaged under another identity (TOSH_APP_NAME in make-app.sh) carries these keys;
+    // a plain build has none of them and keeps ToshLLM's.
+    static let name = infoString("TOSHProductName") ?? "ToshLLM"
+    static let identifier = infoString("TOSHIdentifier") ?? "dev.engel.toshllm"
+    static let dataFolder = infoString("TOSHDataFolder") ?? "ToshLLM"
+    /// The build's own version; `version` stays the ToshLLM it is built on.
+    static let productVersion = infoString("TOSHProductVersion") ?? version
+    static let updatesEnabled = !(Bundle.main.object(forInfoDictionaryKey: "TOSHUpdatesDisabled") as? Bool ?? false)
+    static var isRebranded: Bool { name != "ToshLLM" }
+
+    /// Interface text that names the app, with this build's name in it.
+    static func branded(_ text: String) -> String {
+        isRebranded ? text.replacingOccurrences(of: "ToshLLM", with: name) : text
+    }
+
+    private static func infoString(_ key: String) -> String? {
+        (Bundle.main.object(forInfoDictionaryKey: key) as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
 }
 
 struct AboutView: View {
@@ -57,10 +76,10 @@ struct AboutView: View {
             HStack(spacing: 20) {
                 ToshLLMLogo(size: 92)
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("ToshLLM")
+                    Text(AppInfo.name)
                         .font(.system(size: 32, weight: .bold))
                     HStack(spacing: 9) {
-                        Text(loc.t("Versión", "Version") + " " + AppInfo.version)
+                        Text(versionLine)
                             .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(.secondary)
                         updateBadge
@@ -117,8 +136,16 @@ struct AboutView: View {
         .clipShape(RoundedRectangle(cornerRadius: CardMetrics.corner, style: .continuous))
     }
 
+    private var versionLine: String {
+        let line = loc.t("Versión", "Version") + " " + AppInfo.productVersion
+        guard AppInfo.isRebranded else { return line }
+        return line + " · " + loc.t("basado en %@ %@", "based on %@ %@", "ToshLLM", AppInfo.version)
+    }
+
     @ViewBuilder private var updateBadge: some View {
-        if let latest = updates.latestVersion {
+        if !AppInfo.updatesEnabled {
+            EmptyView()
+        } else if let latest = updates.latestVersion {
             Text(loc.t("Disponible %@", "%@ available", latest))
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, 8).padding(.vertical, 3)
@@ -142,7 +169,13 @@ struct AboutView: View {
     }
 
     @ViewBuilder private var updateButton: some View {
-        if let latest = updates.latestVersion {
+        if !AppInfo.updatesEnabled {
+            Label(loc.t("Las actualizaciones de esta compilación se gestionan fuera de la app",
+                        "Updates for this build are managed outside the app"),
+                  systemImage: "building.2")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else if let latest = updates.latestVersion {
             Button {
                 Task { await updates.downloadAndInstall() }
             } label: {
@@ -292,7 +325,7 @@ struct AboutView: View {
             ? "—"
             : hardware.gpus.map { "\($0.name) (\($0.vramGB) GB)" }.joined(separator: ", ")
         let value = """
-        ToshLLM \(AppInfo.version)\(AppInfo.isNoAVX2 ? " (no-AVX2)" : "")
+        \(AppInfo.name) \(AppInfo.productVersion)\(AppInfo.isRebranded ? " (ToshLLM \(AppInfo.version))" : "")\(AppInfo.isNoAVX2 ? " (no-AVX2)" : "")
         \(hardware.osVersion)
         Model: \(hardware.model)
         CPU: \(hardware.cpuBrand) · \(hardware.physicalCores) cores / \(hardware.logicalCores) threads

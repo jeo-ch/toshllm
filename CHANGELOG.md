@@ -3,6 +3,34 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Chat: a photo or recording reaches the model when the math tools run the turn.** The turn went to the math agent with the text alone, so the answer ignored the attachment and a message with only a photo failed.
+
+## [0.87.24] - 2026-10-14
+
+### Added
+
+- **Chat: the model can draw places, routes and areas on a map under its answer.** What it draws is dashed and marked as approximate; a route by road comes from Apple Maps, with its distance and time, only after you allow the internet.
+- **Chat: an extension's agent can attach a map of its data to an answer.** A click on a feature shows its attributes, and the features export as GeoJSON.
+- **Chat: a remote MCP server can be offered to the server agent, like a local one.** It works over HTTP or SSE, with its headers kept in the Keychain.
+- **Tools and agents from a folder of extensions, each with its own settings page.** An extension stays off until you approve it; docs/extensions.md has the format and two examples to copy.
+- **Ukrainian interface.** Contributed by [andruwa13](https://github.com/andruwa13) in [#121](https://github.com/engeldlgado/toshllm/pull/121).
+
+### Improved
+
+- **Chat: an answer that ends inside its reasoning keeps that reasoning under the warning instead of disappearing.** Reported in [#122](https://github.com/engeldlgado/toshllm/issues/122).
+- **Chat: the cards of MCP tool calls lay out their arguments and result line by line, with one line on what came back.**
+
+## [0.87.23] - 2026-10-12
+
+### Fixed
+
+- **LLMs: turbo values in the key-value cache no longer close the engine on Radeon Vega, RX 400/500, FirePro and their Radeon Pro versions.** The suggested q8_0 keys with turbo4 values quit once a chat passed a few thousand tokens. Reported in [#119](https://github.com/engeldlgado/toshllm/issues/119).
+- **Chat: an answer that calls a tool no longer shows up twice while the next step writes.** The step before the tool kept its bubble and repeated the new text word for word until the turn ended. Reported in [#117](https://github.com/engeldlgado/toshllm/issues/117).
+
 ## [0.87.22] - 2026-10-10
 
 ### Changed

@@ -823,7 +823,7 @@ private func exportMP4(_ result: GeneratedVideo) {
             await MainActor.run { NSWorkspace.shared.activateFileViewerSelecting([destination]) }
         } catch {
             await MainActor.run {
-                let alert = NSAlert(); alert.messageText = "ToshLLM"; alert.informativeText = error.localizedDescription
+                let alert = NSAlert(); alert.messageText = AppInfo.name; alert.informativeText = error.localizedDescription
                 alert.alertStyle = .warning; alert.runModal()
             }
         }

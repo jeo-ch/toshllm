@@ -206,6 +206,14 @@ def test_tool_messages_from_a_client_are_refused():
     assert reply["status"] == 400, reply
 
 
+def test_an_attachment_the_agent_cannot_read_goes_back_to_the_client():
+    for content in ([{"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}],
+                    [{"type": "text", "text": "Solve the equation in the photo."},
+                     {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}}]):
+        reply = agent.run({"request": {"messages": [{"role": "user", "content": content}]}, "base_url": "http://127.0.0.1:9"})
+        assert reply["tosh"]["outcome"] == "declined" and reply["choices"][0]["message"]["content"] == "", reply
+
+
 def test_the_texts_tosh_writes_follow_the_conversation():
     assert policy.language(["Calcula la integral de x^2 entre 0 y 1."]) == "es"
     assert policy.language(["Calculate the integral of x^2 from 0 to 1."]) == "en"

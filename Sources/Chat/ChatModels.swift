@@ -85,6 +85,9 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     /// What the model wrote before the tool calls of this round. It is not an answer, so it is never
     /// the body; it is dropped once a math call of the round does not succeed.
     var interim: String? = nil
+    /// An agent's request for the map of this answer, sent back as it came, and the map once fetched.
+    var mapRequest: String? = nil
+    var map: ChatMap? = nil
 
     var estimatedTokens: Int {
         let text = role == "assistant" ? parts.body + (settledInterim ?? "") : wireContent

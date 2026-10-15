@@ -274,8 +274,7 @@ struct ServerSettings {
     /// by port so independent servers don't overwrite each other's slot 0 / prefix
     /// files in a shared folder.
     static func slotCacheDir(port: Int) -> URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("ToshLLM/slots/\(port)/\(slotKVSignature())")
+        let dir = AppSupport.directory.appendingPathComponent("slots/\(port)/\(slotKVSignature())")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -414,7 +413,8 @@ struct ServerSettings {
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
         }
         let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled, scientific: scientificEnabled,
-                                                                agent: mathAgentEnabled, shared: MCPServerStore.load())
+                                                                agent: mathAgentEnabled, shared: MCPServerStore.load(),
+                                                                extensions: EngineExtensions.active())
         if !sympyArguments.isEmpty {
             if !args.contains("--jinja") { args.append("--jinja") }
             args += sympyArguments
@@ -487,7 +487,8 @@ struct ServerSettings {
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
         }
         let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled, scientific: scientificEnabled,
-                                                                agent: mathAgentEnabled, shared: MCPServerStore.load())
+                                                                agent: mathAgentEnabled, shared: MCPServerStore.load(),
+                                                                extensions: EngineExtensions.active())
         if !sympyArguments.isEmpty {
             if !args.contains("--jinja") { args.append("--jinja") }
             args += sympyArguments
@@ -502,13 +503,12 @@ struct ServerSettings {
     /// Same folder `ModelStore` scans (`~/models` or the custom override),
     /// resolved independently since `ServerController` has no `ModelStore`.
     static var modelsDirectory: URL {
-        let custom = UserDefaults.standard.string(forKey: SettingsKeys.modelsDir) ?? ""
+        let custom = ModelStore.customDirectoryPath
         return custom.isEmpty ? ModelStore.defaultDirectory : URL(fileURLWithPath: custom, isDirectory: true)
     }
 
     static func routerPresetPath(port: Int) -> URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("ToshLLM/router")
+        let dir = AppSupport.directory.appendingPathComponent("router")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("preset-\(port).ini")
     }
@@ -770,6 +770,8 @@ struct ServerSettings {
 
     var environment: [String: String] {
         var env = ProcessInfo.processInfo.environment
+        env.merge(EngineExtensions.environment()) { $1 }
+        env.merge(SymPyToolsService.engineEnvironment(MCPServerStore.load())) { $1 }
         // Finder-launched apps inherit a minimal PATH. Video input is decoded by
         // llama.cpp through ffmpeg/ffprobe, so expose their standard macOS locations.
         env["PATH"] = VideoRuntimeAvailability.augmentedPath(env["PATH"])
@@ -2645,7 +2647,7 @@ final class ServerController: ObservableObject {
     private func startDiscoveryIfNeeded(port: Int) {
         guard discoveryEnabled else { return }
         stopDiscovery()
-        let service = NetService(domain: "local.", type: "_http._tcp.", name: "ToshLLM API", port: Int32(port))
+        let service = NetService(domain: "local.", type: "_http._tcp.", name: "\(AppInfo.name) API", port: Int32(port))
         let txt: [String: Data] = [
             "path": Data("/v1".utf8),
             "protocol": Data("openai-compatible".utf8),

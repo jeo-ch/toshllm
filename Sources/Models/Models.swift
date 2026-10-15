@@ -596,8 +596,16 @@ final class ModelStore: ObservableObject {
     /// Where models are scanned, downloaded and deleted. Defaults to `~/models`,
     /// overridable from Settings (persisted in `SettingsKeys.modelsDir`).
     var directory: URL {
-        let custom = UserDefaults.standard.string(forKey: SettingsKeys.modelsDir) ?? ""
+        let custom = Self.customDirectoryPath
         return custom.isEmpty ? Self.defaultDirectory : URL(fileURLWithPath: custom, isDirectory: true)
+    }
+
+    /// The folder chosen in Settings. A build under another name takes ToshLLM's choice until it
+    /// has its own, so both apps share one set of models.
+    nonisolated static var customDirectoryPath: String {
+        let own = UserDefaults.standard.string(forKey: SettingsKeys.modelsDir) ?? ""
+        guard own.isEmpty, AppInfo.isRebranded else { return own }
+        return UserDefaults(suiteName: "dev.engel.toshllm")?.string(forKey: SettingsKeys.modelsDir) ?? ""
     }
 
     /// Preferred destination for image and video components and generated media.

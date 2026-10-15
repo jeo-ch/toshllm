@@ -25,18 +25,27 @@ struct ToolCallCard: View {
             ToolCallDetailView(call: call, presentation: presentation)
                 .padding(.top, 8)
         } label: {
-            HStack(spacing: 7) {
-                Label(presentation.title, systemImage: icon)
-                    .lineLimit(1)
-                if let path = presentation.path {
-                    Text(URL(fileURLWithPath: path).lastPathComponent)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 7) {
+                    Label(presentation.title, systemImage: icon)
                         .lineLimit(1)
+                    if let path = presentation.path {
+                        Text(URL(fileURLWithPath: path).lastPathComponent)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    if call.state == .running { ProgressView().controlSize(.mini) }
                 }
-                if call.state == .running { ProgressView().controlSize(.mini) }
+                .font(.callout.weight(.medium))
+                if let summary = call.summary {
+                    Text(summary)
+                        .font(.caption)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                        .padding(.leading, 22)
+                }
             }
-            .font(.callout.weight(.medium))
             .foregroundStyle(call.state == .failed || call.state == .denied ? .red : .secondary)
         }
         .padding(10)
@@ -46,6 +55,7 @@ struct ToolCallCard: View {
 }
 
 private struct ToolCallDetailView: View {
+    @EnvironmentObject private var loc: Localizer
     let call: ChatToolCall
     let presentation: ToolCallPresentation
 
@@ -91,6 +101,13 @@ private struct ToolCallDetailView: View {
             case .javaScript:
                 codePanel(presentation.code ?? "", language: "javascript")
                 consolePanel(title: "Console")
+            case .map:
+                if let code = presentation.code, !code.isEmpty {
+                    Label(code, systemImage: "map").font(.callout).textSelection(.enabled)
+                }
+                if let result = presentation.result, !result.isEmpty {
+                    Text(result).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                } else { emptyState(loc.t("Dibujando…", "Drawing…")) }
             case .dateTime:
                 if let result = presentation.result, !result.isEmpty {
                     Label(result, systemImage: "calendar.badge.clock")
@@ -107,8 +124,13 @@ private struct ToolCallDetailView: View {
             case .search:
                 SearchResultPanel(result: presentation.result)
             case .generic:
-                codePanel(call.arguments.isEmpty ? "{}" : call.arguments, language: "json")
-                resultText()
+                codePanel(presentation.code.flatMap { $0.isEmpty ? nil : $0 } ?? "{}", language: "json")
+                if let result = presentation.result, ToolCallPresentation.indented(result) != nil {
+                    Divider()
+                    codePanel(result, language: "json")
+                } else {
+                    resultText()
+                }
             }
         }
     }
@@ -295,10 +317,17 @@ enum TranscriptRow: Identifiable {
     case message(ChatMessage)
     case tools([ChatMessage])
 
-    var id: UUID {
+    enum ID: Hashable {
+        case message(UUID)
+        case tools(UUID)
+    }
+
+    /// A streaming message that ends in tool calls becomes a block; with the same identity SwiftUI
+    /// keeps its live bubble, which then mirrors the next pass.
+    var id: ID {
         switch self {
-        case .message(let message): message.id
-        case .tools(let rounds): rounds[0].id
+        case .message(let message): .message(message.id)
+        case .tools(let rounds): .tools(rounds[0].id)
         }
     }
 

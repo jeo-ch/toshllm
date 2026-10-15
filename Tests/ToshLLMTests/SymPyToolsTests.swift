@@ -129,6 +129,29 @@ final class SymPyToolsTests: XCTestCase {
             .contains("--mcp-agent-only"))
     }
 
+    func testAnApprovedRemoteServerReachesTheEngineThroughTheRelay() throws {
+        let resources = try makeRuntime()
+        var remote = MCPServer(name: "Cloud GIS", url: "https://mcp.example/mcp")
+        remote.transport = .serverSentEvents
+        remote.timeoutSeconds = 45
+        remote.engineAccess = true
+        var socket = MCPServer(name: "socket", url: "wss://mcp.example/ws")
+        socket.transport = .webSocket
+        socket.engineAccess = true
+        XCTAssertFalse(socket.sharedWithEngine, "the relay speaks http(s), not WebSocket")
+
+        let servers = try mcpServers(SymPyToolsService.serverArguments(enabled: false, resources: resources,
+                                                                       shared: [remote, socket]))
+        XCTAssertEqual(Set(servers.keys), ["agent", "cloud-gis"])
+        let entry = try XCTUnwrap(servers["cloud-gis"] as? [String: Any])
+        let runtime = resources.appendingPathComponent("tosh-sympy")
+        XCTAssertEqual(entry["command"] as? String, runtime.appendingPathComponent("python/bin/python3").path)
+        XCTAssertEqual(entry["args"] as? [String], ["-I", "-B", runtime.appendingPathComponent("tosh_sympy/remote.py").path,
+                                                    "--url", "https://mcp.example/mcp", "--timeout", "45",
+                                                    "--transport", "sse"])
+        XCTAssertEqual(SymPyToolsService.headersVariable(remote), "TOSH_MCP_HEADERS_CLOUD_GIS")
+    }
+
     func testTogglingApprovalAddsAndRemovesTheServer() throws {
         let resources = try makeRuntime()
         var server = sharedServer("City GIS", approved: false)
@@ -290,6 +313,15 @@ final class SymPyToolsTests: XCTestCase {
             }
         }
         XCTAssertEqual(shape, ["user", "tools 4", "assistant", "tool", "user"])
+    }
+
+    func testAMessageThatEndsInToolCallsChangesRowIdentity() {
+        var message = ChatMessage(role: "assistant", content: "")
+        let streaming = TranscriptRow.rows([message]).map(\.id)
+        message.toolCalls = [call("c1", result: integral)]
+        let round = TranscriptRow.rows([message]).map(\.id)
+        XCTAssertEqual(streaming, [.message(message.id)])
+        XCTAssertEqual(round, [.tools(message.id)])
     }
 
     private let refused = #"{"success": false, "operation": "limit", "error": {"code": "transcription_mismatch", "message": "Not computed."}}"#

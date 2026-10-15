@@ -67,9 +67,7 @@ final class AudioStudioController: ObservableObject {
     private static let recoverySaveDebounceMS = 400
 
     private static var recoveryURL: URL {
-        URL.applicationSupportDirectory
-            .appending(path: "ToshLLM", directoryHint: .isDirectory)
-            .appending(path: "AudioRecovery.json")
+        AppSupport.directory.appending(path: "AudioRecovery.json")
     }
 
     var isBusy: Bool {

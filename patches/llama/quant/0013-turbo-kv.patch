@@ -2132,10 +2132,10 @@ index a38bfb471..3e722b40c 100644
  
  // sh_acc needs about 33 KB on 64 lanes, over the 32 KB a GCN 1.0 threadgroup gets; these
  // twins halve the simdgroups and the host falls back to them when the full one is refused
-@@ -310,16 +357,18 @@ FA_AMD_PAIR_W64_LDS("kq8_0_vq4_0", block_q8_0, 8, dequantize_q8_0_t4_h2, block_q
+@@ -310,16 +357,17 @@ FA_AMD_PAIR_W64_LDS("kq8_0_vq4_0", block_q8_0, 8, dequantize_q8_0_t4_h2, block_q
  FA_AMD_PAIR_W64_LDS("kq4_0_vq8_0", block_q4_0, 8, dequantize_q4_0_t4, block_q8_0, 8, dequantize_q8_0_t4_h2)
  #undef FA_AMD_PAIR_W64_LDS
- #undef FA_AMD_INST_W64_LDS
+-#undef FA_AMD_INST_W64_LDS
  
  // DK=72 (vision towers: qwen3vl_merger and SigLIP are 1152/16). f16 only: 72 is
  // not a multiple of the 32-element quant block, so quantized K/V cannot occur.
@@ -2151,7 +2151,7 @@ index a38bfb471..3e722b40c 100644
  FA_AMD_INST_S   ( 80, 32, 16, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
  FA_AMD_INST_W64_S( 80, 16, 16, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
  FA_AMD_INST_S   (160, 16, 32, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
-@@ -327,53 +376,130 @@ FA_AMD_INST_W64_S(160,  8, 32, "kf16_vf16", half4, 1, dequantize_f16_t4, half4,
+@@ -327,53 +375,138 @@ FA_AMD_INST_W64_S(160,  8, 32, "kf16_vf16", half4, 1, dequantize_f16_t4, half4,
  FA_AMD_PAIR_W64("kq4_0_vq4_0", block_q4_0, 8, dequantize_q4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
  FA_AMD_PAIR_W64("kq8_0_vf16",  block_q8_0, 8, dequantize_q8_0_t4_h2, half4,      1, dequantize_f16_t4)
  FA_AMD_PAIR_W64("kq4_0_vf16",  block_q4_0, 8, dequantize_q4_0_t4, half4,      1, dequantize_f16_t4)
@@ -2201,14 +2201,21 @@ index a38bfb471..3e722b40c 100644
 +FA_AMD_TURBO("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
 +#undef FA_AMD_TURBO
 +// wave64 (GCN/Vega) parity; nsg=8. Untested on real hardware.
++// The 32 KB twins skip dk384, which fits as is, and dk640 has no split kernel to pair with.
 +#define FA_AMD_TURBO_W64(nm, kt, nkk, dkf, vt, nkv, dvf) \
 +    FA_AMD_INST_W64_S(128, 8,  8, nm, kt, nkk, dkf, vt, nkv, dvf) \
++    FA_AMD_INST_W64_WG(128, 8, 8, nm, kt, nkk, dkf, vt, nkv, dvf) \
 +    FA_AMD_INST_W64_WG(256, 8, 16, nm, kt, nkk, dkf, vt, nkv, dvf) \
 +    FA_AMD_INST_W64_S(256, 8, 16, nm, kt, nkk, dkf, vt, nkv, dvf) \
 +    FA_AMD_INST_W64_S(384, 8, 32, nm, kt, nkk, dkf, vt, nkv, dvf) \
 +    FA_AMD_INST_W64_WG(512, 8, 32, nm, kt, nkk, dkf, vt, nkv, dvf) \
 +    FA_AMD_INST_W64_S(512, 8, 32, nm, kt, nkk, dkf, vt, nkv, dvf) \
-+    FA_AMD_INST_W64_S(640, 8, 32, nm, kt, nkk, dkf, vt, nkv, dvf)
++    FA_AMD_INST_W64_S(640, 8, 32, nm, kt, nkk, dkf, vt, nkv, dvf) \
++    FA_AMD_INST_W64_LDS(128, 8,  8, nm, kt, nkk, dkf, vt, nkv, dvf) \
++    FA_AMD_INST_W64_LDS(256, 8, 16, nm, kt, nkk, dkf, vt, nkv, dvf) \
++    FA_AMD_INST_W64_LDS(512, 8, 32, nm, kt, nkk, dkf, vt, nkv, dvf) \
++template [[host_name("kernel_flash_attn_ext_vec_amd_dk640_" nm "_w64_lds32")]] kernel flash_attn_ext_vec_amd_t \
++    kernel_flash_attn_ext_vec_amd<640, 4, kt, nkk, dkf, vt, nkv, dvf, 64, 1, 32>;
  FA_AMD_TURBO_W64("kq8_0_vturbo2", block_q8_0, 8, dequantize_q8_0_t4_h2, block_turbo2_0, 32, dequantize_turbo2_0_t4)
  FA_AMD_TURBO_W64("kq8_0_vturbo3", block_q8_0, 8, dequantize_q8_0_t4_h2, block_turbo3_0, 32, dequantize_turbo3_0_t4)
  FA_AMD_TURBO_W64("kq8_0_vturbo4", block_q8_0, 8, dequantize_q8_0_t4_h2, block_turbo4_0, 32, dequantize_turbo4_0_t4)
@@ -2237,6 +2244,7 @@ index a38bfb471..3e722b40c 100644
 +FA_AMD_TURBO_W64("kturbo3_vq4_0", block_turbo3_0, 32, dequantize_turbo3_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
 +FA_AMD_TURBO_W64("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
 +#undef FA_AMD_TURBO_W64
++#undef FA_AMD_INST_W64_LDS
 +
  #undef FA_AMD_INST_W64
 +#undef FA_AMD_INST_W64_S
@@ -2282,7 +2290,7 @@ index a38bfb471..3e722b40c 100644
  
      // tail simdgroups past ne01 recompute the last query and skip the store;
      // they must stay for the cooperative loads and barriers
-@@ -388,19 +514,25 @@ kernel void kernel_flash_attn_ext_tile_amd(
+@@ -388,19 +521,25 @@ kernel void kernel_flash_attn_ext_tile_amd(
      device const char * kp = k + ikv2*args.nb12 + ikv3*args.nb13;
      device const char * vp = v + ikv2*args.nb22 + ikv3*args.nb23;
  
@@ -2308,7 +2316,7 @@ index a38bfb471..3e722b40c 100644
      const short tl = NW*sgitg + tiisg; // linear thread id for cooperative loads
  
      for (int j0 = 0; j0 < args.ne11; j0 += TK) {
-@@ -420,77 +552,93 @@ kernel void kernel_flash_attn_ext_tile_amd(
+@@ -420,77 +559,93 @@ kernel void kernel_flash_attn_ext_tile_amd(
              if (tiisg == 0 && mx > -1e30f) {
                  sh_any = 1;
              }
@@ -2402,7 +2410,7 @@ index a38bfb471..3e722b40c 100644
  #define FA_AMD_TILE_INST(dk, nm, kt, nkk, dkf, vt, nkv, dvf) \
  template [[host_name("kernel_flash_attn_ext_tile_amd_dk" #dk "_" nm)]] kernel flash_attn_ext_tile_amd_t \
      kernel_flash_attn_ext_tile_amd<dk, 16, kt, nkk, dkf, vt, nkv, dvf>;
-@@ -504,25 +652,60 @@ FA_AMD_TILE_PAIR("kf16_vf16",   half4,      1, dequantize_f16_t4,  half4,      1
+@@ -504,25 +659,60 @@ FA_AMD_TILE_PAIR("kf16_vf16",   half4,      1, dequantize_f16_t4,  half4,      1
  FA_AMD_TILE_PAIR("kq8_0_vq8_0", block_q8_0, 8, dequantize_q8_0_t4_h2, block_q8_0, 8, dequantize_q8_0_t4_h2)
  FA_AMD_TILE_PAIR("kq4_0_vq4_0", block_q4_0, 8, dequantize_q4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
  FA_AMD_TILE_PAIR("kq8_0_vf16",  block_q8_0, 8, dequantize_q8_0_t4_h2, half4,      1, dequantize_f16_t4)
@@ -2463,7 +2471,7 @@ index a38bfb471..3e722b40c 100644
      FA_AMD_TILE_INST_W64( 64, nm, kt, nkk, dkf, vt, nkv, dvf) \
      FA_AMD_TILE_INST_W64(128, nm, kt, nkk, dkf, vt, nkv, dvf) \
      FA_AMD_TILE_INST_W64(256, nm, kt, nkk, dkf, vt, nkv, dvf) \
-@@ -536,25 +719,60 @@ FA_AMD_TILE_PAIR_W64("kf16_vq8_0",  half4,      1, dequantize_f16_t4,  block_q8_
+@@ -536,25 +726,60 @@ FA_AMD_TILE_PAIR_W64("kf16_vq8_0",  half4,      1, dequantize_f16_t4,  block_q8_
  FA_AMD_TILE_PAIR_W64("kf16_vq4_0",  half4,      1, dequantize_f16_t4,  block_q4_0, 8, dequantize_q4_0_t4)
  
  // DK=72 vision towers; f16 only, see the vec kernel. TK = 4096/72 = 56 keeps
@@ -2524,7 +2532,7 @@ index a38bfb471..3e722b40c 100644
  // Prefill attention for AMD: BQ queries stay resident while the cache streams in
  // blocks of BK, so the score matrix never reaches device memory.
  //
-@@ -847,22 +1065,50 @@ FA_AMD_PF_PAIR("kf16_vf16",   half4,      1, dequantize_f16_t4,  half4,      1,
+@@ -847,22 +1072,50 @@ FA_AMD_PF_PAIR("kf16_vf16",   half4,      1, dequantize_f16_t4,  half4,      1,
  FA_AMD_PF_PAIR("kq8_0_vq8_0", block_q8_0, 8, dequantize_q8_0_t4_h2, block_q8_0, 8, dequantize_q8_0_t4_h2)
  FA_AMD_PF_PAIR("kq4_0_vq4_0", block_q4_0, 8, dequantize_q4_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
  FA_AMD_PF_PAIR("kq8_0_vf16",  block_q8_0, 8, dequantize_q8_0_t4_h2, half4,      1, dequantize_f16_t4)

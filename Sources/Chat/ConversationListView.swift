@@ -5,16 +5,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
-
 // MARK: - Conversation list (split-view sidebar)
-
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
-// Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
-// SPDX-License-Identifier: GPL-3.0-or-later
-
-import SwiftUI
-import AppKit
-import UniformTypeIdentifiers
 
 // MARK: - Conversation list (split-view sidebar)
 
@@ -214,7 +205,7 @@ struct ConversationListView: View {
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
 
-            Text("ToshLLM · macOS")
+            Text("\(AppInfo.name) · macOS")
                 .font(.system(size: 10, weight: .medium))
                 .tracking(1.5)
                 .foregroundStyle(.tertiary)
@@ -381,7 +372,7 @@ struct ConversationListView: View {
             archiveMessage = error.localizedDescription
             return
         }
-        switch FileExport.write(data, suggestedName: "ToshLLM-conversations.json") {
+        switch FileExport.write(data, suggestedName: "\(AppInfo.name)-conversations.json") {
         case .cancelled:
             break
         case .written:
@@ -401,7 +392,7 @@ struct ConversationListView: View {
             return
         }
         let jsonl = UTType(filenameExtension: "jsonl").map { [$0] } ?? [.json]
-        switch FileExport.write(data, suggestedName: "ToshLLM-conversations.jsonl", contentTypes: jsonl) {
+        switch FileExport.write(data, suggestedName: "\(AppInfo.name)-conversations.jsonl", contentTypes: jsonl) {
         case .cancelled:
             break
         case .written:

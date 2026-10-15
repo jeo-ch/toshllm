@@ -34,7 +34,8 @@ else:
 VERSION = "1.1.0"
 PROTOCOL = "2024-11-05"
 # numeric data is typed out in the request, so the scientific tools take a larger one
-MAX_REQUEST_BYTES = (1024 if TOOLSET in ("scientific", "agent") else 64) * 1024
+# an agent turn carries the user's attached images
+MAX_REQUEST_BYTES = (64 * 1024 if TOOLSET == "agent" else 1024 if TOOLSET == "scientific" else 64) * 1024
 MAX_REPLY_BYTES = 96 * 1024
 STARTUP_SECONDS = 30
 

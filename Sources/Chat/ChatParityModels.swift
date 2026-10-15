@@ -92,6 +92,8 @@ struct ChatToolCall: Identifiable, Codable, Equatable {
     var state: ChatToolCallState = .pending
     var startedAt: Date?
     var finishedAt: Date?
+    /// A readable line about the result, from the agent that ran the call.
+    var summary: String?
 }
 
 struct PendingToolPermission: Identifiable, Equatable {

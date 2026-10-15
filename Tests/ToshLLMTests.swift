@@ -2702,7 +2702,8 @@ final class CompactionTests: XCTestCase {
 
     func testReasoningOnlyLengthMessageExplainsTokenLimit() {
         let message = ChatStore.emptyResponseMessage(finishReason: "length")
-        XCTAssertTrue(message.contains("máximo de tokens"))
+        XCTAssertTrue(message.contains("máximo de tokens") || message.contains("max tokens"), message)
+        XCTAssertFalse(message.contains(" / "), "one language, not the pair")
     }
 }
 

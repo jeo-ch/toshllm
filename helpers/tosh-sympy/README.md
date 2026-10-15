@@ -217,6 +217,37 @@ below changes meaning or goes away; new fields may appear.
 the agent writes itself (a question back, the list of validated results) follow the language of
 the conversation, Spanish or English, and English when in doubt.
 
+### Another agent
+
+An extension can bring its own agent in place of this one (see
+[`docs/extensions.md`](../../docs/extensions.md#the-agent)). The engine calls its `run` tool with
+`request` (the client's request as sent), `base_url`, `api_key` and `agent_key`, and takes back a
+chat completion or `{"status": n, "error": {...}}`. The agent reaches the model and the tools
+through `base_url` with `X-Tosh-Agent: off`, so its passes never come back to it, and sends
+`X-Tosh-Agent-Key: <agent_key>` on `/tools`: without it the tools of servers started with
+`--mcp-agent-only` are neither listed nor run. Progress goes out as MCP progress notifications whose
+message is one event as above; for a `tool_call`, `state` is `completed` or `failed`, and an
+optional `summary` is one readable line about the result that the app shows on the call.
+A pass the agent streams goes out as `{"type": "delta", "content": "..."}` events (or
+`reasoning_content`), forwarded as the model writes; `{"type": "retract"}` after a pass that ended in tool
+calls tells the client to drop that text. The answer's content then starts with the text streamed since the
+last `retract`, and only the rest of it goes out at the end.
+
+When the app has tools of its own besides the math ones it sends `"tosh": {"client_tools": true}`.
+An agent may then hand back a turn that is outside its field: it answers with empty content,
+runs nothing and sets `"tosh": {"version": 1, "outcome": "declined"}`, and the app answers that
+turn with its own tools, as it would without the extension. Other clients never send the field,
+so they always get an answer.
+
+An agent can offer a map of an answer without delaying it: it adds `"map_request": {"show": bool, ...}`
+to the answer's `tosh`, without any geometry. A client sends that object back as
+`"tosh": {"map_request": {...}}` in a request of its own, and the agent answers it, with no model
+pass, with `"tosh": {"map": {"layers": [...]}}`: each layer a GeoJSON FeatureCollection in
+longitude/latitude with an optional `title`, `subtitle` (which of its features these are), `fields`
+(`[{"name", "alias"}]`, the order and names to show a clicked feature's attributes in), `complete` (false when not
+every feature fit) and `link` (`{"title", "url"}`, the layer in its own viewer). The app draws it at once when `show` is
+true, the request having asked for a map, and otherwise offers it under the answer.
+
 ### Direct calls
 
 `GET /tools` lists the ten tools with their schemas; `POST /tools`
@@ -249,12 +280,21 @@ curl http://127.0.0.1:8080/tools -H 'Content-Type: application/json' \
 Any OpenAI client works with the base URL `http://host:8080/v1`; to send the header, use its
 extra-headers option, or start the engine without `--mcp-agent-explicit`.
 
+## Remote MCP servers
+
+`llama-server` only starts servers it talks to over stdio, so a remote one approved for the agent
+runs through `tosh_sympy/remote.py`, a local server that relays every message to its URL over
+Streamable HTTP, or the older HTTP+SSE transport when the server lacks it. Headers come from
+environment variables the app sets on the engine (`--headers-env`, `--header-env Name=VAR`),
+never from arguments.
+
 ## Tests
 
 ```sh
 ./scripts/build-sympy.sh
 vendor/tosh-sympy/python/bin/python3 -I helpers/tosh-sympy/tests/test_helper.py
 vendor/tosh-sympy/python/bin/python3 -I helpers/tosh-sympy/tests/test_agent.py
+vendor/tosh-sympy/python/bin/python3 -I helpers/tosh-sympy/tests/test_remote.py
 TOSH_ENGINE_URL=http://127.0.0.1:8080 TOSH_ENGINE_AGENT=1 python3 helpers/tosh-sympy/tests/test_engine_api.py
 TOSH_SYMPY_E2E_MODEL=~/models/Qwen3-4B-Q4_K_M.gguf ./scripts/test.sh --filter SymPyEngine
 ```

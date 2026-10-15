@@ -18,6 +18,8 @@ struct ChatAdvancedSettingsSection: View {
     @AppStorage(SettingsKeys.mathAgentEnabled) private var mathAgentEnabled = false
     @AppStorage(SettingsKeys.mathToolsAllowed) private var mathToolsAllowed = true
     @AppStorage(SettingsKeys.memoryToolsEnabled) private var memoryToolsEnabled = true
+    @AppStorage(SettingsKeys.chatMapToolEnabled) private var chatMapToolEnabled = true
+    @AppStorage(SettingsKeys.chatRoadRouteEnabled) private var chatRoadRouteEnabled = true
     @AppStorage(SettingsKeys.toolResultLimit) private var toolResultLimit = ToolResultLimit.defaultCharacters
     @State private var blockedToolModels: [String] = ToolSupport.blockedModels
     @AppStorage(SettingsKeys.memoryArchiveHookURL) private var archiveHookURL = ""
@@ -387,6 +389,25 @@ struct ChatAdvancedSettingsSection: View {
                 }
             }
 
+            if destination == .agents {
+                ChatSettingsGroup(title: loc.t("Mapa", "Map")) {
+                    SettingsRow(icon: "map",
+                                title: loc.t("Mapa en el chat", "Map in the chat"),
+                                help: loc.t("Da al modelo una herramienta para dibujar puntos, líneas y áreas en un mapa bajo su respuesta. Lo que dibuja va con línea discontinua y marcado como posiciones aproximadas, porque las coordenadas pueden ser estimadas por el modelo; los mapas de datos que devuelve un agente, como el de ArcGIS, no cambian.",
+                                       "Gives the model a tool to draw points, lines and areas on a map under its answer. What it draws is dashed and marked as approximate positions, since the model may estimate the coordinates; maps of data an agent returns, such as ArcGIS's, are unchanged.")) {
+                        SettingsToggle(isOn: $chatMapToolEnabled)
+                    }
+                    if chatMapToolEnabled {
+                        SettingsRow(icon: "car",
+                                    title: loc.t("Rutas por carretera (Apple Maps)", "Road routes (Apple Maps)"),
+                                    help: loc.t("Cuando pides una ruta por carretera, la app te pide permiso para enviar los puntos a Apple Maps por internet, y dibuja el recorrido real con su distancia y su tiempo. Si no das permiso, o lo apagas aquí, el modelo traza una línea recta y lo dice.",
+                                                "When you ask for a route by road, the app asks your permission to send the points to Apple Maps over the internet, and draws the real route with its distance and time. Without your permission, or with this off, the model draws a straight line and says so.")) {
+                            SettingsToggle(isOn: $chatRoadRouteEnabled)
+                        }
+                    }
+                }
+            }
+
             if destination == .general {
                 ChatSettingsGroup(title: loc.t("Adjuntos", "Attachments")) {
                     integerStepper(loc.t("Texto pegado a archivo", "Paste text to file"),
@@ -523,7 +544,7 @@ struct ChatAdvancedSettingsSection: View {
         typicalP = 1; presencePenalty = 0; frequencyPenalty = 0; dryMultiplier = 0
         dryBase = 1.75; dryAllowedLength = 2; dryPenaltyLastN = 0; samplers = ""
         backendSampling = false; customJSON = ""; agenticMaxTurns = 10; pasteLongTextLength = 2500
-        maxImageMegapixels = 1; pdfAsImages = false
+        maxImageMegapixels = ProductDefaults.double(SettingsKeys.chatMaxImageMegapixels, or: 1); pdfAsImages = false
         autoCompact = true; smoothTyping = true; agentToolsEnabled = false; jsSandboxEnabled = false
         sympyEnabled = false; scientificEnabled = false; mathAgentEnabled = false; mathToolsAllowed = true
         memoryToolsEnabled = true; toolsRuntime = ""; toolResultLimit = ToolResultLimit.defaultCharacters
