@@ -102,6 +102,11 @@ final class UpdateChecker: ObservableObject {
             return failCheck("Respuesta sin número de versión / reply carried no version")
         }
         checkError = nil
+        // The findings of this check replace the previous ones. Leaving the last
+        // DMG standing meant a release whose asset no longer matched this channel
+        // (or a listing without one) still installed the old build.
+        dmgURL = nil
+        checksumsURL = nil
 
         let remote = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
         if Self.isVersion(remote, newerThan: AppInfo.version) {
@@ -410,8 +415,7 @@ final class UpdateChecker: ObservableObject {
                 let open = Process()
                 open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
                 open.arguments = [url.path]
-                try? open.run()
-                NSApp.terminate(nil)
+                Self.launchThenQuit(open)
             }
         }
         do {
@@ -421,9 +425,22 @@ final class UpdateChecker: ObservableObject {
             let open = Process()
             open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
             open.arguments = [url.path]
-            try? open.run()
-            NSApp.terminate(nil)
+            Self.launchThenQuit(open)
         }
+    }
+
+    /// Starts the new copy and quits this one only once it is running.
+    ///
+    /// Quitting unconditionally meant a failed launch left nothing at all: the
+    /// new copy never started and this one was already gone.
+    @MainActor private static func launchThenQuit(_ open: Process) {
+        do {
+            try open.run()
+        } catch {
+            AppLog.updates.error("relaunch failed to launch the new copy: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        NSApp.terminate(nil)
     }
 
     // MARK: release notes

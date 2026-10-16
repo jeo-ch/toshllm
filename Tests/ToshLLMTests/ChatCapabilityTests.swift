@@ -97,4 +97,38 @@ final class ChatCapabilityTests: XCTestCase {
         XCTAssertEqual(ReasoningEffortDetector.closest(to: "minimal", in: ridge), "low")
         XCTAssertNil(ReasoningEffortDetector.closest(to: "brisk", in: ridge))
     }
+
+    // MARK: tool dispatch allowlist
+
+    private func tool(_ name: String) -> BuiltinToolInfo {
+        try! BuiltinToolInfo(displayName: name, name: name, writesData: true, definition: [:])
+    }
+
+    /// A tool the model names but that was filtered out of the advertised set must
+    /// not be executed: `execute` posts the bare name to the engine, so without
+    /// this check the settings filters only affect what the model is shown.
+    func testOnlyAdvertisedToolsMayBeDispatched() {
+        let advertised = [tool("read_file"), tool("sympy_solve")]
+        XCTAssertTrue(ChatStore.isDispatchable("read_file", among: advertised))
+        XCTAssertFalse(ChatStore.isDispatchable("exec_shell_command", among: advertised))
+    }
+
+    /// `ToolSupport.isBlocked` clears the advertised set entirely; a model that
+    /// emits a call anyway must still be refused.
+    func testBlockedModelRefusesEveryTool() {
+        XCTAssertFalse(ChatStore.isDispatchable("read_file", among: []))
+        XCTAssertFalse(ChatStore.isDispatchable("exec_shell_command", among: []))
+    }
+
+    /// The user's per-tool selection and the cwd/write safety filter both work by
+    /// removing entries, so a removed tool must no longer dispatch.
+    func testFilteredOutToolNoLongerDispatches() {
+        let afterFilter = [tool("read_file")]
+        XCTAssertFalse(ChatStore.isDispatchable("write_file", among: afterFilter))
+    }
+
+    func testDispatchIsMatchedByNameOnly() {
+        XCTAssertTrue(ChatStore.isDispatchable("read_file", among: [tool("read_file")]))
+        XCTAssertFalse(ChatStore.isDispatchable("Read_File", among: [tool("read_file")]))
+    }
 }

@@ -2078,23 +2078,25 @@ final class ServerController: ObservableObject {
     /// `args` and `env` come from the caller: `ServerSettings.arguments` and
     /// `.environment` each walk the model directory and stat several files, and
     /// this used to make launch recompute both after already building the process.
+    /// Strips the secrets that travel in an argument list before it is written
+    /// anywhere durable.
+    ///
+    /// Both spellings of `--api-key`, and every occurrence: llama.cpp accepts
+    /// `--api-key=x` as well as `--api-key x`, and the joined form is the natural
+    /// thing to type in Extra arguments. Extra arguments can also carry a second
+    /// key, and only redacting the first is no redaction at all.
+    nonisolated static func redactArguments(_ items: [String]) -> [String] {
+        var out = items
+        for i in out.indices {
+            if out[i] == "--api-key", i + 1 < out.count { out[i + 1] = "***" }
+            if out[i].hasPrefix("--api-key=") { out[i] = "--api-key=***" }
+        }
+        return out.map { $0.replacingOccurrences(of: SymPyToolsService.trustKey, with: "***") }
+    }
+
     nonisolated static func startupBanner(settings: ServerSettings, args: [String],
                                           env: [String: String]) -> String {
-        func redact(_ items: [String]) -> [String] {
-            // Both spellings, and every occurrence. llama.cpp accepts
-            // `--api-key=x` as well as `--api-key x`, and the joined form is the
-            // natural thing to type in Extra arguments — so the banner ended up
-            // carrying the real key into the rotating log and the Logs tab, which
-            // has a copy button.
-            var out = items
-            // Every --api-key, not just the first: extra arguments can carry a
-            // second one, and only the first reaching the log is no redaction at all.
-            for i in out.indices {
-                if out[i] == "--api-key", i + 1 < out.count { out[i + 1] = "***" }
-                if out[i].hasPrefix("--api-key=") { out[i] = "--api-key=***" }
-            }
-            return out.map { $0.replacingOccurrences(of: SymPyToolsService.trustKey, with: "***") }
-        }
+        func redact(_ items: [String]) -> [String] { redactArguments(items) }
         let engine: String
         engine = settings.serverBinary == ServerSettings.defaultBinary ? "bundled (official)" : "external"
         // Device order changes between boots, so an index alone does not identify a

@@ -490,7 +490,7 @@ struct ServerLogView: View {
         ## Configuration
         model: \(URL(fileURLWithPath: currentSettings.modelPath).lastPathComponent)
         engine: \(currentSettings.serverBinary)
-        args: \(currentSettings.arguments.joined(separator: " "))
+        args: \(ServerController.redactArguments(currentSettings.arguments).joined(separator: " "))
         \(extra.map { "\n\($0)\n" } ?? "")
         ## Recent log
         \(logTail.isEmpty ? server.log : logTail)

@@ -12,6 +12,8 @@ actor ToshMCPService {
         var sessionID: String?
         var nextID = 1
         var webSocket: URLSessionWebSocketTask?
+        var socketReader: Task<Void, Never>?
+        var socketWaiters: [Int: CheckedContinuation<WireResponse, Error>] = [:]
         var legacyEndpoint: URL?
         var stdio: MCPStdioTransport?
     }
@@ -208,6 +210,10 @@ actor ToshMCPService {
             return
         }
         session.webSocket?.cancel(with: .goingAway, reason: nil)
+        session.socketReader?.cancel()
+        // The session is already gone, so the waiters have to be released from
+        // this copy; anything left waiting would never be resumed.
+        for waiter in session.socketWaiters.values { waiter.resume(throwing: CancellationError()) }
         legacyListeners.removeValue(forKey: serverID)?.cancel()
         legacyReady.removeValue(forKey: serverID)?.resume(throwing: CancellationError())
         for continuation in legacyResponses.removeValue(forKey: serverID)?.values ?? [:].values {
@@ -370,20 +376,61 @@ actor ToshMCPService {
 
     private func sendWebSocket(serverID: UUID, payload: [String: Any], id: Int) async throws -> WireResponse {
         guard let socket = sessions[serverID]?.webSocket else { throw MCPError.invalidResponse }
+        startSocketReader(serverID: serverID, socket: socket)
         let data = try JSONSerialization.data(withJSONObject: payload)
-        try await socket.send(.data(data))
-        while true {
-            let message = try await socket.receive()
-            let value: Data
-            switch message {
-            case let .data(data): value = data
-            case let .string(text): value = Data(text.utf8)
-            @unknown default: continue
+        // Registered before the send, not after: a reply that arrives in between
+        // would find no waiter and be dropped.
+        return try await withCheckedThrowingContinuation { continuation in
+            sessions[serverID]?.socketWaiters[id] = continuation
+            Task { [weak self] in
+                do { try await socket.send(.data(data)) }
+                catch { await self?.failSocketWaiter(serverID: serverID, id: id, error: error) }
             }
-            guard let object = try? JSONSerialization.jsonObject(with: value) as? [String: Any]
-            else { continue }
-            if (object["id"] as? NSNumber)?.intValue == id { return WireResponse(object: object) }
         }
+    }
+
+    /// A single reader owns the socket and routes each reply by id.
+    ///
+    /// Reading inside the call meant whichever call happened to receive a
+    /// response consumed it: a reply addressed to another id was dropped, and
+    /// its caller waited forever.
+    private func startSocketReader(serverID: UUID, socket: URLSessionWebSocketTask) {
+        guard sessions[serverID]?.socketReader == nil else { return }
+        sessions[serverID]?.socketReader = Task { [weak self] in
+            while !Task.isCancelled {
+                let message: URLSessionWebSocketTask.Message
+                do { message = try await socket.receive() }
+                catch {
+                    await self?.failSocketWaiters(serverID: serverID, error: error)
+                    return
+                }
+                let value: Data
+                switch message {
+                case let .data(data): value = data
+                case let .string(text): value = Data(text.utf8)
+                @unknown default: continue
+                }
+                guard let object = try? JSONSerialization.jsonObject(with: value) as? [String: Any],
+                      let id = (object["id"] as? NSNumber)?.intValue else { continue }
+                await self?.resumeSocketWaiter(serverID: serverID, id: id, object: object)
+            }
+        }
+    }
+
+    private func resumeSocketWaiter(serverID: UUID, id: Int, object: [String: Any]) {
+        sessions[serverID]?.socketWaiters
+            .removeValue(forKey: id)?
+            .resume(returning: WireResponse(object: object))
+    }
+
+    private func failSocketWaiter(serverID: UUID, id: Int, error: Error) {
+        sessions[serverID]?.socketWaiters.removeValue(forKey: id)?.resume(throwing: error)
+    }
+
+    private func failSocketWaiters(serverID: UUID, error: Error) {
+        let waiters = sessions[serverID]?.socketWaiters ?? [:]
+        sessions[serverID]?.socketWaiters = [:]
+        for waiter in waiters.values { waiter.resume(throwing: error) }
     }
 
     private func startLegacySSE(_ server: MCPServer) async throws {

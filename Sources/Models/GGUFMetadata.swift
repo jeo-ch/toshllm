@@ -451,6 +451,11 @@ enum GGUFMetadataCache {
         while searchStart <= data.count - needle.count,
               let match = data.range(of: needle, in: searchStart..<data.count) {
             defer { searchStart = match.upperBound }
+            // Every candidate name is preceded by an 8-byte length prefix, so no
+            // name can start before byte 8. A crafted header may place ".nextn."
+            // inside the first eight bytes, and `max(8, ...) > match.lowerBound`
+            // would then build a descending closed range (`8...4`), which traps.
+            guard match.lowerBound >= 8 else { continue }
             let earliestName = max(8, match.lowerBound - 256)
             for nameStart in earliestName...match.lowerBound {
                 let lengthOffset = nameStart - 8
@@ -508,8 +513,25 @@ enum GGUFMetadataCache {
             guard let tensorType = cursor.readUInt32(),
                   cursor.readUInt64() != nil else { return empty }
             if name.hasPrefix("blk.0.") {
-                let bytes = UInt64(Double(elements) * ggufBytesPerElement(tensorType))
-                if name.contains("_exps.") { expertBytes &+= bytes } else { otherBytes &+= bytes }
+                // The tensor descriptors are untrusted. `elements` is accumulated
+                // with a wrapping multiply, and bytes-per-element is fractional
+                // for most quants, so the product can leave UInt64's range — where
+                // `UInt64(Double)` traps. Downstream only reads these as Double
+                // byte estimates (Server.swift), so saturate instead of trapping.
+                let product = Double(elements) * ggufBytesPerElement(tensorType)
+                let bytes: UInt64
+                if product.isFinite, product >= 0, product < 0x1p64 {
+                    bytes = UInt64(product)
+                } else {
+                    bytes = UInt64.max
+                }
+                if name.contains("_exps.") {
+                    let (sum, overflow) = expertBytes.addingReportingOverflow(bytes)
+                    expertBytes = overflow ? UInt64.max : sum
+                } else {
+                    let (sum, overflow) = otherBytes.addingReportingOverflow(bytes)
+                    otherBytes = overflow ? UInt64.max : sum
+                }
             }
             hasNextN = hasNextN || name.contains(".nextn.")
             hasTurboQuant = hasTurboQuant || tensorType == 45 || tensorType == 46

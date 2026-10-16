@@ -487,9 +487,8 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
             case .unverified:
                 // Nothing to check against. Keep the download — the size is unknown,
                 // not wrong — but do not let the UI call it verified.
-                try? FileManager.default.removeItem(at: destination)
                 do {
-                    try FileManager.default.moveItem(at: staging, to: destination)
+                    try Self.installStaged(staging, at: destination)
                     self.integrityVerified = false
                     self.progress = 1
                     self.phase = .finished
@@ -500,9 +499,8 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
                     self.session.finishTasksAndInvalidate()
                 }
             case .digestVerified, .sizeVerified:
-                try? FileManager.default.removeItem(at: destination)
                 do {
-                    try FileManager.default.moveItem(at: staging, to: destination)
+                    try Self.installStaged(staging, at: destination)
                     if let expected { ModelStore.recordDigest(expected, forFile: destination.lastPathComponent) }
                     self.integrityVerified = true
                     self.progress = 1
@@ -519,6 +517,21 @@ final class DownloadItem: NSObject, ObservableObject, Identifiable, URLSessionDa
                 self.phase = .failed(Self.integrityFailureMessage(reason))
                 self.session.finishTasksAndInvalidate()
             }
+        }
+    }
+
+    /// Moves the staged download to `destination`, replacing any existing file.
+    ///
+    /// Deleting the old file and then moving is not atomic: when the move fails
+    /// the previous model is already gone, and a re-download is many gigabytes.
+    /// `replaceItemAt` swaps the two in one step, so a failure leaves the file
+    /// the user already had untouched.
+    nonisolated static func installStaged(_ staging: URL, at destination: URL) throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: destination.path) {
+            _ = try fm.replaceItemAt(destination, withItemAt: staging)
+        } else {
+            try fm.moveItem(at: staging, to: destination)
         }
     }
 

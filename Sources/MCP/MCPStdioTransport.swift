@@ -130,20 +130,25 @@ actor MCPStdioTransport {
             try stdin.fileHandleForWriting.write(contentsOf: line)
             return [:]
         }
-        return try await withThrowingTaskGroup(of: [String: Any].self) { group in
-            group.addTask {
-                try await withCheckedThrowingContinuation { continuation in
-                    Task { await self.register(id: id, continuation: continuation, line: line) }
-                }
+        return try await withCheckedThrowingContinuation { continuation in
+            Task { await self.register(id: id, continuation: continuation, line: line) }
+            Task { [name] in
+                try? await Task.sleep(for: .seconds(max(5, timeout)))
+                await self.expire(id: id, name: name)
             }
-            group.addTask {
-                try await Task.sleep(for: .seconds(max(5, timeout)))
-                throw MCPError.launchFailed("\(self.name) did not answer in time.")
-            }
-            defer { group.cancelAll() }
-            guard let first = try await group.next() else { throw MCPError.invalidResponse }
-            return first
         }
+    }
+
+    /// Gives up on a request the server never answered.
+    ///
+    /// `removeValue` makes this a single winner against the reply path and the
+    /// write-failure path: whoever reaches it first resumes the continuation and
+    /// the rest find nothing left. Cancelling the registering task instead did
+    /// nothing, because a checked continuation is not resumed by cancellation —
+    /// so a timeout hung rather than threw.
+    private func expire(id: Int, name: String) {
+        pending.removeValue(forKey: id)?
+            .resume(throwing: MCPError.launchFailed("\(name) did not answer in time."))
     }
 
     private func register(id: Int, continuation: CheckedContinuation<[String: Any], Error>, line: Data) {

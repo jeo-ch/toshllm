@@ -1429,6 +1429,13 @@ final class ChatStore: ObservableObject {
             do {
                 let arguments = try ChatToolsService.parseArguments(request.arguments)
                 guard let context = self?.agentContext else { return }
+                guard Self.isDispatchable(request.name, among: context.tools) else {
+                    self?.completeToolCall(request,
+                                           result: "The tool \(request.name) is not enabled in this conversation.",
+                                           state: .failed)
+                    self?.advanceToolPermissions(conversation: request.conversationID)
+                    return
+                }
                 let result: ToolExecutionResult
                 if let tool = context.tools.first(where: { $0.name == request.name }),
                    let serverID = tool.mcpServerID, let remoteName = tool.remoteName {
@@ -1652,6 +1659,9 @@ final class ChatStore: ObservableObject {
         watchdog = nil
         ServerManager.shared.active.stop()
         lastError = Self.stallMessage
+        // The turn is over here, not merely paused: a call left in `.pending`
+        // would strand its card in the transcript with nothing left to settle it.
+        if let id = generatingConvID ?? currentID { interruptPendingToolCalls(conversation: id) }
         generating = false
         generatingConvID = nil
         live.reset()
@@ -1660,6 +1670,15 @@ final class ChatStore: ObservableObject {
 
     nonisolated static var stallMessage: String {
         "El motor dejó de responder y se detuvo para liberar memoria. Suele pasar con modelos MoE grandes en GPU AMD: usa un modelo denso (8B) o sube 'Expertos MoE en CPU'. / The engine stopped responding and was stopped to free memory. This happens with large MoE models on AMD GPUs: use a dense model (8B) or raise 'MoE experts on CPU'."
+    }
+
+    /// The set advertised to the model is the allowlist for what may run. A call
+    /// naming anything else is either a hallucination or a tool a filter meant to
+    /// hide, and must not reach the engine: `ChatToolsService.execute` posts the
+    /// bare name, so the settings filters that build `availableTools` would
+    /// otherwise only affect what the model is shown.
+    nonisolated static func isDispatchable(_ name: String, among tools: [BuiltinToolInfo]) -> Bool {
+        tools.contains { $0.name == name }
     }
 
     /// Tools the chat runs itself, beyond the math ones the agent covers; the map tools never count, so turning
@@ -2110,6 +2129,9 @@ final class ChatStore: ObservableObject {
     }
 
     func stop() {
+        // Ending the turn by hand has to settle anything still waiting, exactly
+        // as a new user message does; otherwise the cards keep spinning.
+        if let id = generatingConvID ?? currentID { interruptPendingToolCalls(conversation: id) }
         watchdog?.cancel()
         watchdog = nil
         task?.cancel()

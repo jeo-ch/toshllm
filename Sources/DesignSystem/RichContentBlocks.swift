@@ -242,8 +242,22 @@ struct RichWebView: NSViewRepresentable {
         "\(String(describing: kind)):\(fontSize):\(bold):\(source.hashValue)"
     }
 
+    /// JSON-encodes `source` for interpolation inside a `<script>` element.
+    ///
+    /// Foundation turns `/` into `\/`, which currently stops the HTML parser
+    /// from seeing a closing `</script>`, but that escaping is undocumented and
+    /// has differed across implementations. Escaping `<` explicitly means no
+    /// closing tag can be formed no matter what the encoder does, so model
+    /// output can never break out of this element. `\u003C` is a valid JSON
+    /// string escape and decodes back to `<` in JavaScript.
+    static func scriptJSON(_ source: String) -> String {
+        guard let data = try? JSONEncoder().encode(source),
+              var text = String(data: data, encoding: .utf8) else { return "\"\"" }
+        return text.replacingOccurrences(of: "<", with: "\\u003C")
+    }
+
     static func html(source: String, kind: RichContentKind, fontSize: CGFloat = 14, bold: Bool = false) -> String {
-        let encoded = (try? String(data: JSONEncoder().encode(source), encoding: .utf8)) ?? "\"\""
+        let encoded = scriptJSON(source)
         let payload: String
         switch kind {
         case .math:
@@ -296,7 +310,7 @@ struct RichWebView: NSViewRepresentable {
         case .svg:
             // An SVG image document cannot execute active markup in the host page.
             let imageURL = RichContentIsolation.svgDataURL(source)
-            let imageEncoded = (try? String(data: JSONEncoder().encode(imageURL), encoding: .utf8)) ?? "\"\""
+            let imageEncoded = scriptJSON(imageURL)
             payload = """
             <script>
             const image = document.createElement('img');

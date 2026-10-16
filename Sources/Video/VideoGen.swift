@@ -645,6 +645,15 @@ final class VideoGenPool: ObservableObject {
 enum VideoExporter {
     enum ExportError: Error { case noFrames, writerFailed(String) }
 
+    /// Whether the export loop should keep waiting for the input to drain.
+    ///
+    /// The input becomes ready asynchronously, so the loop waits. Once the writer
+    /// has failed it never becomes ready again, and a wait that only checked
+    /// readiness would never end.
+    nonisolated static func shouldWaitForInput(writerStatus: AVAssetWriter.Status, inputReady: Bool) -> Bool {
+        !inputReady && writerStatus != .failed
+    }
+
     static func writeMP4(frames: [NSImage], fps: Int, to url: URL) throws {
         guard let first = frames.first else { throw ExportError.noFrames }
         // H.264 needs even dimensions.
@@ -674,9 +683,14 @@ enum VideoExporter {
         for (i, image) in frames.enumerated() {
             guard let buffer = pixelBuffer(from: image, width: w, height: h) else { continue }
             // the input drains asynchronously; spin instead of dropping frames
-            while !input.isReadyForMoreMediaData { usleep(2000) }
-            adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(i),
-                                                                timescale: CMTimeScale(max(1, fps))))
+            while Self.shouldWaitForInput(writerStatus: writer.status,
+                                          inputReady: input.isReadyForMoreMediaData) {
+                usleep(2000)
+            }
+            // A refused append means the session is over; carrying on would only
+            // wait on an input that will never take another frame.
+            let time = CMTime(value: CMTimeValue(i), timescale: CMTimeScale(max(1, fps)))
+            if !adaptor.append(buffer, withPresentationTime: time) { break }
         }
         input.markAsFinished()
 
