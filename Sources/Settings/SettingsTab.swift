@@ -130,9 +130,6 @@ struct SettingsView: View {
         ModelTraitsCache.cached(for: modelPath)?.hasVision == true
     }
     private var splitSelection: [Int] { ServerSettings.gpuList(fromCSV: gpuListCSV) }
-    private var peerGroupShortcuts: [(label: String, indices: [Int])] {
-        GPUPeerTopology.groups(of: hardware.gpus)
-    }
     /// GPUs the split will actually use, which is what decides whether a tensor split
     /// still holds its generation speed.
     private var splitTargetCount: Int {
@@ -1290,13 +1287,6 @@ struct InfoTip: View {
             .accessibilityLabel(Text(text))
     }
 
-    private func scheduleDismiss(after delay: TimeInterval) {
-        hoverWork?.cancel()
-        hoverWork = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(delay))
-            if !pinned { shown = false }
-        }
-    }
 }
 
 extension View {
@@ -1313,8 +1303,6 @@ private struct InfoTipRow<Content: View>: View {
     let revealOnHover: Bool
     @ViewBuilder var content: Content
     @State private var hovering = false
-    @State private var hideWork: DispatchWorkItem?
-
     var body: some View {
         HStack(spacing: 8) {
             content

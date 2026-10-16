@@ -40,9 +40,6 @@ final class PluginManager: ObservableObject, PluginManagerProtocol {
     /// Registered services for dependency injection.
     private var services: [String: Any] = [:]
     
-    /// Event handlers by plugin ID.
-    private var eventHandlers: [String: [PluginEvent]] = [:]
-    
     // MARK: - Initialization
     
     private init() {}

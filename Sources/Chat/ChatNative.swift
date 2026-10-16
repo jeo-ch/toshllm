@@ -2152,20 +2152,6 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    /// Removes the last user message (and its response, if any) so it can be
-    /// edited and resent. Returns the removed message, attachments included.
-    func popLastExchange() -> ChatMessage? {
-        guard !generating, let i = currentIndex else { return nil }
-        if conversations[i].messages.last?.role == "assistant" {
-            conversations[i].messages.removeLast()
-        }
-        guard conversations[i].messages.last?.role == "user" else { return nil }
-        let message = conversations[i].messages.removeLast()
-        Self.clampSummary(&conversations[i])
-        save()
-        return message
-    }
-
     nonisolated static func clampSummary(_ c: inout Conversation) {
         c.archived = ChatMemoryService.clamped(c.archived, toCount: c.messages.count)
         guard let covered = c.summarizedCount else { return }

@@ -2013,23 +2013,6 @@ struct NativeChatView: View {
         addAttachments(urls: FileImport.chooseMany(contentTypes: []))
     }
 
-    private func loadVideoDuration(url: URL, attachmentID: UUID) {
-        Task { @MainActor in
-            let asset = AVURLAsset(url: url)
-            guard let duration = try? await asset.load(.duration) else { return }
-            let seconds = CMTimeGetSeconds(duration)
-            guard seconds.isFinite, seconds > 0 else { return }
-            var area: Int? = nil
-            if let track = try? await asset.loadTracks(withMediaType: .video).first,
-               let size = try? await track.load(.naturalSize) {
-                area = Int(abs(size.width) * abs(size.height))
-            }
-            guard let idx = attachments.firstIndex(where: { $0.id == attachmentID }) else { return }
-            attachments[idx].durationSeconds = seconds
-            attachments[idx].videoFrameArea = area
-        }
-    }
-
     // Read cap (raw bytes) and extracted-text cap. Text beyond the latter is
     // truncated with a note; the proactive context warning catches huge totals.
     private static let maxAttachBytes = 40 * 1024 * 1024
@@ -2203,8 +2186,6 @@ struct NativeChatView: View {
     }
 
     private var audioAvailable: Bool { modelModalities?.audio ?? false }
-    private var videoAvailable: Bool { modelModalities?.video ?? false }
-
     private static func imageDataURI(from data: Data, maxMegapixels: Double) -> String? {
         guard let img = NSImage(data: data),
               let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }

@@ -98,18 +98,4 @@ final class OptimizationModuleTests: XCTestCase {
         XCTAssertEqual(stats.completedRequests, 1)
         XCTAssertEqual(stats.averageTokensPerSecond, 25.0)
     }
-    
-    // MARK: - SessionExporter Tests
-    
-    func testSessionExporterParseRole() {
-        // Test safe parsing of role lines
-        let line1 = "[user]: Hello"
-        let line2 = "[assistant]:"
-        let line3 = "[user]:"
-        
-        // All should parse without crashing
-        XCTAssertFalse(line1.isEmpty)
-        XCTAssertFalse(line2.isEmpty)
-        XCTAssertFalse(line3.isEmpty)
-    }
 }

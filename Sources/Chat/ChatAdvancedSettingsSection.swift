@@ -59,13 +59,6 @@ struct ChatAdvancedSettingsSection: View {
     @AppStorage(SettingsKeys.chatPDFAsImages) private var pdfAsImages = false
     @AppStorage(SettingsKeys.chatFontScale) private var chatFontScale = 1.0
     @State private var confirmDeleteAll = false
-    @State private var promptExpanded = true
-    @State private var samplingExpanded = true
-    @State private var penaltiesExpanded = false
-    @State private var dynamicExpanded = false
-    @State private var dryExpanded = false
-    @State private var agentsExpanded = false
-    @State private var customExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {

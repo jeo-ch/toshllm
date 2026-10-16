@@ -710,17 +710,6 @@ private struct ServerConfigurationWorkspace: View {
     }
 
 
-    private func hardwareTile(_ icon: String, _ title: String, _ detail: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon).font(.title3).foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                Text(detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-            }
-        }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-            .background(WorkspaceStyle.inset, in: RoundedRectangle(cornerRadius: 8))
-    }
-
     private func applyProfile(_ profile: Profile) {
         if server.profile == nil {
             profileStore.apply(profile)
