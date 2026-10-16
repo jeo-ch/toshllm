@@ -599,11 +599,19 @@ struct ConversationListView: View {
                 NSPasteboard.general.setString(chat.exportText(c, loc), forType: .string)
             }
             Button(loc.t("Exportar a Markdown…", "Export to Markdown…")) {
-                let panel = NSSavePanel()
-                panel.nameFieldStringValue = chat.displayTitle(c)
-                    .replacingOccurrences(of: "/", with: "-") + ".md"
-                if panel.runModal() == .OK, let url = panel.url {
-                    try? chat.exportText(c, loc).write(to: url, atomically: true, encoding: .utf8)
+                // Through FileExport like the archive buttons above: the panel
+                // closes before the write runs, so a failure that is not reported
+                // leaves the user believing the file is there.
+                let name = chat.displayTitle(c).replacingOccurrences(of: "/", with: "-") + ".md"
+                switch FileExport.write(chat.exportText(c, loc), suggestedName: name,
+                                        contentTypes: [.plainText]) {
+                case .cancelled:
+                    break
+                case .written:
+                    archiveMessage = loc.t("Conversación exportada correctamente.",
+                                           "Conversation exported successfully.")
+                case .failed(let message):
+                    archiveMessage = message
                 }
             }
             Button(loc.t("Eliminar", "Delete"), role: .destructive) { chat.delete(c) }

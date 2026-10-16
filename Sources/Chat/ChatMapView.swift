@@ -221,11 +221,20 @@ struct ChatMapSection: View {
         }
         let collection: [String: Any] = ["type": "FeatureCollection", "features": features]
         guard let data = try? JSONSerialization.data(withJSONObject: collection, options: [.prettyPrinted]) else { return }
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = (map.layers.first?.title ?? "map") + ".geojson"
-        panel.allowedContentTypes = [UTType(filenameExtension: "geojson") ?? .json]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? data.write(to: url)
+        // Through FileExport: the panel closes before the write runs, so a
+        // failure that goes unreported leaves the user believing the file is there.
+        let name = (map.layers.first?.title ?? "map") + ".geojson"
+        switch FileExport.write(data, suggestedName: name,
+                                contentTypes: [UTType(filenameExtension: "geojson") ?? .json]) {
+        case .cancelled, .written:
+            break
+        case .failed(let message):
+            let alert = NSAlert()
+            alert.messageText = AppInfo.name
+            alert.informativeText = message
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
     }
 }
 
