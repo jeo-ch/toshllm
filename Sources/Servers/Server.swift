@@ -2377,6 +2377,9 @@ final class ServerController: ObservableObject {
         if let p = process {
             Self.reapChildren(of: p.processIdentifier)
             let pid = p.processIdentifier
+            // Remembered now: six seconds later the number may name a different
+            // process, and the fallback has to be sure it is still this engine.
+            let enginePath = ProcessIdentity.executablePath(of: pid)
             lastStoppedPID = pid
             // Drop this engine's PID now: once process is niled below, the termination
             // handler's guard skips its own removal.
@@ -2386,7 +2389,7 @@ final class ServerController: ObservableObject {
             // SIGKILL fallback in case the deferred terminate stalls: the engine's
             // working set has to be freed.
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 6) {
-                if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+                ProcessIdentity.killIfStill(pid: pid, running: enginePath, signal: SIGKILL)
                 // children that outlived their engine are adopted by launchd by now
                 EngineLock.reapStrayEngines()
             }
@@ -2562,10 +2565,11 @@ final class ServerController: ObservableObject {
                 self?.stopDiscovery()
                 if let p = self?.process {
                     let pid = p.processIdentifier
+                    let path = ProcessIdentity.executablePath(of: pid)
                     Self.reapChildren(of: pid)
                     p.terminate()
                     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 6) {
-                        if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+                        ProcessIdentity.killIfStill(pid: pid, running: path, signal: SIGKILL)
                         EngineLock.reapStrayEngines()
                     }
                 }

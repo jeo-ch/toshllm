@@ -88,4 +88,70 @@ final class ChatToolSettleTests: XCTestCase {
 
         XCTAssertEqual(store.conversations[0].messages.count, 0)
     }
+
+    // MARK: a turn is more than the stream
+
+    /// Leaves a user message and an assistant reply ending in a live tool call.
+    private func installPendingPermission(_ store: ChatStore) -> PendingToolPermission {
+        let messageID = UUID()
+        var call = ChatToolCall(name: "read_file", arguments: "{}", state: .pending)
+        call.id = UUID()
+        var assistant = ChatMessage(role: "assistant", content: "")
+        assistant.id = messageID
+        assistant.toolCalls = [call]
+        var conversation = Conversation(title: "t")
+        conversation.messages = [ChatMessage(role: "user", content: "hi"), assistant]
+        store.conversations = [conversation]
+        store.currentID = conversation.id
+        let request = PendingToolPermission(
+            conversationID: conversation.id, messageID: messageID, callID: call.id,
+            name: "read_file", displayName: "read_file", arguments: "{}",
+            writesData: false, serverID: nil, serverName: nil)
+        store.pendingToolPermission = request
+        return request
+    }
+
+    /// `generating` is false while a tool waits for permission, but the turn is
+    /// not over. The old guards looked only at `generating`, so these buttons
+    /// stayed live and started a second turn on top of the agent's context.
+    func testAToolAwaitingPermissionCountsAsAnActiveFlow() throws {
+        let (store, dir) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        installPendingPermission(store)
+        XCTAssertTrue(store.agentFlowActive)
+        store.pendingToolPermission = nil
+        XCTAssertFalse(store.agentFlowActive)
+    }
+
+    func testRegenerateIsRefusedWhileAToolAwaitsPermission() throws {
+        let (store, dir) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        installPendingPermission(store)
+        let before = store.conversations[0].messages.map(\.id)
+
+        store.regenerate(port: 1, temperature: 0.7, maxTokens: 128, system: "", thinking: false)
+
+        XCTAssertEqual(store.conversations[0].messages.map(\.id), before,
+                       "regenerating mid-turn would strand the agent's context")
+    }
+
+    func testEditIsRefusedWhileAToolAwaitsPermission() throws {
+        let (store, dir) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let request = installPendingPermission(store)
+
+        XCTAssertNil(store.editMessage(request.messageID),
+                     "cutting the branch mid-turn would discard the round in flight")
+    }
+
+    /// The guard must not stick: once nothing is streaming and nothing is
+    /// waiting, the conversation is ordinary again.
+    func testTheFlowEndsWhenThePermissionIsResolved() throws {
+        let (store, dir) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        installPendingPermission(store)
+        store.pendingToolPermission = nil
+
+        XCTAssertFalse(store.agentFlowActive)
+    }
 }

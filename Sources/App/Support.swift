@@ -579,6 +579,28 @@ enum ShellWords {
 /// Tracks the PIDs of the engines we spawned (one per running server), so a later
 /// launch can reap orphans precisely (verifying each PID still points at one of our
 /// binaries) instead of pattern-killing by path.
+/// Signalling a PID is only safe while it still names the process it named when
+/// the signal was scheduled. The kernel reuses numbers, so a grace period spent
+/// waiting for an engine to exit can end with that number belonging to something
+/// else entirely, and a bare `kill` reaches an innocent process.
+enum ProcessIdentity {
+    /// The executable `pid` is currently running, or nil if it is gone.
+    static func executablePath(of pid: Int32) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4096)
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return String(cString: buffer)
+    }
+
+    /// Sends `signal` to `pid` only if it is still running `path`.
+    ///
+    /// The path is compared at the moment of the kill, not when the caller
+    /// remembered the number: that gap is the whole hazard.
+    static func killIfStill(pid: Int32, running path: String?, signal: Int32) {
+        guard let path, kill(pid, 0) == 0, executablePath(of: pid) == path else { return }
+        kill(pid, signal)
+    }
+}
+
 enum EngineLock {
     private static var url: URL { AppSupport.directory.appendingPathComponent("engine.pid") }
     private static let engineMarker = AppInfo.name + ".app/Contents/Resources/bin"
@@ -627,7 +649,9 @@ enum EngineLock {
             AppLog.app.warning("Reaping orphaned engine pid \(pid) at \(path)")
             kill(pid, SIGTERM)
             usleep(500_000)
-            if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+            // Identity re-checked: after half a second the number may already
+            // belong to a process that is not ours.
+            ProcessIdentity.killIfStill(pid: pid, running: path, signal: SIGKILL)
             reaped = true
         }
         save([])
@@ -654,7 +678,9 @@ enum EngineLock {
             AppLog.app.warning("Reaping stray engine pid \(pid) at \(path)")
             kill(pid, SIGTERM)
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5) {
-                if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+                // Five seconds is long enough for the kernel to have reused the
+                // number, so the executable is compared again before signalling.
+                ProcessIdentity.killIfStill(pid: pid, running: path, signal: SIGKILL)
             }
         }
     }

@@ -439,10 +439,12 @@ final class VideoGenerator: ObservableObject {
         // SIGTERM alone is not enough: a wedged engine would keep its Metal context
         // and the VRAM, so the escalation Server.swift uses is applied here too.
         if let pid = process?.processIdentifier {
-            // Nothing else can take this generator's process, so the identity
-            // cannot change while we wait.
+            // The generator's claim on the slot cannot change while we wait, but
+            // the kernel is free to reuse the number once the process exits — so
+            // the executable is remembered and compared again before the kill.
             ImageGenerator.killIfStillRunning(
-                pid, after: ImageGenerator.terminationGraceSeconds) { true }
+                pid, running: ProcessIdentity.executablePath(of: pid),
+                after: ImageGenerator.terminationGraceSeconds) { true }
         }
         process?.terminate()
     }

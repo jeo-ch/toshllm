@@ -789,12 +789,13 @@ final class ImageGenerator: ObservableObject {
         // context and VRAM for a while. Remember the PID so `pump()` keeps the GPU
         // reserved until the process is really gone.
         let pid = p.processIdentifier
+        let executablePath = ProcessIdentity.executablePath(of: pid)
         terminatingPID = pid
         p.terminate()
         // SIGTERM is advisory: a wedged Metal kernel ignores it, and then the slot
         // stays reserved for the rest of the session with no way back. This is the
         // escalation Server.swift already uses for the engine.
-        Self.killIfStillRunning(pid, after: Self.terminationGraceSeconds) {
+        Self.killIfStillRunning(pid, running: executablePath, after: Self.terminationGraceSeconds) {
             // Only while the reservation still points at this pid: once the slot
             // is free the number may belong to another process.
             self.terminatingPID == pid
@@ -818,15 +819,17 @@ final class ImageGenerator: ObservableObject {
 /// Sends SIGKILL to `pid` once the grace period is up, if it is still running.
 ///
 /// `expected` is the identity the caller still holds; if the slot has since been
-/// released the pid may already belong to something else, and a pid on its own is
-/// not a safe thing to signal six seconds late — the kernel is free to hand the
-/// same number to a new process in the meantime.
-static func killIfStillRunning(_ pid: Int32, after seconds: TimeInterval,
+/// released the pid may already belong to something else. The caller's own bookkeeping
+/// is not enough on its own: even while the slot still points at the number, the
+/// process that held it may have exited and the kernel may have handed the same
+/// number to a new one. `path` is what `pid` was actually running when it was
+/// remembered, and is compared again at the moment of the kill.
+static func killIfStillRunning(_ pid: Int32, running path: String?, after seconds: TimeInterval,
                                whileStillOurs expected: @escaping @MainActor () -> Bool) {
     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) {
         Task { @MainActor in
             guard expected() else { return }
-            if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+            ProcessIdentity.killIfStill(pid: pid, running: path, signal: SIGKILL)
         }
     }
 }
@@ -1787,7 +1790,9 @@ final class ImageUpscaler: ObservableObject {
         pending = []
         if let p = process {
             ImageGenerator.killIfStillRunning(
-                p.processIdentifier, after: ImageGenerator.terminationGraceSeconds) { true }
+                p.processIdentifier,
+                running: ProcessIdentity.executablePath(of: p.processIdentifier),
+                after: ImageGenerator.terminationGraceSeconds) { true }
         }
         process?.terminate()
     }

@@ -613,7 +613,10 @@ final class ChatStore: ObservableObject {
     func regenerate(port: Int, temperature: Double, maxTokens: Int, system: String, thinking: Bool,
                     sampling: ChatSamplingSettings = ChatSamplingSettings(),
                     modalities: ModelModalities? = nil) {
-        guard !generating, let i = currentIndex,
+        // A turn is more than the stream: while a tool waits for permission, or an
+        // agent is between rounds, `generating` is false but the turn is not over.
+        // Starting another one here would strand the context the agent is holding.
+        guard !agentFlowActive, let i = currentIndex,
               conversations[i].messages.last?.role == "assistant" else { return }
         let path = Array(conversations[i].messages.dropLast())
         beginAlternativeBranch(conversationIndex: i, messages: path)
@@ -625,7 +628,9 @@ final class ChatStore: ObservableObject {
                           system: String, thinking: Bool,
                           sampling: ChatSamplingSettings = ChatSamplingSettings(),
                           modalities: ModelModalities? = nil) {
-        guard !generating, let i = currentIndex,
+        // Same as regenerate: a tool awaiting permission is a live turn even
+        // though nothing is streaming.
+        guard !agentFlowActive, let i = currentIndex,
               conversations[i].messages.last?.role == "assistant" else { return }
         stream(into: i, port: port, temperature: temperature, maxTokens: maxTokens,
                system: system, thinking: thinking,
@@ -2169,7 +2174,9 @@ final class ChatStore: ObservableObject {
     }
 
     func editMessage(_ messageID: UUID) -> ChatMessage? {
-        guard !generating, let i = currentIndex,
+        // Cutting the branch while a tool waits for permission would discard the
+        // round the agent is still holding.
+        guard !agentFlowActive, let i = currentIndex,
               let j = conversations[i].messages.firstIndex(where: { $0.id == messageID }),
               conversations[i].messages[j].role == "user" else { return nil }
         let message = conversations[i].messages[j]

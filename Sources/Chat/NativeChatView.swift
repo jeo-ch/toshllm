@@ -784,7 +784,7 @@ struct NativeChatView: View {
                     liveSpeed: nil,
                     isLastAssistant: msg.role == "assistant" && isNewest,
                     isLastUser: isLastUser,
-                    canRegenerate: !chat.generating,
+                    canRegenerate: !chat.agentFlowActive,
                     onRegenerate: {
                         chat.regenerate(port: port, temperature: temperature,
                                         maxTokens: maxTokens,
