@@ -800,19 +800,6 @@ final class ChatStore: ObservableObject {
                             if event["type"] as? String == "pass", event["state"] as? String == "end" {
                                 agentPassTokens = ((event["prompt_tokens"] as? Int) ?? 0) + ((event["completion_tokens"] as? Int) ?? 0)
                             }
-                            continue
-                        }
-                        if agentTurn, text.hasPrefix("data: "), text.contains("\"tosh\""),
-                           let object = try? JSONSerialization.jsonObject(with: Data(text.dropFirst(6).utf8)) as? [String: Any],
-                           let tosh = object["tosh"] as? [String: Any] {
-                            guard let event = tosh["event"] as? [String: Any] else {
-                                agentMeta = tosh
-                                if let event = try accumulator.consume(text), event.completed { return true }
-                                continue
-                            }
-                            if event["type"] as? String == "pass", event["state"] as? String == "end" {
-                                agentPassTokens = ((event["prompt_tokens"] as? Int) ?? 0) + ((event["completion_tokens"] as? Int) ?? 0)
-                            }
                             // a pass whose answer needs no check streams; its text goes if the pass ends in tool calls
                             if event["type"] as? String == "pass", event["state"] as? String == "start" {
                                 hold = event["live"] as? Bool != true
