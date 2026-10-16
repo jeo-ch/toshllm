@@ -1659,7 +1659,7 @@
   "The current key stops working in any external client that uses it, and the server will restart to start using the new one.": "Чинний ключ припиняє працювати в будь-якому зовнішньому клієнті, що його використовує, а сервер перезапуститься, щоб почати використовувати новий.",
   "The current key stops working in any external client that uses it.": "Чинний ключ припиняє працювати в будь-якому зовнішньому клієнті, що його використовує.",
   "The current matches are available in the carousel above.": "Поточні збіги доступні в каруселі вище.",
-  "The definitions of the active tools take about %@k of it.": "Визначення активних інструментів займають близько %@k від нього.",
+  "The definitions of the active tools take about %@k of it.": "Описи активних інструментів займають близько %@k з них.",
   "The engine measures free VRAM and RAM to decide how to split the model.": "Рушій вимірює вільну пам'ять VRAM і RAM, щоб вирішити, як розділити модель.",
   "The engine only loads 4x models, so x2 upscales and resamples to half.": "Рушій завантажує лише моделі 4x, тому x2 масштабує та передискретизує вдвічі менше.",
   "The estimated total exceeds half the context configured in Settings; with the history it could fill it.": "Орієнтовний обсяг перевищує половину контексту, налаштованого в Налаштуваннях; разом з історією він може заповнити його повністю.",
