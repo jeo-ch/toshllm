@@ -441,7 +441,7 @@ struct ServerSettings {
             args += ["--spec-type", "draft-mtp"] + Self.mtpSamplingArgs
             args += Self.mtpDraftWidthArgs(forModel: modelPath, gpuArchitecture: selectedGPUArchitecture)
         }
-        if let ui = Self.chatUIPath { args += ["--path", ui] }
+        args += Self.chatUIArgs
         args += extraArgTokens.cli
         return reassertingManagedOptions(args, extra: extraArgTokens.cli)
     }
@@ -495,7 +495,7 @@ struct ServerSettings {
         }
         if uiMcpProxy { args.append("--ui-mcp-proxy") }
         if apiKeyEnabled { args += ["--api-key", Keychain.apiKey()] }
-        if let ui = Self.chatUIPath { args += ["--path", ui] }
+        args += Self.chatUIArgs
         args += extraArgTokens.cli
         return reassertingManagedOptions(args, extra: extraArgTokens.cli)
     }
@@ -766,6 +766,20 @@ struct ServerSettings {
             if FileManager.default.fileExists(atPath: dir + "/index.html") { return dir }
         }
         return nil
+    }
+
+    /// The bundled web chat, starting in a new browser with the app's own image and PDF settings.
+    static var chatUIArgs: [String] {
+        guard let ui = chatUIPath else { return [] }
+        let d = UserDefaults.standard
+        let megapixels = d.object(forKey: SettingsKeys.chatMaxImageMegapixels) == nil
+            ? 1 : d.double(forKey: SettingsKeys.chatMaxImageMegapixels)
+        let config: [String: Any] = ["pdfAsImage": d.bool(forKey: SettingsKeys.chatPDFAsImages),
+                                     "maxImageMPixels": megapixels]
+        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]) else {
+            return ["--path", ui]
+        }
+        return ["--path", ui, "--ui-config", String(decoding: data, as: UTF8.self)]
     }
 
     var environment: [String: String] {

@@ -1,0 +1,1629 @@
+diff --git a/tools/ui/package-lock.json b/tools/ui/package-lock.json
+index 86d599e67..4e4f8e10a 100644
+--- a/tools/ui/package-lock.json
++++ b/tools/ui/package-lock.json
+@@ -22,16 +22,17 @@
+ 				"@storybook/addon-vitest": "10.5.6",
+ 				"@storybook/sveltekit": "10.5.6",
+ 				"@sveltejs/adapter-static": "3.0.10",
+ 				"@sveltejs/kit": "2.70.2",
+ 				"@sveltejs/vite-plugin-svelte": "6.2.1",
+ 				"@tailwindcss/forms": "0.5.10",
+ 				"@tailwindcss/typography": "0.5.16",
+ 				"@tailwindcss/vite": "4.1.11",
++				"@types/leaflet": "1.9.12",
+ 				"@types/node": "24.13.0",
+ 				"@vite-pwa/assets-generator": "1.0.2",
+ 				"@vite-pwa/sveltekit": "1.1.0",
+ 				"@vitest/browser": "4.1.10",
+ 				"@vitest/browser-playwright": "4.1.10",
+ 				"@vitest/coverage-v8": "4.1.10",
+ 				"bits-ui": "2.18.1",
+ 				"clsx": "2.1.1",
+@@ -42,16 +43,17 @@
+ 				"eslint-plugin-perfectionist": "^5.10.1",
+ 				"eslint-plugin-simple-import-sort": "^14.0.0",
+ 				"eslint-plugin-storybook": "10.5.6",
+ 				"eslint-plugin-svelte": "3.19.0",
+ 				"fflate": "0.8.3",
+ 				"globals": "16.5.0",
+ 				"highlight.js": "11.11.1",
+ 				"http-server": "14.1.1",
++				"leaflet": "1.9.4",
+ 				"mdast": "3.0.0",
+ 				"mdsvex": "0.12.7",
+ 				"mermaid": "11.15.0",
+ 				"mode-watcher": "1.1.0",
+ 				"pdfjs-dist": "5.4.54",
+ 				"playwright": "1.56.1",
+ 				"prettier": "3.8.3",
+ 				"prettier-plugin-svelte": "4.1.0",
+@@ -6355,16 +6357,26 @@
+ 		},
+ 		"node_modules/@types/katex": {
+ 			"version": "0.16.8",
+ 			"resolved": "https://registry.npmjs.org/@types/katex/-/katex-0.16.8.tgz",
+ 			"integrity": "sha512-trgaNyfU+Xh2Tc+ABIb44a5AYUpicB3uwirOioeOkNPPbmgRNtcWyDeeFRzjPZENO9Vq8gvVqfhaaXWLlevVwg==",
+ 			"dev": true,
+ 			"license": "MIT"
+ 		},
++		"node_modules/@types/leaflet": {
++			"version": "1.9.12",
++			"resolved": "https://registry.npmjs.org/@types/leaflet/-/leaflet-1.9.12.tgz",
++			"integrity": "sha512-BK7XS+NyRI291HIo0HCfE18Lp8oA30H1gpi1tf0mF3TgiCEzanQjOqNZ4x126SXzzi2oNSZhZ5axJp1k0iM6jg==",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@types/geojson": "*"
++			}
++		},
+ 		"node_modules/@types/mdast": {
+ 			"version": "4.0.4",
+ 			"resolved": "https://registry.npmjs.org/@types/mdast/-/mdast-4.0.4.tgz",
+ 			"integrity": "sha512-kGaNbPh1k7AFzgpud/gMdvIm5xuECykRR+JnWKQno9TAXVa6WIVCGTPvYGekIDL4uwCZQSYbUxNBSb1aUo79oA==",
+ 			"dev": true,
+ 			"license": "MIT",
+ 			"dependencies": {
+ 				"@types/unist": "*"
+@@ -11717,16 +11729,23 @@
+ 		},
+ 		"node_modules/layout-base": {
+ 			"version": "1.0.2",
+ 			"resolved": "https://registry.npmjs.org/layout-base/-/layout-base-1.0.2.tgz",
+ 			"integrity": "sha512-8h2oVEZNktL4BH2JCOI90iD1yXwL6iNW7KcCKT2QZgQJR2vbqDsldCTPRU9NifTCqHZci57XvQQ15YTu+sTYPg==",
+ 			"dev": true,
+ 			"license": "MIT"
+ 		},
++		"node_modules/leaflet": {
++			"version": "1.9.4",
++			"resolved": "https://registry.npmjs.org/leaflet/-/leaflet-1.9.4.tgz",
++			"integrity": "sha512-nxS1ynzJOmOlHp+iL3FyWqK89GtNL8U8rvlMOsQdTTssxZwCXh8N2NB3GDQOL+YR3XnWyZAxwQixURb+FA74PA==",
++			"dev": true,
++			"license": "BSD-2-Clause"
++		},
+ 		"node_modules/leven": {
+ 			"version": "3.1.0",
+ 			"resolved": "https://registry.npmjs.org/leven/-/leven-3.1.0.tgz",
+ 			"integrity": "sha512-qsda+H8jTaUaN/x5vzW2rzc+8Rw4TAQ/4KjB46IwK5VH+IlVeeeje/EoZRpiXvIqjFgK84QffqPztGI3VBLG1A==",
+ 			"dev": true,
+ 			"license": "MIT",
+ 			"engines": {
+ 				"node": ">=6"
+diff --git a/tools/ui/package.json b/tools/ui/package.json
+index 401760474..479a59272 100644
+--- a/tools/ui/package.json
++++ b/tools/ui/package.json
+@@ -42,16 +42,17 @@
+ 		"@storybook/addon-vitest": "10.5.6",
+ 		"@storybook/sveltekit": "10.5.6",
+ 		"@sveltejs/adapter-static": "3.0.10",
+ 		"@sveltejs/kit": "2.70.2",
+ 		"@sveltejs/vite-plugin-svelte": "6.2.1",
+ 		"@tailwindcss/forms": "0.5.10",
+ 		"@tailwindcss/typography": "0.5.16",
+ 		"@tailwindcss/vite": "4.1.11",
++		"@types/leaflet": "1.9.12",
+ 		"@types/node": "24.13.0",
+ 		"@vite-pwa/assets-generator": "1.0.2",
+ 		"@vite-pwa/sveltekit": "1.1.0",
+ 		"@vitest/browser": "4.1.10",
+ 		"@vitest/browser-playwright": "4.1.10",
+ 		"@vitest/coverage-v8": "4.1.10",
+ 		"bits-ui": "2.18.1",
+ 		"clsx": "2.1.1",
+@@ -62,16 +63,17 @@
+ 		"eslint-plugin-perfectionist": "^5.10.1",
+ 		"eslint-plugin-simple-import-sort": "^14.0.0",
+ 		"eslint-plugin-storybook": "10.5.6",
+ 		"eslint-plugin-svelte": "3.19.0",
+ 		"fflate": "0.8.3",
+ 		"globals": "16.5.0",
+ 		"highlight.js": "11.11.1",
+ 		"http-server": "14.1.1",
++		"leaflet": "1.9.4",
+ 		"mdast": "3.0.0",
+ 		"mdsvex": "0.12.7",
+ 		"mermaid": "11.15.0",
+ 		"mode-watcher": "1.1.0",
+ 		"pdfjs-dist": "5.4.54",
+ 		"playwright": "1.56.1",
+ 		"prettier": "3.8.3",
+ 		"prettier-plugin-svelte": "4.1.0",
+diff --git a/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ChatMessageAssistant.svelte b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ChatMessageAssistant.svelte
+index dac55caff..5fa2dc082 100644
+--- a/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ChatMessageAssistant.svelte
++++ b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ChatMessageAssistant.svelte
+@@ -1,9 +1,10 @@
+ <script lang="ts">
++	import ToshPanel from './ToshPanel.svelte';
+ 	import {
+ 		ChatMessageActionIcons,
+ 		ChatMessageAgenticContent,
+ 		ChatMessageAssistantModel,
+ 		ChatMessageAssistantProcessingInfo,
+ 		ChatMessageAssistantRawOutput,
+ 		ChatMessageAssistantStatistics,
+ 		ChatMessageEditForm
+@@ -149,16 +150,18 @@
+ 		{:else}
+ 			<ChatMessageAgenticContent
+ 				{isLastAssistantMessage}
+ 				isStreaming={chatStore.isStreaming()}
+ 				{message}
+ 				{toolMessages}
+ 			/>
+ 		{/if}
++
++		<ToshPanel {message} />
+ 	{/if}
+ 
+ 	{#if showProcessingInfoBottom}
+ 		<ChatMessageAssistantProcessingInfo {modelLoadingText} position="bottom" {processingState} />
+ 	{/if}
+ 
+ 	{#if displayedModel}
+ 		<div class="info my-6 grid gap-4 tabular-nums">
+diff --git a/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshMap.svelte b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshMap.svelte
+new file mode 100644
+index 000000000..2f26901b7
+--- /dev/null
++++ b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshMap.svelte
+@@ -0,0 +1,145 @@
++<script lang="ts">
++	import 'leaflet/dist/leaflet.css';
++	import ToshResize from './ToshResize.svelte';
++	import { download } from '$lib/tosh/download';
++	import { bundle, geojsonFiles } from '$lib/tosh/map';
++	import type { ToshMapLayer } from '$lib/types';
++	import type { Map as LeafletMap } from 'leaflet';
++	import { onDestroy, onMount, tick } from 'svelte';
++
++	interface Props {
++		layers: ToshMapLayer[];
++	}
++
++	let { layers }: Props = $props();
++
++	const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
++
++	let element: HTMLDivElement;
++	let map: LeafletMap | null = null;
++	let destroyed = false;
++	let enlarged = $state(false);
++
++	async function resize() {
++		enlarged = !enlarged;
++		await tick();
++		map?.invalidateSize();
++	}
++
++	function escape(value: unknown): string {
++		return String(value ?? '').replace(
++			/[<>&"]/g,
++			(c) => ({ '"': '&quot;', '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] ?? c
++		);
++	}
++
++	/** The attributes of a feature in the layer's own order, with the names ArcGIS shows for them. */
++	function popup(properties: Record<string, unknown>, layer: ToshMapLayer): string {
++		const names = layer.fields?.length
++			? layer.fields
++			: Object.keys(properties).map((name) => ({ alias: name, name }));
++		const rows = names
++			.filter(
++				(f) =>
++					properties[f.name] !== null &&
++					properties[f.name] !== undefined &&
++					properties[f.name] !== ''
++			)
++			.slice(0, 40)
++			.map(
++				(f) =>
++					`<tr><th style="text-align:left;padding-right:8px">${escape(f.alias ?? f.name)}</th><td>${escape(properties[f.name])}</td></tr>`
++			);
++
++		return `<div style="max-height:220px;overflow:auto;font-size:12px"><b>${escape(layer.title)}</b><table>${rows.join('')}</table></div>`;
++	}
++
++	// Leaflet touches window when imported, so it loads in the browser only.
++	onMount(async () => {
++		const L = (await import('leaflet')).default;
++
++		if (destroyed) return;
++
++		map = L.map(element, { attributionControl: true, scrollWheelZoom: false });
++		L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
++			attribution: '&copy; OpenStreetMap',
++			maxZoom: 19
++		}).addTo(map);
++		const group = L.featureGroup();
++
++		layers.forEach((layer, index) => {
++			const color = COLORS[index % COLORS.length];
++
++			L.geoJSON(
++				{ features: layer.features, type: 'FeatureCollection' } as GeoJSON.FeatureCollection,
++				{
++					onEachFeature: (feature, drawn) =>
++						drawn.bindPopup(popup(feature.properties ?? {}, layer)),
++					pointToLayer: (_feature, at) =>
++						L.circleMarker(at, { color, fillOpacity: 0.8, radius: 5, weight: 1 }),
++					style: { color, dashArray: layer.drawn ? '6 4' : undefined, fillOpacity: 0.15, weight: 2 }
++				}
++			).addTo(group);
++		});
++
++		group.addTo(map);
++		const bounds = group.getBounds();
++
++		if (bounds.isValid()) map.fitBounds(bounds, { maxZoom: 17, padding: [20, 20] });
++		else map.setView([0, 0], 2);
++	});
++
++	onDestroy(() => {
++		destroyed = true;
++		map?.remove();
++	});
++
++	function exportGeojson() {
++		const file = bundle(geojsonFiles(layers));
++
++		if (file) download(file.name, file.data, file.type);
++	}
++</script>
++
++<div class="grid gap-1.5">
++	<!-- the size goes on a wrapper: Leaflet keeps classes of its own on the map's element -->
++	<div class="w-full overflow-hidden rounded-lg {enlarged ? 'h-[460px]' : 'h-56'}">
++		<div bind:this={element} class="h-full w-full"></div>
++	</div>
++
++	<div class="flex flex-wrap items-start justify-between gap-2 text-[11px] text-muted-foreground">
++		<span class="flex flex-wrap gap-3">
++			{#each layers as layer, index (index)}
++				<span class="inline-flex items-center gap-1">
++					<span
++						class="inline-block h-2 w-2 rounded-full"
++						style="background:{COLORS[index % COLORS.length]}"
++					></span>
++
++					{#if layer.link?.url && /^https?:\/\//.test(layer.link.url)}
++						<a
++							class="underline-offset-2 hover:underline"
++							href={layer.link.url}
++							rel="noopener noreferrer"
++							target="_blank">{layer.title ?? layer.link.title ?? 'Layer'}</a
++						>
++					{:else}
++						{layer.title ?? 'Layer'}
++					{/if}{layer.complete === false ? ' (partial)' : ''}{layer.drawn ? ' (approximate)' : ''}
++					{#if layer.subtitle}<span class="opacity-75">{layer.subtitle}</span>{/if}
++				</span>
++			{/each}
++		</span>
++
++		<span class="flex items-center gap-3">
++			<ToshResize {enlarged} onclick={resize} />
++
++			<button
++				class="hover:text-foreground"
++				onclick={exportGeojson}
++				title="One .geojson file per layer and kind of geometry, for ArcGIS Pro (JSON To Features)"
++				>GeoJSON</button
++			>
++		</span>
++	</div>
++</div>
+diff --git a/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshPanel.svelte b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshPanel.svelte
+new file mode 100644
+index 000000000..7977dfe56
+--- /dev/null
++++ b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshPanel.svelte
+@@ -0,0 +1,110 @@
++<script lang="ts">
++	import ToshMap from './ToshMap.svelte';
++	import ToshSketches from './ToshSketches.svelte';
++	import Waypoints from '@lucide/svelte/icons/waypoints';
++	import { CollapsibleContentBlock } from '$lib/components/app';
++	import { DatabaseService } from '$lib/services';
++	import { conversationsStore } from '$lib/stores';
++	import { fetchMap } from '$lib/tosh/map';
++	import type { DatabaseMessage, ToshCall, ToshMapLayer } from '$lib/types';
++
++	interface Props {
++		message: DatabaseMessage;
++	}
++
++	let { message }: Props = $props();
++
++	let stepsOpen = $state(false);
++	let loading = $state(false);
++	let failed = $state(false);
++
++	let tosh = $derived(message.tosh);
++	let steps = $derived(tosh?.steps ?? []);
++
++	// an agent reports a call's state, or only its status
++	function stepFailed(step: ToshCall): boolean {
++		return step.state ? step.state !== 'completed' : !!step.status && step.status !== 'ok';
++	}
++
++	function question(): string {
++		const parent = conversationsStore.activeMessages.find((m) => m.id === message.parent);
++
++		return parent?.content ?? '';
++	}
++
++	async function loadMap() {
++		if (!tosh?.mapRequest || loading) return;
++
++		loading = true;
++		failed = false;
++		const layers: ToshMapLayer[] | null = await fetchMap(
++			$state.snapshot(tosh.mapRequest),
++			question()
++		);
++
++		loading = false;
++
++		if (!layers) {
++			failed = true;
++
++			return;
++		}
++
++		const updated = { ...$state.snapshot(tosh), map: { layers } };
++
++		conversationsStore.updateMessageAtIndex(conversationsStore.findMessageIndex(message.id), {
++			tosh: updated
++		});
++		await DatabaseService.updateMessage(message.id, { tosh: updated });
++	}
++
++	$effect(() => {
++		if (tosh?.mapRequest?.show && !tosh.map && !loading && !failed) loadMap();
++	});
++</script>
++
++{#if tosh}
++	<div class="mt-3 grid gap-3">
++		{#if steps.length}
++			<CollapsibleContentBlock
++				icon={Waypoints}
++				onToggle={() => (stepsOpen = !stepsOpen)}
++				open={stepsOpen}
++				subtitle={steps[steps.length - 1]?.summary ?? ''}
++				title={`Agent steps (${steps.length})`}
++			>
++				<ol class="grid gap-1.5 text-xs text-muted-foreground">
++					{#each steps as step, index (step.id ?? index)}
++						<li class="flex gap-2">
++							<span class="tabular-nums">{index + 1}.</span>
++
++							<span class={stepFailed(step) ? 'text-destructive' : ''}>
++								{step.summary || step.tool}
++							</span>
++						</li>
++					{/each}
++				</ol>
++			</CollapsibleContentBlock>
++		{/if}
++
++		{#if tosh.sketches?.length}
++			<ToshSketches sketches={tosh.sketches} />
++		{/if}
++
++		{#if tosh.map}
++			<ToshMap layers={tosh.map.layers} />
++		{:else if tosh.mapRequest}
++			<button
++				class="w-fit text-xs text-primary underline-offset-2 hover:underline disabled:opacity-50"
++				disabled={loading}
++				onclick={loadMap}
++			>
++				{loading
++					? 'Loading the map…'
++					: failed
++						? 'The map could not be loaded. Retry'
++						: 'Show on a map'}
++			</button>
++		{/if}
++	</div>
++{/if}
+diff --git a/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshResize.svelte b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshResize.svelte
+new file mode 100644
+index 000000000..f58a6b59d
+--- /dev/null
++++ b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshResize.svelte
+@@ -0,0 +1,23 @@
++<script lang="ts">
++	import Maximize2 from '@lucide/svelte/icons/maximize-2';
++	import Minimize2 from '@lucide/svelte/icons/minimize-2';
++
++	interface Props {
++		enlarged: boolean;
++		onclick: () => void;
++	}
++
++	let { enlarged, onclick }: Props = $props();
++</script>
++
++<button
++	class="text-muted-foreground hover:text-foreground"
++	{onclick}
++	title={enlarged ? 'Make smaller' : 'Enlarge'}
++>
++	{#if enlarged}
++		<Minimize2 class="h-3.5 w-3.5" />
++	{:else}
++		<Maximize2 class="h-3.5 w-3.5" />
++	{/if}
++</button>
+diff --git a/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshSketch.svelte b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshSketch.svelte
+new file mode 100644
+index 000000000..d4ab266f2
+--- /dev/null
++++ b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshSketch.svelte
+@@ -0,0 +1,72 @@
++<script lang="ts">
++	import ToshResize from './ToshResize.svelte';
++	import { download, fileStem } from '$lib/tosh/download';
++	import { csv, dxf, figure, gap, isOpen, png, svg } from '$lib/tosh/sketch';
++	import type { ToshSketch } from '$lib/types';
++
++	interface Props {
++		sketch: ToshSketch;
++		enlarged: boolean;
++		onResize: () => void;
++	}
++
++	let { enlarged, onResize, sketch }: Props = $props();
++
++	// drawn at about the size it shows, so its numbers keep their size
++	let drawing = $derived(
++		svg(sketch, enlarged ? 640 : 320, enlarged ? 360 : 220, {
++			line: '#3b82f6',
++			text: 'currentColor'
++		})
++	);
++	let stem = $derived(fileStem(sketch.title, 'sketch'));
++
++	async function savePng() {
++		const blob = await png(sketch);
++
++		if (blob) download(`${stem}.png`, blob, 'image/png');
++	}
++</script>
++
++<div class="grid gap-1.5">
++	<div class="flex items-center justify-between gap-2">
++		<div class="text-xs font-medium {enlarged ? '' : 'truncate'}">{sketch.title ?? ''}</div>
++
++		<ToshResize {enlarged} onclick={onResize} />
++	</div>
++
++	<div
++		class="overflow-hidden rounded-lg bg-muted/40 text-foreground [&_svg]:h-full [&_svg]:w-full {enlarged
++			? 'h-96'
++			: 'h-44'}"
++		title="Sketch from the answer's data: point 1 is the start and each leg runs to the next number."
++	>
++		<!-- eslint-disable-next-line svelte/no-at-html-tags -->
++		{@html drawing}
++	</div>
++
++	<div class="flex flex-wrap items-start justify-between gap-2 text-[11px] text-muted-foreground">
++		<span>
++			{sketch.plane && sketch.origin
++				? `Sketch in ${sketch.plane}`
++				: 'Sketch, not placed on a map'}{#if isOpen(sketch)}{` · in red, what it lacks to close: ${figure(
++					gap(sketch)
++				)} ${sketch.unit}`}{/if}
++		</span>
++
++		<span class="flex gap-3">
++			<button class="hover:text-foreground" onclick={savePng}>PNG</button>
++
++			<button
++				class="hover:text-foreground"
++				onclick={() => download(`${stem}.dxf`, dxf(sketch), 'application/dxf')}
++				title="For AutoCAD or ArcGIS Pro, from point 1">DXF</button
++			>
++
++			<button
++				class="hover:text-foreground"
++				onclick={() => download(`${stem}.csv`, csv(sketch), 'text/csv')}>Corners CSV</button
++			>
++		</span>
++	</div>
++</div>
+diff --git a/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshSketches.svelte b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshSketches.svelte
+new file mode 100644
+index 000000000..7690999bd
+--- /dev/null
++++ b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshSketches.svelte
+@@ -0,0 +1,31 @@
++<script lang="ts">
++	import ToshSketch from './ToshSketch.svelte';
++	import type { ToshSketch as Sketch } from '$lib/types';
++
++	interface Props {
++		sketches: Sketch[];
++	}
++
++	let { sketches }: Props = $props();
++
++	// small and several to a row; one at a time enlarged above the rest
++	let enlarged = $state<number | null>(null);
++</script>
++
++<div class="grid gap-3">
++	{#if enlarged !== null && sketches[enlarged]}
++		<ToshSketch enlarged onResize={() => (enlarged = null)} sketch={sketches[enlarged]} />
++	{/if}
++
++	<div
++		class={sketches.length > 1
++			? 'grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3'
++			: 'grid'}
++	>
++		{#each sketches as sketch, index (index)}
++			{#if index !== enlarged}
++				<ToshSketch enlarged={false} onResize={() => (enlarged = index)} {sketch} />
++			{/if}
++		{/each}
++	</div>
++</div>
+diff --git a/tools/ui/src/lib/services/chat.service.ts b/tools/ui/src/lib/services/chat.service.ts
+index b008b16db..569a3e910 100644
+--- a/tools/ui/src/lib/services/chat.service.ts
++++ b/tools/ui/src/lib/services/chat.service.ts
+@@ -29,17 +29,21 @@ import {
+ 	AttachmentType,
+ 	ContentPartType,
+ 	MessageRole,
+ 	ReasoningFormat,
+ 	StreamConnectionState
+ } from '$lib/enums';
+ import { modelsStore } from '$lib/stores/models/index.svelte';
+ import { settingsStore } from '$lib/stores/settings/index.svelte';
+-import type { DatabaseMessageExtraMcpPrompt, DatabaseMessageExtraMcpResource } from '$lib/types';
++import type {
++	DatabaseMessageExtraMcpPrompt,
++	DatabaseMessageExtraMcpResource,
++	ToshChunk
++} from '$lib/types';
+ import type {
+ 	ApiChatCompletionToolCall,
+ 	ApiChatMessageContentPart,
+ 	ApiChatMessageData,
+ 	ApiStreamSession
+ } from '$lib/types/api';
+ import { isAbortError } from '$lib/utils/abort';
+ import { ApiError } from '$lib/utils/api-fetch';
+@@ -387,17 +391,18 @@ export class ChatService {
+ 			await ChatService.sendMessage(
+ 				[message],
+ 				{
+ 					custom: { chat_template_kwargs: { enable_thinking: false } },
+ 					model: model || undefined,
+ 					onChunk: (chunk: string) => {
+ 						titleResponse += chunk;
+ 					},
+-					stream: true
++					stream: true,
++					toshAgent: 'off'
+ 				},
+ 				undefined,
+ 				signal
+ 			);
+ 		} catch {
+ 			return '';
+ 		}
+ 
+@@ -438,17 +443,18 @@ export class ChatService {
+ 		onReasoningChunk?: (chunk: string) => void,
+ 		onToolCallChunk?: (chunk: string) => void,
+ 		onModel?: (model: string) => void,
+ 		onCompletionId?: (id: string) => void,
+ 		onTimings?: (timings?: ChatMessageTimings, promptProgress?: ChatMessagePromptProgress) => void,
+ 		conversationId?: string,
+ 		abortSignal?: AbortSignal,
+ 		onConnectionState?: (state: StreamConnectionState) => void,
+-		streamModel?: string | null
++		streamModel?: string | null,
++		onTosh?: (tosh: ToshChunk) => void
+ 	): Promise<void> {
+ 		let reader = response.body?.getReader();
+ 
+ 		if (!reader) {
+ 			throw new Error('No response body');
+ 		}
+ 
+ 		// bytesParsed is the absolute server side buffer offset of the next byte to parse
+@@ -619,16 +625,24 @@ export class ChatService {
+ 							if (data === SSE_DONE_MARKER) {
+ 								streamFinished = true;
+ 
+ 								continue;
+ 							}
+ 
+ 							try {
+ 								const parsed: ApiChatCompletionStreamChunk = JSON.parse(data);
++
++								// the Tosh agent's progress and metadata; a retract drops the text streamed so far
++								if (parsed.tosh && typeof parsed.tosh === 'object') {
++									if (parsed.tosh.event?.type === 'retract') aggregatedContent = '';
++
++									if (!abortSignal?.aborted) onTosh?.(parsed.tosh);
++								}
++
+ 								const choice = parsed.choices?.[0];
+ 								const content = choice?.delta?.content;
+ 								const reasoningContent = choice?.delta?.reasoning_content;
+ 								const toolCalls = choice?.delta?.tool_calls;
+ 								const timings = parsed.timings;
+ 								const promptProgress = parsed.prompt_progress;
+ 								const chunkModel = ChatService.extractModelName(parsed);
+ 
+@@ -1047,31 +1061,33 @@ export class ChatService {
+ 			onComplete,
+ 			onCompletionId,
+ 			onConnectionState,
+ 			onError,
+ 			onModel,
+ 			onReasoningChunk,
+ 			onTimings,
+ 			onToolCallChunk,
++			onTosh,
+ 			presence_penalty,
+ 			reasoningEffort,
+ 			// Penalty parameters
+ 			repeat_last_n,
+ 			repeat_penalty,
+ 			// Other parameters
+ 			samplers,
+ 			stream,
+ 			// Generation parameters
+ 			temperature,
+ 			timings_per_token,
+ 			// Tools for function calling
+ 			tools,
+ 			top_k,
+ 			top_p,
++			toshAgent,
+ 			typ_p,
+ 			xtc_probability,
+ 			xtc_threshold
+ 		} = options;
+ 		const normalizedMessages: ApiChatMessageData[] =
+ 			await ChatService.normalizeMessagesForApi(messages);
+ 
+ 		// Filter out image attachments if the model doesn't support vision
+@@ -1215,16 +1231,18 @@ export class ChatService {
+ 			} catch (error) {
+ 				console.warn('Failed to parse custom parameters:', error);
+ 			}
+ 		}
+ 
+ 		try {
+ 			const headers: Record<string, string> = { ...getJsonHeaders() };
+ 
++			if (toshAgent) headers['X-Tosh-Agent'] = toshAgent;
++
+ 			// tag streaming requests with the conversation id, this single header is the opt in for the
+ 			// server side replay buffer and powers discoverActiveStream on tab reopen. with an explicit
+ 			// model the ::model suffix keeps the per model session distinct
+ 			if (stream && conversationId) {
+ 				headers[HEADERS.X_CONVERSATION_ID_HEADER] = streamIdentity(conversationId, options.model);
+ 				// persist the pending stream before the fetch: a reload during the model load or
+ 				// the prompt processing must still find its way back to the session once it exists
+ 				ChatService.saveStreamState(conversationId, 0, options.model ?? null);
+@@ -1262,17 +1280,18 @@ export class ChatService {
+ 					onReasoningChunk,
+ 					onToolCallChunk,
+ 					onModel,
+ 					onCompletionId,
+ 					onTimings,
+ 					conversationId,
+ 					signal,
+ 					onConnectionState,
+-					options.model
++					options.model,
++					onTosh
+ 				);
+ 
+ 				return;
+ 			} else {
+ 				return ChatService.handleNonStreamResponse(
+ 					response,
+ 					onComplete,
+ 					onError,
+diff --git a/tools/ui/src/lib/stores/agentic/index.svelte.ts b/tools/ui/src/lib/stores/agentic/index.svelte.ts
+index 121ee7739..9defecd6d 100644
+--- a/tools/ui/src/lib/stores/agentic/index.svelte.ts
++++ b/tools/ui/src/lib/stores/agentic/index.svelte.ts
+@@ -32,16 +32,17 @@ import { ChatService } from '$lib/services';
+ import { ReadMediaService } from '$lib/services/read-media.service';
+ import { SandboxService } from '$lib/services/sandbox.service';
+ import { ToolsService } from '$lib/services/tools.service';
+ // direct imports between stores, not via the barrel, to avoid circular deps
+ import { AgenticGates } from '$lib/stores/agentic/gates.svelte';
+ import { conversationsStore } from '$lib/stores/conversations/index.svelte';
+ import { mcpStore } from '$lib/stores/mcp/index.svelte';
+ import { modelsStore } from '$lib/stores/models/index.svelte';
++import { serverStore } from '$lib/stores/server.svelte';
+ import { settingsStore } from '$lib/stores/settings/index.svelte';
+ import { toolsStore } from '$lib/stores/tools.svelte';
+ import type {
+ 	AgenticConfig,
+ 	AgenticFlowParams,
+ 	AgenticFlowResult,
+ 	AgenticSession,
+ 	MCPToolCall,
+@@ -197,21 +198,23 @@ class AgenticStore {
+ 			if (session.isRunning) active.push({ conversationId, session });
+ 		}
+ 
+ 		return active;
+ 	}
+ 
+ 	getConfig(settings: SettingsConfigType): AgenticConfig {
+ 		const maxTurns = Number(settings.agenticMaxTurns) || DEFAULT_AGENTIC_CONFIG.maxTurns;
++		const ownTools = mcpStore.hasEnabledServers() || toolsStore.customTools.length > 0;
++
++		// a server with a Tosh agent runs its tools itself for requests that bring none, unless the user added theirs
++		if (serverStore.props?.tosh_agent && !ownTools) return { enabled: false, maxTurns };
++
+ 		const hasTools =
+-			mcpStore.hasEnabledServers() ||
+-			toolsStore.serverTools.length > 0 ||
+-			toolsStore.browserTools.length > 0 ||
+-			toolsStore.customTools.length > 0;
++			ownTools || toolsStore.serverTools.length > 0 || toolsStore.browserTools.length > 0;
+ 
+ 		return {
+ 			enabled: hasTools && DEFAULT_AGENTIC_CONFIG.enabled,
+ 			maxTurns
+ 		};
+ 	}
+ 
+ 	getCurrentTurn(conversationId: string): number {
+diff --git a/tools/ui/src/lib/stores/chat/index.svelte.ts b/tools/ui/src/lib/stores/chat/index.svelte.ts
+index 4bdcc6845..c0f8c8353 100644
+--- a/tools/ui/src/lib/stores/chat/index.svelte.ts
++++ b/tools/ui/src/lib/stores/chat/index.svelte.ts
+@@ -33,17 +33,19 @@ import { settingsStore } from '$lib/stores/settings/index.svelte';
+ import { toolsStore } from '$lib/stores/tools.svelte';
+ import type {
+ 	ApiChatMessageData,
+ 	ChatMessagePromptProgress,
+ 	ChatMessageTimings,
+ 	ChatStreamCallbacks,
+ 	DatabaseMessage,
+ 	DatabaseMessageExtra,
+-	ErrorDialogState
++	ErrorDialogState,
++	ToshChunk,
++	ToshMessageData
+ } from '$lib/types';
+ import {
+ 	findMessageById,
+ 	formatCwdMessage,
+ 	getConversationModel,
+ 	isAbortError,
+ 	normalizeModelName
+ } from '$lib/utils';
+@@ -874,16 +876,47 @@ class ChatStore implements ChatStreamHost, ChatFlowsHost {
+ 			});
+ 		};
+ 		const updateStreamingUI = () => {
+ 			this.setChatStreaming(convId, streamedContent, currentMessageId, effectiveModel);
+ 			const idx = conversationsStore.findMessageIndex(currentMessageId);
+ 
+ 			conversationsStore.updateMessageAtIndex(idx, { content: streamedContent });
+ 		};
++
++		// what the server's Tosh agent reports: its steps while it works, its figures or a map request at the end
++		let tosh: ToshMessageData = {};
++
++		const recordTosh = (chunk: ToshChunk): void => {
++			const event = chunk.event;
++
++			if (event?.type === 'retract') {
++				streamedContent = '';
++				updateStreamingUI();
++
++				return;
++			}
++
++			if (event?.type === 'tool_call' && event.call) {
++				tosh = { ...tosh, steps: [...(tosh.steps ?? []), event.call] };
++			} else if (!event) {
++				tosh = {
++					...tosh,
++					...(chunk.sketches?.length ? { sketches: chunk.sketches } : {}),
++					...(chunk.map_request ? { mapRequest: chunk.map_request } : {})
++				};
++			} else {
++				return;
++			}
++
++			conversationsStore.updateMessageAtIndex(
++				conversationsStore.findMessageIndex(currentMessageId),
++				{ tosh }
++			);
++		};
+ 		const cleanupStreamingState = () => {
+ 			this.setChatLoading(convId, false);
+ 			this.clearChatStreaming(convId, currentMessageId);
+ 			this.processing.setState(convId, null);
+ 		};
+ 
+ 		this.processing.setActiveConversation(convId);
+ 		const abortController = this.getOrCreateAbortController(convId);
+@@ -1174,16 +1207,18 @@ class ChatStore implements ChatStreamHost, ChatFlowsHost {
+ 					const reasoning = streamedReasoningContent || reasoningContent;
+ 					const updateData: Record<string, unknown> = {
+ 						content,
+ 						reasoningContent: reasoning || undefined,
+ 						timings,
+ 						toolCalls: toolCalls || ''
+ 					};
+ 
++					if (Object.keys(tosh).length) updateData.tosh = tosh;
++
+ 					if (resolvedModel && !modelPersisted) updateData.model = resolvedModel;
+ 
+ 					await DatabaseService.updateMessage(currentMessageId, updateData);
+ 					const idx = conversationsStore.findMessageIndex(currentMessageId);
+ 					const uiUpdate: Partial<DatabaseMessage> = {
+ 						content,
+ 						reasoningContent: reasoning || undefined,
+ 						toolCalls: toolCalls || ''
+@@ -1219,16 +1254,17 @@ class ChatStore implements ChatStreamHost, ChatFlowsHost {
+ 					if (convId === conversationsStore.activeConversation?.id) {
+ 						this.streamConnectionState = state;
+ 					}
+ 				},
+ 				onError: streamCallbacks.onError,
+ 				onModel: streamCallbacks.onModel,
+ 				onReasoningChunk: streamCallbacks.onReasoningChunk,
+ 				onTimings: streamCallbacks.onTimings,
++				onTosh: recordTosh,
+ 				stream: true
+ 			},
+ 			convId,
+ 			abortController.signal
+ 		);
+ 	}
+ 
+ 	syncLoadingStateForChat(convId: string): void {
+diff --git a/tools/ui/src/lib/tosh/download.ts b/tools/ui/src/lib/tosh/download.ts
+new file mode 100644
+index 000000000..213864fec
+--- /dev/null
++++ b/tools/ui/src/lib/tosh/download.ts
+@@ -0,0 +1,18 @@
++export function download(name: string, data: BlobPart, type: string): void {
++	const url = URL.createObjectURL(new Blob([data], { type }));
++	const link = document.createElement('a');
++
++	link.href = url;
++	link.download = name;
++	document.body.appendChild(link);
++	link.click();
++	link.remove();
++	setTimeout(() => URL.revokeObjectURL(url), 1000);
++}
++
++/** A name for a file from a title, without characters a file system refuses. */
++export function fileStem(title: string | undefined, fallback: string): string {
++	const cleaned = (title ?? '').replace(/[/:\\]/g, '-').trim();
++
++	return (cleaned || fallback).slice(0, 80);
++}
+diff --git a/tools/ui/src/lib/tosh/map.ts b/tools/ui/src/lib/tosh/map.ts
+new file mode 100644
+index 000000000..b131c780c
+--- /dev/null
++++ b/tools/ui/src/lib/tosh/map.ts
+@@ -0,0 +1,91 @@
++import { fileStem } from './download';
++import { API_CHAT } from '$lib/constants';
++import type { ToshMapLayer, ToshMapRequest } from '$lib/types';
++import { getJsonHeaders } from '$lib/utils/api-headers';
++import { strToU8, zipSync } from 'fflate';
++
++/** The features of an answer's map, fetched from the agent with the calls it kept; the model is not involved. */
++export async function fetchMap(
++	request: ToshMapRequest,
++	question: string
++): Promise<ToshMapLayer[] | null> {
++	try {
++		const response = await fetch(API_CHAT.COMPLETIONS, {
++			body: JSON.stringify({
++				messages: [{ content: question, role: 'user' }],
++				stream: false,
++				tosh: { map_request: request }
++			}),
++			headers: { ...getJsonHeaders(), 'X-Tosh-Agent': 'on' },
++			method: 'POST'
++		});
++
++		if (!response.ok) return null;
++
++		const layers = (await response.json())?.tosh?.map?.layers;
++
++		return Array.isArray(layers) && layers.length ? layers : null;
++	} catch {
++		return null;
++	}
++}
++
++const KINDS: [string, string[]][] = [
++	['polygons', ['Polygon', 'MultiPolygon']],
++	['lines', ['LineString', 'MultiLineString']],
++	['points', ['Point']],
++	['multipoints', ['MultiPoint']]
++];
++
++/** One GeoJSON file per layer and kind of geometry, as ArcGIS Pro's JSON To Features takes one kind per run. */
++export function geojsonFiles(layers: ToshMapLayer[]): [string, string][] {
++	const files: [string, string][] = [];
++	const taken = new Set<string>();
++
++	layers.forEach((layer, index) => {
++		const title = layer.title ?? 'map';
++		const features = (layer.features ?? []) as {
++			geometry?: { type?: string };
++			properties?: object;
++		}[];
++		const groups = KINDS.map(([, types]) =>
++			features.filter((f) => types.includes(f.geometry?.type ?? ''))
++		);
++		const used = groups.filter((g) => g.length).length;
++
++		groups.forEach((group, k) => {
++			if (!group.length) return;
++
++			const collection = {
++				features: group.map((f) => ({
++					...f,
++					properties: { ...(f.properties ?? {}), layer: title }
++				})),
++				type: 'FeatureCollection'
++			};
++
++			let stem = fileStem(title, 'map') + (used > 1 ? ` - ${KINDS[k][0]}` : '');
++
++			if (taken.has(stem)) stem += ` ${index + 1}`;
++
++			taken.add(stem);
++			files.push([`${stem}.geojson`, JSON.stringify(collection, null, 2)]);
++		});
++	});
++
++	return files;
++}
++
++/** The files as one download: the file itself when there is one, else a ZIP of them all. */
++export function bundle(
++	files: [string, string][]
++): { name: string; data: BlobPart; type: string } | null {
++	if (!files.length) return null;
++
++	if (files.length === 1)
++		return { data: files[0][1], name: files[0][0], type: 'application/geo+json' };
++
++	const zipped = zipSync(Object.fromEntries(files.map(([name, text]) => [name, strToU8(text)])));
++
++	return { data: zipped, name: 'map.zip', type: 'application/zip' };
++}
+diff --git a/tools/ui/src/lib/tosh/sketch.ts b/tools/ui/src/lib/tosh/sketch.ts
+new file mode 100644
+index 000000000..67224996a
+--- /dev/null
++++ b/tools/ui/src/lib/tosh/sketch.ts
+@@ -0,0 +1,285 @@
++import type { ToshSketch } from '$lib/types';
++
++/** How far the last point ends from the first, in the sketch's unit. */
++export function gap(sketch: ToshSketch): number {
++	const first = sketch.points[0];
++	const last = sketch.points[sketch.points.length - 1];
++
++	return Math.hypot(last[0] - first[0], last[1] - first[1]);
++}
++
++export function span(sketch: ToshSketch): number {
++	const xs = sketch.points.map((p) => p[0]);
++	const ys = sketch.points.map((p) => p[1]);
++
++	return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
++}
++
++export function isOpen(sketch: ToshSketch): boolean {
++	return sketch.closed && gap(sketch) > span(sketch) * 1e-4;
++}
++
++/** The points to number: the corners, without the last one of a closed figure, which is its first again. */
++/** A point where an export writes it: at the figure's coordinates when it has an origin, else from its first point. */
++function placed(sketch: ToshSketch, point: number[]): number[] {
++	const origin = sketch.origin?.length === 2 ? sketch.origin : null;
++
++	return origin ? [point[0] + origin[0], point[1] + origin[1]] : point;
++}
++
++export function corners(sketch: ToshSketch): number[][] {
++	const all = sketch.corners ?? sketch.points;
++
++	return sketch.closed ? all.slice(0, -1) : all;
++}
++
++/** A round length near a quarter of the figure, for the scale bar. */
++export function scaleLength(sketch: ToshSketch): number {
++	const target = Math.max(span(sketch) / 4, 1e-9);
++	const power = 10 ** Math.floor(Math.log10(target));
++
++	return (
++		[1, 2, 5, 10]
++			.map((m) => m * power)
++			.filter((v) => v <= target)
++			.pop() ?? power
++	);
++}
++
++export function figure(value: number): string {
++	return value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2);
++}
++
++/** The figure as an SVG drawing of the given size: north up, numbered corners, the gap left open in red. */
++export function svg(
++	sketch: ToshSketch,
++	width: number,
++	height: number,
++	colors: { line: string; text: string }
++): string {
++	const marked = sketch.corners ?? sketch.points;
++	const all = [...sketch.points, ...marked];
++	const xs = all.map((p) => p[0]);
++	const ys = all.map((p) => p[1]);
++	const [minX, maxX, minY, maxY] = [
++		Math.min(...xs),
++		Math.max(...xs),
++		Math.min(...ys),
++		Math.max(...ys)
++	];
++	const inset = 34;
++	const scale = Math.min(
++		(width - 2 * inset) / Math.max(maxX - minX, 1e-9),
++		(height - 2 * inset) / Math.max(maxY - minY, 1e-9)
++	);
++	const offsetX = (width - (maxX - minX) * scale) / 2;
++	const offsetY = (height - (maxY - minY) * scale) / 2;
++	const place = (p: number[]) => [
++		offsetX + (p[0] - minX) * scale,
++		height - offsetY - (p[1] - minY) * scale
++	];
++	const path = sketch.points.map(
++		(p, i) => `${i ? 'L' : 'M'}${place(p)[0].toFixed(1)},${place(p)[1].toFixed(1)}`
++	);
++	const parts = [
++		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" font-family="system-ui, sans-serif">`,
++		`<path d="${path.join('')}" fill="none" stroke="${colors.line}" stroke-width="2"/>`
++	];
++
++	if (isOpen(sketch)) {
++		const [x1, y1] = place(sketch.points[sketch.points.length - 1]);
++		const [x2, y2] = place(sketch.points[0]);
++
++		parts.push(
++			`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#d33" stroke-width="2" stroke-dasharray="5 4"/>`,
++			`<circle cx="${x1}" cy="${y1}" r="4.5" fill="#d33"/>`
++		);
++	}
++
++	const labelled: number[][] = [];
++
++	corners(sketch).forEach((corner, index) => {
++		const [x, y] = place(corner);
++
++		parts.push(`<circle cx="${x}" cy="${y}" r="3.5" fill="${colors.line}"/>`);
++
++		if (index === 0) {
++			parts.push(
++				`<circle cx="${x}" cy="${y}" r="7.5" fill="none" stroke="${colors.text}" stroke-width="1.5"/>`
++			);
++		}
++
++		// a number that would cover another is left out; the figure enlarged has room for more
++		if (index > 0 && labelled.some(([lx, ly]) => Math.hypot(lx - x, ly - y) < 16)) return;
++
++		labelled.push([x, y]);
++		parts.push(
++			`<text x="${x + 9}" y="${y - 6}" font-size="11" font-weight="600" fill="${colors.text}">${index + 1}</text>`
++		);
++	});
++
++	const length = scaleLength(sketch) * scale;
++
++	parts.push(
++		`<path d="M${width - 18},${34} L${width - 18},${16} M${width - 22},${22} L${width - 18},${16} L${width - 14},${22}" fill="none" stroke="${colors.text}" stroke-width="1.2" opacity="0.7"/>`,
++		`<text x="${width - 33}" y="${24}" font-size="11" font-weight="700" fill="${colors.text}" opacity="0.7">N</text>`,
++		`<line x1="14" y1="${height - 18}" x2="${14 + length}" y2="${height - 18}" stroke="${colors.text}" stroke-width="2" opacity="0.7"/>`,
++		`<text x="${14 + length / 2}" y="${height - 5}" font-size="10" text-anchor="middle" fill="${colors.text}" opacity="0.7">${figure(scaleLength(sketch))} ${escape(sketch.unit)}</text>`,
++		'</svg>'
++	);
++
++	return parts.join('');
++}
++
++function escape(text: string): string {
++	return text.replace(
++		/[<>&"]/g,
++		(c) => ({ '"': '&quot;', '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] ?? c
++	);
++}
++
++function number(value: number): string {
++	return value.toFixed(3);
++}
++
++/** The figure as an R12 DXF in its own unit, the first point at the origin, as ToshLLM exports it. */
++export function dxf(sketch: ToshSketch): string {
++	const out = [
++		'0',
++		'SECTION',
++		'2',
++		'HEADER',
++		'9',
++		'$ACADVER',
++		'1',
++		'AC1009',
++		'9',
++		'$INSUNITS',
++		'70',
++		sketch.unit.toLowerCase().startsWith('m') ? '6' : '2',
++		'0',
++		'ENDSEC',
++		'0',
++		'SECTION',
++		'2',
++		'ENTITIES',
++		'0',
++		'POLYLINE',
++		'8',
++		'FIGURE',
++		'66',
++		'1',
++		'70',
++		'0',
++		'10',
++		'0.0',
++		'20',
++		'0.0',
++		'30',
++		'0.0'
++	];
++
++	for (const p of sketch.points.map((point) => placed(sketch, point))) {
++		out.push('0', 'VERTEX', '8', 'FIGURE', '10', number(p[0]), '20', number(p[1]), '30', '0.0');
++	}
++
++	out.push('0', 'SEQEND', '8', 'FIGURE');
++
++	if (isOpen(sketch)) {
++		const first = placed(sketch, sketch.points[0]);
++		const last = placed(sketch, sketch.points[sketch.points.length - 1]);
++
++		out.push(
++			'0',
++			'LINE',
++			'8',
++			'MISCLOSURE',
++			'10',
++			number(last[0]),
++			'20',
++			number(last[1]),
++			'30',
++			'0.0',
++			'11',
++			number(first[0]),
++			'21',
++			number(first[1]),
++			'31',
++			'0.0'
++		);
++	}
++
++	const size = Math.max(span(sketch) / 60, 1e-3);
++
++	corners(sketch)
++		.map((corner) => placed(sketch, corner))
++		.forEach((c, i) => {
++			out.push(
++				'0',
++				'POINT',
++				'8',
++				'CORNERS',
++				'10',
++				number(c[0]),
++				'20',
++				number(c[1]),
++				'30',
++				'0.0',
++				'0',
++				'TEXT',
++				'8',
++				'LABELS',
++				'10',
++				number(c[0] + size / 2),
++				'20',
++				number(c[1] + size / 2),
++				'30',
++				'0.0',
++				'40',
++				number(size),
++				'1',
++				String(i + 1)
++			);
++		});
++
++	out.push('0', 'ENDSEC', '0', 'EOF');
++
++	return out.join('\n') + '\n';
++}
++
++/** The numbered corners, east and north of the first one. */
++export function csv(sketch: ToshSketch): string {
++	const suffix = sketch.unit ? `_${sketch.unit}` : '';
++	const rows = corners(sketch).map((corner, i) => {
++		const c = placed(sketch, corner);
++
++		return `${i + 1},${number(c[0])},${number(c[1])}`;
++	});
++	const header = sketch.origin
++		? `point,x${suffix},y${suffix}`
++		: `point,east${suffix},north${suffix}`;
++
++	return [header, ...rows].join('\n') + '\n';
++}
++
++/** A PNG of the drawing on white, twice its size, as a report wants it. */
++export async function png(sketch: ToshSketch): Promise<Blob | null> {
++	const drawing = svg(sketch, 1200, 800, { line: '#2563eb', text: '#111' });
++	const image = new Image();
++
++	image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(drawing);
++	await image.decode();
++	const canvas = document.createElement('canvas');
++
++	canvas.width = 2400;
++	canvas.height = 1600;
++	const context = canvas.getContext('2d');
++
++	if (!context) return null;
++
++	context.fillStyle = '#fff';
++	context.fillRect(0, 0, canvas.width, canvas.height);
++	context.drawImage(image, 0, 0, canvas.width, canvas.height);
++
++	return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
++}
+diff --git a/tools/ui/src/lib/types/api.d.ts b/tools/ui/src/lib/types/api.d.ts
+index b52485ade..999f3cf61 100644
+--- a/tools/ui/src/lib/types/api.d.ts
++++ b/tools/ui/src/lib/types/api.d.ts
+@@ -1,9 +1,10 @@
+ import type { ChatMessagePromptProgress, ChatRole } from './chat';
++import type { ToshChunk } from './tosh';
+ import type {
+ 	ContentPartType,
+ 	FileTypeAudio,
+ 	ServerModelsSseEventType,
+ 	ServerModelStatus,
+ 	ServerRole
+ } from '$lib/enums';
+ 
+@@ -197,16 +198,18 @@ export interface ApiModelDetails {
+ 		family?: string;
+ 		families?: string[];
+ 		parameter_size?: string;
+ 		quantization_level?: string;
+ 	};
+ }
+ 
+ export interface ApiLlamaCppServerProps {
++	/** The server answers chat requests that bring no tools with its own Tosh agent. */
++	tosh_agent?: boolean;
+ 	default_generation_settings: {
+ 		id: number;
+ 		id_task: number;
+ 		n_ctx: number;
+ 		speculative: boolean;
+ 		is_processing: boolean;
+ 		params: {
+ 			n_predict: number;
+@@ -345,16 +348,17 @@ export interface ApiChatCompletionToolCallDelta {
+ 	function?: ApiChatCompletionToolCallFunctionDelta;
+ }
+ 
+ export interface ApiChatCompletionToolCall extends ApiChatCompletionToolCallDelta {
+ 	function?: ApiChatCompletionToolCallFunctionDelta & { arguments?: string };
+ }
+ 
+ export interface ApiChatCompletionStreamChunk {
++	tosh?: ToshChunk;
+ 	id?: string;
+ 	object?: string;
+ 	model?: string;
+ 	choices: Array<{
+ 		model?: string;
+ 		metadata?: { model?: string };
+ 		delta: {
+ 			content?: string;
+diff --git a/tools/ui/src/lib/types/database.d.ts b/tools/ui/src/lib/types/database.d.ts
+index 57b77f06c..ce53e99f8 100644
+--- a/tools/ui/src/lib/types/database.d.ts
++++ b/tools/ui/src/lib/types/database.d.ts
+@@ -1,8 +1,9 @@
++import type { ToshMessageData } from './tosh';
+ import { AttachmentType, ReasoningEffort, ToolSource } from '$lib/enums';
+ import type { ChatMessageTimings, ChatMessageType, ChatRole } from '$lib/types/chat';
+ 
+ /**
+  * @deprecated Legacy per-conversation MCP server flags. MCP server enabled
+  * state is global now; per-conversation tool policy lives in
+  * `disabledTools` / `disabledToolCategories`. Read by the migration only.
+  */
+@@ -119,16 +120,18 @@ export interface DatabaseMessage {
+ 	content: string;
+ 	parent: string | null;
+ 	/**
+ 	 * @deprecated - left for backward compatibility
+ 	 */
+ 	thinking?: string;
+ 	/** Reasoning content produced by the model (separate from visible content) */
+ 	reasoningContent?: string;
++	/** What the server's Tosh agent reported for this answer: its steps, a sketch, a map */
++	tosh?: ToshMessageData;
+ 	/** Serialized JSON array of tool calls made by assistant messages */
+ 	toolCalls?: string;
+ 	/** Chat completion id streamed by the server, used to target realtime control (e.g. end reasoning) */
+ 	completionId?: string;
+ 	/** Tool call ID for tool result messages (role: 'tool') */
+ 	toolCallId?: string;
+ 	/** Working directory the tool call ran with (sent via the x-tool-cwd header), stored per call so the UI can show it accurately even after the conversation cwd changes */
+ 	toolCwd?: string;
+diff --git a/tools/ui/src/lib/types/index.ts b/tools/ui/src/lib/types/index.ts
+index 453af9bb8..21273ad03 100644
+--- a/tools/ui/src/lib/types/index.ts
++++ b/tools/ui/src/lib/types/index.ts
+@@ -235,8 +235,16 @@ export type {
+ 	WriteFileTitleMeta
+ } from './tools';
+ 
+ // Reasoning
+ export type { ReasoningEffortLevel } from './reasoning';
+ 
+ // Splash
+ export type { SplashDimensions } from './splash';
++export type {
++	ToshCall,
++	ToshChunk,
++	ToshMapLayer,
++	ToshMapRequest,
++	ToshMessageData,
++	ToshSketch
++} from './tosh';
+diff --git a/tools/ui/src/lib/types/settings.d.ts b/tools/ui/src/lib/types/settings.d.ts
+index 377a57040..20260b4c3 100644
+--- a/tools/ui/src/lib/types/settings.d.ts
++++ b/tools/ui/src/lib/types/settings.d.ts
+@@ -1,11 +1,12 @@
+ import type { ChatMessagePromptProgress, ChatMessageTimings } from './chat';
+ import type { DatabaseMessageExtra } from './database';
+ import type { OpenAIToolDefinition } from './mcp';
++import type { ToshChunk } from './tosh';
+ import type { Icon } from '@lucide/svelte';
+ import type { SETTING_CONFIG_DEFAULT, SETTINGS_SECTION_TITLES } from '$lib/constants';
+ import type {
+ 	ParameterSource,
+ 	ReasoningEffort,
+ 	SettingsFieldType,
+ 	StreamConnectionState,
+ 	SyncableParameterType
+@@ -124,16 +125,19 @@ export interface SettingsChatServiceOptions {
+ 	// Callbacks
+ 	onChunk?: (chunk: string) => void;
+ 	onReasoningChunk?: (chunk: string) => void;
+ 	onToolCallChunk?: (chunk: string) => void;
+ 	onAttachments?: (extras: DatabaseMessageExtra[]) => void;
+ 	onModel?: (model: string) => void;
+ 	onCompletionId?: (id: string) => void;
+ 	onTimings?: (timings?: ChatMessageTimings, promptProgress?: ChatMessagePromptProgress) => void;
++	onTosh?: (tosh: ToshChunk) => void;
++	/** "off" asks a server with a Tosh agent for raw inference, as an internal request such as a title wants */
++	toshAgent?: 'off';
+ 	onComplete?: (
+ 		response: string,
+ 		reasoningContent?: string,
+ 		timings?: ChatMessageTimings,
+ 		toolCalls?: string
+ 	) => void;
+ 	onError?: (error: Error) => void;
+ 	onConnectionState?: (state: StreamConnectionState) => void;
+diff --git a/tools/ui/src/lib/types/tosh.d.ts b/tools/ui/src/lib/types/tosh.d.ts
+new file mode 100644
+index 000000000..6418555ed
+--- /dev/null
++++ b/tools/ui/src/lib/types/tosh.d.ts
+@@ -0,0 +1,56 @@
++/** A call the server's Tosh agent made while it answered, as its progress events report it. */
++export interface ToshCall {
++	id?: string;
++	tool?: string;
++	arguments?: unknown;
++	status?: string;
++	state?: string;
++	result?: string;
++	summary?: string;
++}
++
++/** A figure the agent attached to an answer in a plane of its own, such as a tract from a deed's calls. */
++export interface ToshSketch {
++	title?: string;
++	unit: string;
++	points: number[][];
++	corners?: number[][];
++	closed: boolean;
++	/** Where the first point lies in the coordinate system `plane` names: exports put the figure there. */
++	origin?: number[];
++	plane?: string;
++}
++
++export interface ToshMapRequest {
++	calls: unknown[];
++	show?: boolean;
++}
++
++export interface ToshMapLayer {
++	title?: string;
++	type?: string;
++	features: unknown[];
++	link?: { title?: string; url?: string };
++	complete?: boolean;
++	subtitle?: string;
++	fields?: { name: string; alias?: string }[];
++	drawn?: boolean;
++}
++
++/** The `tosh` object of a chunk: a progress event while the agent works, or the answer's metadata at the end. */
++export interface ToshChunk {
++	version?: number;
++	event?: { type: string; call?: ToshCall; [key: string]: unknown };
++	sketches?: ToshSketch[];
++	map_request?: ToshMapRequest;
++	map?: { layers: ToshMapLayer[] };
++	[key: string]: unknown;
++}
++
++/** What an assistant message keeps of the agent's work. */
++export interface ToshMessageData {
++	steps?: ToshCall[];
++	sketches?: ToshSketch[];
++	mapRequest?: ToshMapRequest;
++	map?: { layers: ToshMapLayer[] };
++}
+diff --git a/tools/ui/src/lib/utils/convert-files-to-extra.ts b/tools/ui/src/lib/utils/convert-files-to-extra.ts
+index 735e91c44..507e2bb28 100644
+--- a/tools/ui/src/lib/utils/convert-files-to-extra.ts
++++ b/tools/ui/src/lib/utils/convert-files-to-extra.ts
+@@ -1,15 +1,16 @@
+ import { convertPDFToImage, convertPDFToText } from './pdf-processing';
+ import { isSvgMimeType, svgBase64UrlToPngDataURL } from './svg-to-png';
+ import { isLikelyTextFile, readFileAsText } from './text-files';
+ import { isWebpMimeType, webpBase64UrlToPngDataURL } from './webp-to-png';
+ import { SETTINGS_KEYS } from '$lib/constants';
+ import { AttachmentType, FileTypeCategory, SpecialFileType } from '$lib/enums';
+ import { modelsStore } from '$lib/stores/models/index.svelte';
++import { serverStore } from '$lib/stores/server.svelte';
+ import { settingsStore } from '$lib/stores/settings/index.svelte';
+ import type { ChatUploadedFile, DatabaseMessageExtra, FileProcessingResult } from '$lib/types';
+ import { getFileTypeCategory } from '$lib/utils';
+ import { toast } from 'svelte-sonner';
+ 
+ function readFileAsBase64(file: File): Promise<string> {
+ 	return new Promise((resolve, reject) => {
+ 		const reader = new FileReader();
+@@ -134,17 +135,22 @@ export async function parseFilesToMessageExtras(
+ 					);
+ 
+ 					shouldProcessAsImages = false;
+ 				}
+ 
+ 				if (shouldProcessAsImages) {
+ 					// Process PDF as images (only for vision models)
+ 					try {
+-						const images = await convertPDFToImage(file.file);
++						const images = await convertPDFToImage(
++							file.file,
++							Number(settingsStore.getConfig(SETTINGS_KEYS.MAX_IMAGE_RESOLUTION)) ||
++								Number(serverStore.uiSettings?.[SETTINGS_KEYS.MAX_IMAGE_RESOLUTION]) ||
++								0
++						);
+ 
+ 						// Show success toast for PDF image processing
+ 						toast.success(
+ 							`PDF "${file.name}" processed as ${images.length} images for vision model.`,
+ 							{
+ 								duration: 3000
+ 							}
+ 						);
+diff --git a/tools/ui/src/lib/utils/pdf-processing.ts b/tools/ui/src/lib/utils/pdf-processing.ts
+index b79f8d785..de1407708 100644
+--- a/tools/ui/src/lib/utils/pdf-processing.ts
++++ b/tools/ui/src/lib/utils/pdf-processing.ts
+@@ -81,31 +81,37 @@ export async function convertPDFToText(file: File): Promise<string> {
+ 			`Failed to convert PDF to text: ${error instanceof Error ? error.message : 'Unknown error'}`
+ 		);
+ 	}
+ }
+ 
+ /**
+  * Convert PDF pages to PNG images as data URLs
+  * @param file - The PDF file to convert
+- * @param scale - Rendering scale factor (default: 1.5)
++ * @param megapixels - Size each page is drawn at, as the image size setting lets it reach the model (default: scale 1.5)
+  * @returns Promise resolving to array of PNG data URLs
+  */
+-export async function convertPDFToImage(file: File, scale: number = 1.5): Promise<string[]> {
++export async function convertPDFToImage(file: File, megapixels: number = 0): Promise<string[]> {
+ 	if (!browser) {
+ 		throw new Error('PDF processing is only available in the browser');
+ 	}
+ 
+ 	try {
+ 		const buffer = await getFileAsBuffer(file);
+ 		const doc = await pdfjs.getDocument({ data: buffer }).promise;
+ 		const pages: Promise<string>[] = [];
+ 
+ 		for (let i = 1; i <= doc.numPages; i++) {
+ 			const page = await doc.getPage(i);
++			const base = page.getViewport({ scale: 1 });
++			// a scan's figures need the pixels the setting allows; scale 1.5 makes a letter page 1.1 MP
++			const scale =
++				megapixels > 0
++					? Math.max(1.5, Math.sqrt((megapixels * 1e6) / (base.width * base.height)))
++					: 1.5;
+ 			const viewport = page.getViewport({ scale });
+ 			const canvas = document.createElement('canvas');
+ 			const ctx = canvas.getContext('2d');
+ 
+ 			canvas.width = viewport.width;
+ 			canvas.height = viewport.height;
+ 
+ 			if (!ctx) {
+@@ -115,17 +121,20 @@ export async function convertPDFToImage(file: File, scale: number = 1.5): Promis
+ 			const task = page.render({
+ 				canvas: canvas,
+ 				canvasContext: ctx,
+ 				viewport: viewport
+ 			});
+ 
+ 			pages.push(
+ 				task.promise.then(() => {
+-					return canvas.toDataURL(MimeTypeImage.PNG);
++					// a page drawn large is a scan photo by now: JPEG keeps it a few times smaller than PNG
++					return scale > 1.5
++						? canvas.toDataURL(MimeTypeImage.JPEG, 0.92)
++						: canvas.toDataURL(MimeTypeImage.PNG);
+ 				})
+ 			);
+ 		}
+ 
+ 		return await Promise.all(pages);
+ 	} catch (error) {
+ 		console.error('Error converting PDF to images:', error);
+ 

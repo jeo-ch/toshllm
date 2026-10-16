@@ -537,7 +537,8 @@ struct ChatAdvancedSettingsSection: View {
         typicalP = 1; presencePenalty = 0; frequencyPenalty = 0; dryMultiplier = 0
         dryBase = 1.75; dryAllowedLength = 2; dryPenaltyLastN = 0; samplers = ""
         backendSampling = false; customJSON = ""; agenticMaxTurns = 10; pasteLongTextLength = 2500
-        maxImageMegapixels = ProductDefaults.double(SettingsKeys.chatMaxImageMegapixels, or: 1); pdfAsImages = false
+        maxImageMegapixels = ProductDefaults.double(SettingsKeys.chatMaxImageMegapixels, or: 1)
+        pdfAsImages = ProductDefaults.bool(SettingsKeys.chatPDFAsImages, or: false)
         autoCompact = true; smoothTyping = true; agentToolsEnabled = false; jsSandboxEnabled = false
         sympyEnabled = false; scientificEnabled = false; mathAgentEnabled = false; mathToolsAllowed = true
         memoryToolsEnabled = true; toolsRuntime = ""; toolResultLimit = ToolResultLimit.defaultCharacters

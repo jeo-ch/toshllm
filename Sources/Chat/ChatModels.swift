@@ -88,6 +88,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     /// An agent's request for the map of this answer, sent back as it came, and the map once fetched.
     var mapRequest: String? = nil
     var map: ChatMap? = nil
+    /// A figure the agent drew with the answer in a plane of its own, such as a tract from its deed's calls.
+    var sketches: [ChatSketch]? = nil
 
     var estimatedTokens: Int {
         let text = role == "assistant" ? parts.body + (settledInterim ?? "") : wireContent

@@ -250,7 +250,7 @@ final class ChatStore: ObservableObject {
 
     /// A progress event of the server agent: the calls it ran show as cards, ahead of the answer.
     func agentEvent(_ event: [String: Any], conversation id: UUID) {
-        lastStreamActivity = Date()
+        liveness.note(text: false)
         switch event["type"] as? String {
         case "intent":
             lastMathIntent = (event["intent"] as? String).flatMap(MathIntent.init(rawValue:))
@@ -302,8 +302,9 @@ final class ChatStore: ObservableObject {
     private var watchdog: Task<Void, Never>?
     /// Where the running reply is streamed from, so Stop can cancel it on the engine too.
     private var activeStream: (port: Int, identity: String)?
-    private var lastStreamActivity = Date()
-    private var sawFirstToken = false
+    private var liveness = StreamLiveness()
+    /// Estimated tokens of the tool definitions the last request sent, which the context holds before any reply.
+    @Published private(set) var toolTokens = 0
     private var slotConvID: UUID?
     private var agentContext: AgentRunContext?
 
@@ -710,7 +711,7 @@ final class ChatStore: ObservableObject {
                 self?.live.update(reasoning: snap.reasoning, visible: snap.visible, speed: snap.speed)
                 let prefilling = snap.reasoning.isEmpty && snap.visible.isEmpty
                 self?.live.setPrefillProgress(prefilling ? snap.progress : nil)
-                self?.noteStreamActivity()
+                self?.noteStreamActivity(text: !prefilling)
                 // The producer already spaced its publishes; the extra wait here
                 // is what the view can absorb, and it is the same curve.
                 try? await Task.sleep(for: .milliseconds(
@@ -785,7 +786,7 @@ final class ChatStore: ObservableObject {
                         // between the passes the agent sends keep-alives, which show it is working
                         if agentTurn, text.hasPrefix(":") {
                             let owner = self
-                            await MainActor.run { owner?.lastStreamActivity = Date() }
+                            await MainActor.run { owner?.liveness.note(text: false) }
                             continue
                         }
                         if agentTurn, text.hasPrefix("data: "), text.contains("\"tosh\""),
@@ -973,6 +974,11 @@ final class ChatStore: ObservableObject {
                     body["tools"] = availableTools.compactMap(\.openAIDefinition)
                     body["tool_choice"] = "auto"
                 }
+                let schemas = (body["tools"] as? [[String: Any]])
+                    .flatMap { try? JSONSerialization.data(withJSONObject: $0) }?.count ?? 0
+                // about four characters per token in a JSON schema
+                let toolOwner = self
+                await MainActor.run { toolOwner?.toolTokens = schemas / 4 }
                 if reasoningOff {
                     body["chat_template_kwargs"] = ["enable_thinking": false]
                     // For templates that ignore enable_thinking (Qwen3.6 still
@@ -1202,6 +1208,11 @@ final class ChatStore: ObservableObject {
                               toolCalls: finalToolCalls, interim: round.interim)
                 if wasAgentTurn, followUp == nil, let request = finalMeta?["map_request"] as? [String: Any] {
                     store?.attachMapRequest(request, conversation: convID, port: port)
+                }
+                if wasAgentTurn, followUp == nil,
+                   let sketches = (finalMeta?["sketches"] as? [[String: Any]])?.compactMap(ChatSketch.init),
+                   !sketches.isEmpty {
+                    store?.attachSketches(sketches, conversation: convID)
                 }
                 if shouldDeliverQueued {
                     if !finalToolCalls.isEmpty { store?.interruptPendingToolCalls(conversation: convID) }
@@ -1630,24 +1641,19 @@ final class ChatStore: ObservableObject {
 
     // MARK: stall watchdog
 
-    /// Called from the stream whenever a token reaches the UI; resets the
-    /// inactivity timer and marks that generation (not prefill) has begun.
-    func noteStreamActivity() {
-        lastStreamActivity = Date()
-        sawFirstToken = true
+    /// Called from the stream whenever something reaches the UI: prompt progress or text.
+    func noteStreamActivity(text: Bool) {
+        liveness.note(text: text)
     }
 
     private func startWatchdog(port: Int) {
         watchdog?.cancel()
-        lastStreamActivity = Date()
-        sawFirstToken = false
+        liveness = StreamLiveness()
         watchdog = Task { [weak self] in
             while true {
                 try? await Task.sleep(for: .seconds(5))
                 guard let self, !Task.isCancelled, self.generating else { return }
-                let idle = Date().timeIntervalSince(self.lastStreamActivity)
-                let limit: TimeInterval = self.sawFirstToken ? 30 : 180
-                if idle > limit {
+                if self.liveness.stalled() {
                     self.handleStreamStall()
                     return
                 }
@@ -1663,7 +1669,8 @@ final class ChatStore: ObservableObject {
         task = nil
         watchdog = nil
         ServerManager.shared.active.stop()
-        lastError = Self.stallMessage
+        lastError = Self.stallMessage(moe: ServerSettings.modelIsMoE(
+            at: UserDefaults.standard.string(forKey: SettingsKeys.modelPath) ?? ""))
         // The turn is over here, not merely paused: a call left in `.pending`
         // would strand its card in the transcript with nothing left to settle it.
         if let id = generatingConvID ?? currentID { interruptPendingToolCalls(conversation: id) }
@@ -1673,8 +1680,10 @@ final class ChatStore: ObservableObject {
         save()
     }
 
-    nonisolated static var stallMessage: String {
-        "El motor dejó de responder y se detuvo para liberar memoria. Suele pasar con modelos MoE grandes en GPU AMD: usa un modelo denso (8B) o sube 'Expertos MoE en CPU'. / The engine stopped responding and was stopped to free memory. This happens with large MoE models on AMD GPUs: use a dense model (8B) or raise 'MoE experts on CPU'."
+    nonisolated static func stallMessage(moe: Bool) -> String {
+        moe
+            ? "El motor dejó de responder y se detuvo para liberar memoria. Suele pasar con modelos MoE grandes en GPU AMD: usa un modelo denso (8B) o sube 'Expertos MoE en CPU'. / The engine stopped responding and was stopped to free memory. This happens with large MoE models on AMD GPUs: use a dense model (8B) or raise 'MoE experts on CPU'."
+            : "El motor dejó de responder y se detuvo para liberar memoria. / The engine stopped responding and was stopped to free memory."
     }
 
     /// The set advertised to the model is the allowlist for what may run. A call

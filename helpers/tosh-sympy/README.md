@@ -248,6 +248,14 @@ longitude/latitude with an optional `title`, `subtitle` (which of its features t
 every feature fit) and `link` (`{"title", "url"}`, the layer in its own viewer). The app draws it at once when `show` is
 true, the request having asked for a map, and otherwise offers it under the answer.
 
+Figures that no coordinates place on the ground, such as the tracts traced from a deed's calls, go in the answer's
+own `tosh` as `"sketches": [{"points": [[x, y], ...], "unit": "ft", "closed": bool, "title": "...", "corners": [...]}]`,
+each the path east and north of its first point, in order. The app draws them under the answer without a map, small
+and several to a row, each one enlarged on request; it numbers `corners` (the points themselves when absent) from 1
+and, when `closed`, shows in red the gap between the last point and the first. A figure that lies in a coordinate
+system of its own, such as a State Plane zone, adds `"origin": [x, y]` (its first point there) and `"plane"` (the
+system's name): its DXF and CSV are then written at those coordinates.
+
 ### Direct calls
 
 `GET /tools` lists the ten tools with their schemas; `POST /tools`

@@ -5,8 +5,29 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Chat: a figure an agent places in a coordinate system, such as a State Plane zone, exports at those coordinates.** Its DXF drawing and its CSV of corners carry the system's X and Y, so they open in place in CAD or GIS.
+
 ### Fixed
 
+- **Web chat: an agent's answer survives a phone locking or switching apps.** The agent kept going only while the browser stayed connected, so a long turn such as reading a scanned deed failed when the page went to the background; it now runs to its end and the page picks the answer up when it comes back.
+
+## [0.87.25] - 2026-10-15
+
+### Added
+
+- **Chat: an agent can draw figures that no map places under its answer, such as each tract of a deed.** They show small, several to a row, and each one, like a map, can be enlarged; their corners are numbered from the start and, when a figure should close and does not, what it lacks shows in red; each exports as a PNG image, a DXF drawing for CAD and a CSV of its corners.
+- **Web chat: the engine's agent answers from the browser as it does in the app.** The web chat no longer sends tools of its own unless you add them, so requests reach the agent; its steps, figures and maps show under the answer with the same exports. A new browser starts with the app's image size and PDF handling, and a PDF's pages are drawn at that size, so a scanned deed reads as in the app.
+
+### Improved
+
+- **Chat: a map exports one GeoJSON file per layer and kind of geometry.** ArcGIS Pro's JSON To Features tool reads one kind per run, so each file now goes in at once.
+
+### Fixed
+
+- **Chat: a long prompt on a slower GPU is no longer stopped as if the engine had hung.** Each batch of prompt the engine reported counted as the answer starting, which left 30 seconds for the next one, and a Radeon Pro 580X takes longer with a large context. The engine is now stopped only when neither prompt nor answer comes for three minutes, and the message names MoE models only when one is loaded. Reported in [#123](https://github.com/engeldlgado/toshllm/issues/123).
+- **Chat: the context meter counts the definitions of the active tools before the first reply.** With several MCP servers on they can take tens of thousands of tokens, and the meter showed 0 until an answer came back; its tooltip now says how much they take. Reported in [#123](https://github.com/engeldlgado/toshllm/issues/123).
 - **Chat: a photo or recording reaches the model when the math tools run the turn.** The turn went to the math agent with the text alone, so the answer ignored the attachment and a message with only a photo failed.
 
 ## [0.87.24] - 2026-10-14

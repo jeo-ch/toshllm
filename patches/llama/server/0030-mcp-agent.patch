@@ -65,6 +65,28 @@ index 909f7f9e7..409a80ff5 100644
      bool models_autoload = true;        // automatically load models when requested via the router server
      std::string models_preset_hf = "";  // show a warning about remote presets on router loaded (if not empty)
  
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 939016064..f539502a4 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -5000,16 +5000,17 @@ static json get_res_props(const server_context_meta & meta, const common_params
+         { "ui_settings",                 meta.json_ui_settings },
+         { "chat_template",               tmpl_default },
+         { "chat_template_caps",          meta.chat_template_caps },
+         { "bos_token",                   meta.bos_token_str },
+         { "eos_token",                   meta.eos_token_str },
+         { "build_info",                  meta.build_info },
+         { "is_sleeping",                 is_sleeping },
+         { "cors_proxy_enabled",          params.ui_mcp_proxy },
++        { "tosh_agent",                  !params.mcp_agent.empty() },
+     };
+     if (params.use_jinja) {
+         if (!tmpl_tools.empty()) {
+             props["chat_template_tool_use"] = tmpl_tools;
+         }
+     }
+ 
+     return props;
 diff --git a/tools/server/server-mcp.cpp b/tools/server/server-mcp.cpp
 index 65e39179d..726812ddc 100644
 --- a/tools/server/server-mcp.cpp
@@ -744,10 +766,13 @@ index e7332f2e5..8e43dc07d 100644
      ~server_tools();
  };
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index 6e2d8ff9d..608627cc9 100644
+index 6e2d8ff9d..fe32d3ae3 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
-@@ -10,12 +10,17 @@
+@@ -7,18 +7,23 @@
+ 
+ #include "arg.h"
+ #include "build-info.h"
  #include "common.h"
  #include "fit.h"
  #include "llama.h"
@@ -765,7 +790,13 @@ index 6e2d8ff9d..608627cc9 100644
  #include <thread> // for std::thread::hardware_concurrency
  
  #if defined(_WIN32)
-@@ -48,10 +53,274 @@ void llama_server_terminate() {
+ #include <windows.h>
+ #endif
+ 
+@@ -45,16 +50,284 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
+ void llama_server_terminate();
+ void llama_server_terminate() {
+     if (shutdown_handler) {
          shutdown_handler(0);
      }
  }
@@ -871,10 +902,12 @@ index 6e2d8ff9d..608627cc9 100644
 +    json out;
 +};
 +
-+// a client that goes away stops the agent, its model passes and its tool calls
-+struct tosh_agent_res : server_http_res {
++// a client that goes away stops the agent, its model passes and its tool calls, unless the request names its
++// conversation: then the agent runs to its end into the replay buffer, where the client picks the answer up again
++struct tosh_agent_res : server_res_spipe {
 +    std::shared_ptr<tosh_agent_state> state;
 +    void on_complete() override {
++        server_res_spipe::on_complete();
 +        state->cancelled = true;
 +        state->cv.notify_all();
 +    }
@@ -956,20 +989,22 @@ index 6e2d8ff9d..608627cc9 100644
 +            state->cv.notify_all();
 +        }).detach();
 +        auto res = std::make_unique<tosh_agent_res>();
++        res->set_req(&req);
 +        res->state = state;
 +        res->content_type = "text/event-stream";
 +        res->status = 200;
 +        json head = {{"id", "chatcmpl-tosh-" + tosh_agent_key().substr(0, 32)}, {"object", "chat.completion.chunk"},
 +                     {"created", (int64_t) time(nullptr)},
 +                     {"model", body.contains("model") && body.at("model").is_string() ? body.at("model").get<std::string>() : "tosh-agent"}};
-+        res->next = [state, gone = req.should_stop, head, finals = std::vector<std::string>(), sent = size_t(0),
++        auto gone = [self = res.get()]() { return self->should_stop(); };
++        res->set_next([state, gone, head, finals = std::vector<std::string>(), sent = size_t(0),
 +                     streamed = std::string(), retracted = false, started = false](std::string & output) mutable -> bool {
 +            if (finals.empty()) {
 +                std::unique_lock<std::mutex> lock(state->mutex);
 +                // a keep-alive every 5 s, but a client that went away is noticed within a second
 +                for (int i = 0; i < 5 && !state->done && state->events.empty(); i++) {
 +                    state->cv.wait_for(lock, std::chrono::seconds(1), [&] { return state->done || !state->events.empty(); });
-+                    if (gone && gone()) {
++                    if (gone()) {
 +                        state->cancelled = true;
 +                        state->cv.notify_all();
 +                        return false;
@@ -1030,7 +1065,7 @@ index 6e2d8ff9d..608627cc9 100644
 +            }
 +            output = finals[sent++];
 +            return sent < finals.size();
-+        };
++        });
 +        return res;
 +    };
 +}
@@ -1040,7 +1075,13 @@ index 6e2d8ff9d..608627cc9 100644
  static server_http_context::handler_t ex_wrapper(server_http_context::handler_t func) {
      return [func = std::move(func)](const server_http_req & req) -> server_http_res_ptr {
          std::string message;
-@@ -268,12 +537,16 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
+         error_type error;
+         try {
+             return func(req);
+@@ -265,18 +538,22 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
+     ctx_http.get ("/metrics",                  ex_wrapper(routes.get_metrics));
+     ctx_http.get ("/props",                    ex_wrapper(routes.get_props));
+     ctx_http.post("/props",                    ex_wrapper(routes.post_props));
      ctx_http.get ("/models",                   ex_wrapper(routes.get_models));
      ctx_http.get ("/v1/models",                ex_wrapper(routes.get_models));
      ctx_http.post("/completion",               ex_wrapper(routes.post_completions)); // legacy
@@ -1059,7 +1100,13 @@ index 6e2d8ff9d..608627cc9 100644
      ctx_http.post("/responses",                ex_wrapper(routes.post_responses_oai));
      ctx_http.post("/v1/audio/transcriptions",  ex_wrapper(routes.post_transcriptions_oai));
      ctx_http.post("/audio/transcriptions",     ex_wrapper(routes.post_transcriptions_oai));
-@@ -363,11 +636,17 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
+     ctx_http.post("/v1/messages",              ex_wrapper(routes.post_anthropic_messages)); // anthropic messages API
+     ctx_http.post("/infill",                   ex_wrapper(routes.post_infill));
+     ctx_http.post("/embedding",                ex_wrapper(routes.post_embeddings)); // legacy
+@@ -360,17 +637,23 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
+         mcp_mgr.start(params);
+     } catch (const std::exception & e) {
+         SRV_ERR("MCP starting failed: %s\n", e.what());
          return 1;
      }
  
@@ -1078,3 +1125,6 @@ index 6e2d8ff9d..608627cc9 100644
              return 1;
          }
          ctx_http.get ("/tools",           ex_wrapper(tools.handle_get));
+         ctx_http.post("/tools",           ex_wrapper(tools.handle_post));
+         if (!params.server_tools.empty()) {
+             warn_names.push_back("server tools (experimental)");

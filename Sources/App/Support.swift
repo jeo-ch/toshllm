@@ -23,6 +23,10 @@ enum ProductDefaults {
     static func double(_ key: String, or fallback: Double) -> Double {
         (values()[key] as? NSNumber)?.doubleValue ?? fallback
     }
+
+    static func bool(_ key: String, or fallback: Bool) -> Bool {
+        (values()[key] as? NSNumber)?.boolValue ?? fallback
+    }
 }
 
 // MARK: - Settings keys (single source of truth)

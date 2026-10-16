@@ -814,6 +814,9 @@ struct NativeChatView: View {
                         chat.deleteMessageAndFollowing(msg.id)
                     })
                     .equatable()
+                if msg.role == "assistant", let sketches = msg.sketches, !sketches.isEmpty {
+                    ChatSketchList(sketches: sketches)
+                }
                 if msg.role == "assistant", msg.map != nil || msg.mapRequest != nil {
                     ChatMapSection(message: msg, loading: chat.mapLoading.contains(msg.id),
                                    failed: chat.mapFailed.contains(msg.id),
@@ -1369,8 +1372,8 @@ struct NativeChatView: View {
                         customJSON = ""
                         agenticMaxTurns = 10
                         pasteLongTextLength = 2500
-                        maxImageMegapixels = 1
-                        pdfAsImages = false
+                        maxImageMegapixels = ProductDefaults.double(SettingsKeys.chatMaxImageMegapixels, or: 1)
+                        pdfAsImages = ProductDefaults.bool(SettingsKeys.chatPDFAsImages, or: false)
                     }
                     .buttonStyle(.link)
                     .font(.caption)
@@ -2287,7 +2290,7 @@ struct NativeChatView: View {
                 }
 
                 if server.state == .running && contextLimit > 0 {
-                    let used = chat.contextUsed ?? 0
+                    let used = chat.contextUsed ?? chat.toolTokens
                     let fraction = Double(used) / Double(contextLimit)
                     HStack(spacing: 5) {
                         Label(loc.t("Contexto", "Context"), systemImage: "memorychip")
@@ -2300,7 +2303,12 @@ struct NativeChatView: View {
                             .foregroundStyle(fraction > 0.8 ? .orange : .secondary)
                     }
                     .help(loc.t("Tokens usados por el historial y la última respuesta. Al superar 70%, la app intenta resumir los turnos antiguos.",
-                                "Tokens used by history and the latest response. Past 70%, the app attempts to summarize older turns."))
+                                "Tokens used by history and the latest response. Past 70%, the app attempts to summarize older turns.")
+                          + (chat.toolTokens >= 1000
+                             ? " " + loc.t("Las definiciones de las herramientas activas ocupan unos %@k.",
+                                           "The definitions of the active tools take about %@k of it.",
+                                           "\(chat.toolTokens / 1000)")
+                             : ""))
                 }
 
                 if server.state == .running && contextMaySlowGeneration && chat.canCompactCurrent {
