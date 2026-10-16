@@ -446,55 +446,6 @@ struct BenchmarksView: View {
         }
     }
 
-    private func parameterSectionTitle(_ title: String, icon: String) -> some View {
-        Label(title, systemImage: icon)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(.secondary)
-    }
-
-    private func workloadField(_ title: String, flag: String, value: Binding<Int>, help: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 4) {
-                Text(title.uppercased())
-                Text(flag).foregroundStyle(.tertiary)
-            }
-            .font(.system(size: 9, weight: .semibold)).tracking(0.5).foregroundStyle(.secondary)
-            BenchmarkIntegerField(value: value, pointSize: 15)
-                .padding(.horizontal, 9).padding(.vertical, 7)
-                .background(WorkspaceStyle.surface, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(WorkspaceStyle.border))
-                .disabled(busy)
-        }
-        .frame(maxWidth: .infinity)
-        .help(help)
-    }
-
-    private func runChoice(_ title: String, subtitle: String, icon: String, prominent: Bool,
-                           disabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: icon).symbolRenderingMode(.hierarchical)
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(width: 31, height: 31)
-                    .background(prominent ? Color.white.opacity(0.16) : Color.appAccent.opacity(0.12),
-                                in: RoundedRectangle(cornerRadius: 8))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 13, weight: .semibold))
-                    Text(subtitle).font(.system(size: 10)).opacity(0.72).lineLimit(2)
-                }
-                Spacer(minLength: 4)
-                Image(systemName: "play.fill").font(.caption)
-            }
-            .foregroundStyle(prominent ? Color.white : Color.primary)
-            .padding(11).frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
-            .background(prominent ? Color.appAccent : WorkspaceStyle.inset,
-                        in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(prominent ? Color.clear : WorkspaceStyle.border))
-        }
-        .buttonStyle(.plain).disabled(disabled).opacity(disabled ? 0.45 : 1)
-    }
-
     private var sweepProgress: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -786,15 +737,6 @@ struct BenchmarksView: View {
         }
     }
 
-    /// A small icon button with its own hover highlight, for the per-row actions
-    /// revealed when hovering a comparison or history row.
-    private func rowAction(_ system: String, _ help: String, destructive: Bool = false,
-                           _ action: @escaping () -> Void) -> some View {
-        Button(action: action) { Image(systemName: system) }
-            .buttonStyle(HoverIconButtonStyle(tint: destructive ? .red : Color.appAccent))
-            .help(help)
-    }
-
     private func bestCard(title: String, icon: String, value: Double,
                           color: Color, result: BenchResult) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -901,28 +843,6 @@ struct BenchmarksView: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(color.opacity(0.18)))
     }
 
-    /// One horizontal bar: fixed-width label and value flank a proportional
-    /// track, so every row aligns regardless of the numbers.
-    private func metricBar(_ label: String, value: Double, max: Double, color: Color) -> some View {
-        HStack(spacing: 10) {
-            Text(label)
-                .font(.caption).foregroundStyle(.secondary)
-                .frame(width: 52, alignment: .leading)
-            GeometryReader { g in
-                let frac = max > 0 ? value / max : 0
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.quaternary.opacity(0.35))
-                    Capsule().fill(color.gradient)
-                        .frame(width: Swift.max(8, g.size.width * frac))
-                }
-            }
-            .frame(height: 15)
-            Text(String(format: "%.1f", value))
-                .font(.system(.caption, design: .monospaced).weight(.medium))
-                .frame(width: 48, alignment: .trailing)
-        }
-    }
-
     private func quantChip(_ quant: String) -> some View {
         Text(quant)
             .font(.system(size: 10, weight: .semibold, design: .monospaced))
@@ -932,13 +852,6 @@ struct BenchmarksView: View {
             .help(quant == "—"
                   ? loc.t("El resultado antiguo no guardó el quant", "This older result did not store its quant")
                   : loc.t("Quantización del modelo", "Model quantization"))
-    }
-
-    private func legendDot(_ color: Color, _ text: String) -> some View {
-        HStack(spacing: 5) {
-            Circle().fill(color).frame(width: 8, height: 8)
-            Text(text).font(.caption2).foregroundStyle(.secondary)
-        }
     }
 
     // MARK: history
@@ -987,12 +900,6 @@ struct BenchmarksView: View {
 }
 
 private extension View {
-    func benchmarkPanel() -> some View {
-        padding(12)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .background(WorkspaceStyle.inset.opacity(0.52), in: RoundedRectangle(cornerRadius: 11))
-            .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(WorkspaceStyle.border))
-    }
 }
 
 /// A lightweight wrapping row for the effective configuration. Unlike a clipped
