@@ -151,7 +151,6 @@ struct BenchmarksView: View {
             ?? ModelName.looksMoE(URL(fileURLWithPath: cfg.modelPath).lastPathComponent)
     }
 
-
     /// Model picker binding that seeds ncmoe on selection: the remembered or
     /// recommended value for MoE models, 0 for dense (never carries over stale).
     private var modelBinding: Binding<String> {
@@ -159,19 +158,6 @@ struct BenchmarksView: View {
             cfg.modelPath = newPath
             cfg.ncmoe = Estimator.ncmoeForSelection(path: newPath, models: models.models)
         })
-    }
-
-    private var benchLogButton: some View {
-        Button { revealInFinder(file: bench.benchLogURL, folder: bench.benchLogDirectory) } label: {
-            Label(loc.t("Logs en Finder", "Logs in Finder"), systemImage: "folder").font(.caption)
-        }
-        .buttonStyle(.borderless).foregroundStyle(.secondary)
-        .help(loc.t("Abre la carpeta con el registro completo de cada benchmark (header + salida), para compartir o depurar tras un cuelgue. Se conservan ~30 días.",
-                    "Opens the folder with each benchmark's full log (header + output), for sharing or debugging after a freeze. Kept ~30 days."))
-    }
-
-    private var cardAccessories: some View {
-        benchLogButton
     }
 
     private var inheritanceLabel: String {

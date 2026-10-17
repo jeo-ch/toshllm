@@ -123,17 +123,6 @@ final class ProfileStore: ObservableObject {
         UserDefaults.standard.set(p.name, forKey: Self.activeKey)
     }
 
-    /// Restore the configuration the user had before applying any profile and clear
-    /// the selection. If no baseline was captured, just clears the selection.
-    func clearActive() {
-        if let base = baselineConfig { write(base) }
-        activeProfileName = nil
-        baselineConfig = nil
-        let d = UserDefaults.standard
-        d.removeObject(forKey: Self.activeKey)
-        d.removeObject(forKey: Self.baselineKey)
-    }
-
     /// Make a config the new global default — used by the benchmark's "Apply to
     /// global". Unlike `apply`, this is not a named-profile overlay: it updates the
     /// settings you return to with "Default", and leaves no profile selected.

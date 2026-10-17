@@ -22,10 +22,6 @@ struct SpeculativeControl: View {
         SpeculativeDecoderManager.preferredDecoder(forModel: modelPath)
     }
     
-    private var isActive: Bool {
-        SpeculativeDecoderManager.anyEnabled(forModel: modelPath)
-    }
-    
     @ViewBuilder
     var body: some View {
         if availableDecoders.isEmpty {

@@ -128,54 +128,7 @@ struct DashboardView: View {
         }
     }
 
-
     // Networking is a launch flag, so restart the running primary to apply it now.
-    private func setDiscoverable(_ on: Bool) {
-        localNetworkDiscovery = on
-        if server.state == .running || server.state == .starting {
-            server.restart(.fromDefaults())
-        }
-    }
-
-    private var profileMenu: some View {
-        Menu {
-            if profileStore.activeProfileName != nil {
-                Button {
-                    profileStore.clearActive()
-                    if server.state == .running { server.stop() }
-                } label: {
-                    Label(loc.t("Predeterminado (sin perfil)", "Default (no profile)"),
-                          systemImage: "arrow.uturn.backward")
-                }
-                Divider()
-            }
-            ForEach(profileStore.profiles) { p in
-                Button {
-                    profileStore.apply(p)
-                    if server.state == .running { server.stop() }
-                } label: {
-                    Label(p.name, systemImage: profileStore.activeProfileName == p.name ? "checkmark" : "person.2")
-                }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "person.2").font(.system(size: 10, weight: .semibold))
-                Text(profileStore.activeProfileName ?? loc.t("Perfil", "Profile"))
-                    .font(.caption.weight(.medium)).lineLimit(1)
-                    .frame(maxWidth: 150)
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
-            }
-            .padding(.horizontal, 9).padding(.vertical, 4)
-            .background(Color.appAccent.opacity(0.15), in: Capsule())
-            .foregroundStyle(Color.appAccent)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(loc.t("Carga un perfil guardado. Si el servidor está activo, se detiene para aplicar.",
-                    "Loads a saved profile. If the server is running, it stops so the profile applies."))
-    }
-
     private func row(_ icon: String, _ text: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon).frame(width: 18).foregroundStyle(.secondary)
@@ -327,7 +280,6 @@ struct MachineCard: View {
             return "\(prefix): \(what) · \(total) GB"
         }
     }
-
 
     private func row(_ icon: String, _ text: String) -> some View {
         HStack(spacing: 8) {
