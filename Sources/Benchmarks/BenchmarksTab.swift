@@ -843,17 +843,6 @@ struct BenchmarksView: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(color.opacity(0.18)))
     }
 
-    private func quantChip(_ quant: String) -> some View {
-        Text(quant)
-            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-            .foregroundStyle(quant == "—" ? AnyShapeStyle(.tertiary) : AnyShapeStyle(Color.appAccent))
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .background((quant == "—" ? Color.secondary : Color.appAccent).opacity(0.12), in: Capsule())
-            .help(quant == "—"
-                  ? loc.t("El resultado antiguo no guardó el quant", "This older result did not store its quant")
-                  : loc.t("Quantización del modelo", "Model quantization"))
-    }
-
     // MARK: history
 
     private var historyCard: some View {

@@ -811,10 +811,6 @@ final class ModelStore: ObservableObject {
         models.first { $0.name == fileName }
     }
 
-    func isDownloading(fileName: String) -> Bool {
-        downloads.contains { $0.fileName == fileName && !$0.finished && $0.error == nil }
-    }
-
     /// The in-progress (or failed) download for a file, so a card can show its
     /// live progress right where the user pressed Download. Finished ones are
     /// excluded — the model then appears as a local file instead.

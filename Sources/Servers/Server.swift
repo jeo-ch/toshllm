@@ -1641,10 +1641,6 @@ final class ServerManager: ObservableObject {
 
     var active: ServerController { servers.first { $0.id == activeID } ?? servers[0] }
 
-    func setActive(_ id: UUID) {
-        if servers.contains(where: { $0.id == id }) { activeID = id }
-    }
-
     /// Lowest port not already taken by a server, starting at the default.
     func freePort() -> Int {
         let used = Set(servers.map { $0.profile?.port ?? ServerSettings.fromDefaults().port })
@@ -1680,8 +1676,6 @@ final class ServerManager: ObservableObject {
         if wasActive { activeID = servers[0].id }
         persist()
     }
-
-    func stopAll() { servers.forEach { $0.stop() } }
 
     func stopAllImmediately() { servers.forEach { $0.stopImmediately() } }
 
