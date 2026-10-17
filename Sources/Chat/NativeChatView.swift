@@ -1732,16 +1732,35 @@ struct NativeChatView: View {
     }
 
     private var toolsPopover: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label(loc.t("Herramientas del chat", "Chat tools"),
-                      systemImage: "wrench.and.screwdriver")
-                    .font(.headline)
-                Spacer()
-                Button(loc.t("Activar todas", "Enable all"), systemImage: "checkmark.circle") {
-                    chat.enableAllTools()
+        let selected = chat.current?.enabledToolNames.map(Set.init)
+        let enabledCount = selected.map { s in availableTools.filter { s.contains($0.name) }.count }
+            ?? availableTools.count
+        return VStack(alignment: .leading, spacing: 10) {
+            Label(loc.t("Herramientas del chat", "Chat tools"),
+                  systemImage: "wrench.and.screwdriver")
+                .font(.headline)
+            if !availableTools.isEmpty {
+                HStack(spacing: 12) {
+                    Button(loc.t("Activar todas", "Enable all"), systemImage: "checkmark.circle") {
+                        chat.enableAllTools()
+                    }
+                    .disabled(enabledCount == availableTools.count)
+                    .help(loc.t("Marca todas las herramientas para esta conversación",
+                                "Checks every tool for this conversation"))
+                    Button(loc.t("Desactivar todas", "Disable all"), systemImage: "circle") {
+                        chat.disableAllTools()
+                    }
+                    .disabled(enabledCount == 0)
+                    .help(loc.t("Desmarca todas las herramientas para elegir solo las que necesites",
+                                "Unchecks every tool so you can pick only the ones you need"))
+                    Spacer()
+                    Text(loc.t("%@ de %@", "%@ of %@", "\(enabledCount)", "\(availableTools.count)"))
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
+                .controlSize(.small)
             }
             if let agent = EngineExtensions.active().first(where: \.hasAgent) {
                 Label(loc.t("%@ recibe cada mensaje primero; los que no son de lo suyo pueden volver a estas herramientas.",

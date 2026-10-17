@@ -34,7 +34,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.flashAttn) private var flashAttn = "auto"
     @AppStorage(SettingsKeys.noMmap) private var noMmap = true
     @AppStorage(SettingsKeys.jinja) private var jinja = true
-    @AppStorage(SettingsKeys.vramReserve) private var vramReserve = 1024
+    @AppStorage(SettingsKeys.vramReserve) private var vramReserve = 0
     @AppStorage(SettingsKeys.vramWarningThreshold) private var vramWarningThreshold = 85.0
     @AppStorage(SettingsKeys.vramCriticalThreshold) private var vramCriticalThreshold = 95.0
     @AppStorage(SettingsKeys.proxyEnabled) private var proxyEnabled = false
@@ -885,11 +885,13 @@ struct SettingsView: View {
                     .infoTip(loc.t("Solo modelos MoE: capas cuyos 'expertos' viven en RAM y los procesa el CPU. Se ajusta solo al elegir modelo; súbelo si la VRAM se satura, bájalo si te sobra. (Deshabilitado en modelos densos, donde el motor lo ignora.)",
                                 "MoE models only: layers whose 'experts' live in RAM and run on the CPU. Auto-set when picking a model; raise if VRAM saturates, lower if you have headroom. (Disabled on dense models, where the engine ignores it.)"))
                     .disabled(!modelIsMoE || (dynamicMoeEnabled && executionMode != "legacy"))
-                Stepper(loc.t("Reserva de VRAM: %@ MB", "VRAM reserve: %@ MB", "\(vramReserve)"),
-                        value: $vramReserve, in: 256...4096, step: 256)
+                Stepper(vramReserve == 0
+                            ? loc.t("Reserva de VRAM: automática", "VRAM reserve: automatic")
+                            : loc.t("Reserva de VRAM: %@ MB", "VRAM reserve: %@ MB", "\(vramReserve)"),
+                        value: $vramReserve, in: 0...4096, step: 256)
                     .settingsGlyph("gauge.with.needle")
-                    .infoTip(loc.t("VRAM que se deja libre para el sistema y la interfaz. 1024 MB es un margen seguro.",
-                                "VRAM left free for the system and UI. 1024 MB is a safe margin."))
+                    .infoTip(loc.t("VRAM que se deja libre para el sistema y la interfaz. La respetan el plan de Dynamic MoE, el modo router y DFlash en Auto. Automática deja un 8% de la tarjeta, entre 768 y 1536 MB.",
+                                "VRAM left free for the system and UI. The Dynamic MoE plan, router mode and DFlash in Auto keep it. Automatic leaves 8% of the card, between 768 and 1536 MB."))
                 HStack {
                     Text(loc.t("Umbral de aviso VRAM", "VRAM warning threshold"))
                         .settingsGlyph("exclamationmark.triangle")

@@ -87,6 +87,92 @@ index 939016064..f539502a4 100644
      }
  
      return props;
+diff --git a/tools/server/server-http.cpp b/tools/server/server-http.cpp
+index 33cbb156c..d1dd24208 100644
+--- a/tools/server/server-http.cpp
++++ b/tools/server/server-http.cpp
+@@ -677,17 +677,18 @@ void server_http_context::get(const std::string & path, const server_http_contex
+     auto callback = [handler](const httplib::Request & req, httplib::Response & res) {
+         server_http_req_ptr request = std::make_unique<server_http_req>(server_http_req{
+             get_params(req),
+             get_headers(req),
+             req.path,
+             build_query_string(req),
+             req.body,
+             {},
+-            req.is_connection_closed
++            req.is_connection_closed,
++            req.remote_addr
+         });
+         server_http_res_ptr response = handler(*request);
+         process_handler_response(std::move(request), response, res);
+     };
+     const std::string full_path = path_prefix + path;
+     for (const auto & srv : pimpl->servers) {
+         srv->Get(full_path, callback);
+     }
+@@ -728,17 +729,18 @@ void server_http_context::post(const std::string & path, const server_http_conte
+ 
+         server_http_req_ptr request = std::make_unique<server_http_req>(server_http_req{
+             get_params(req),
+             get_headers(req),
+             req.path,
+             build_query_string(req),
+             body,
+             std::move(files),
+-            req.is_connection_closed
++            req.is_connection_closed,
++            req.remote_addr
+         });
+         server_http_res_ptr response = handler(*request);
+         process_handler_response(std::move(request), response, res);
+     };
+     const std::string full_path = path_prefix + path;
+     for (const auto & srv : pimpl->servers) {
+         srv->Post(full_path, callback);
+     }
+@@ -749,17 +751,18 @@ void server_http_context::del(const std::string & path, const server_http_contex
+     auto callback = [handler](const httplib::Request & req, httplib::Response & res) {
+         server_http_req_ptr request = std::make_unique<server_http_req>(server_http_req{
+             get_params(req),
+             get_headers(req),
+             req.path,
+             build_query_string(req),
+             req.body,
+             {},
+-            req.is_connection_closed
++            req.is_connection_closed,
++            req.remote_addr
+         });
+         server_http_res_ptr response = handler(*request);
+         process_handler_response(std::move(request), response, res);
+     };
+     const std::string full_path = path_prefix + path;
+     for (const auto & srv : pimpl->servers) {
+         srv->Delete(full_path, callback);
+     }
+diff --git a/tools/server/server-http.h b/tools/server/server-http.h
+index 4554b20f4..26fb1c800 100644
+--- a/tools/server/server-http.h
++++ b/tools/server/server-http.h
+@@ -49,16 +49,17 @@ struct uploaded_file {
+ struct server_http_req {
+     std::map<std::string, std::string> params; // path_params + query_params
+     std::map<std::string, std::string> headers; // used by MCP proxy
+     std::string path;
+     std::string query_string; // query parameters string (e.g. "action=save")
+     std::string body;
+     std::map<std::string, uploaded_file> files; // used for file uploads (form data)
+     const std::function<bool()> & should_stop;
++    std::string remote_addr = ""; // the client's address, for what only this computer may use
+ 
+     std::string get_param(const std::string & key, const std::string & def = "") const {
+         auto it = params.find(key);
+         if (it != params.end()) {
+             return it->second;
+         }
+         return def;
+     }
 diff --git a/tools/server/server-mcp.cpp b/tools/server/server-mcp.cpp
 index 65e39179d..726812ddc 100644
 --- a/tools/server/server-mcp.cpp
@@ -583,10 +669,10 @@ index 78169e9a5..468c4fe52 100644
          }
      }
 diff --git a/tools/server/server-tools.cpp b/tools/server/server-tools.cpp
-index 12e9dbb8c..ba392f6b2 100644
+index 12e9dbb8c..453882b27 100644
 --- a/tools/server/server-tools.cpp
 +++ b/tools/server/server-tools.cpp
-@@ -1991,17 +1991,22 @@ static std::unique_ptr<server_tools_runtime> make_tools_runtime(const std::strin
+@@ -1991,17 +1991,24 @@ static std::unique_ptr<server_tools_runtime> make_tools_runtime(const std::strin
          return std::make_unique<server_tools_container_runtime>(spec);
      }
      make_tools_io({{"runtime", spec}}); // nothing to own, just reject a bad spec now
@@ -599,9 +685,11 @@ index 12e9dbb8c..ba392f6b2 100644
 +                         const std::string & tools_runtime,
 +                         const std::string & hidden_server,
 +                         const std::set<std::string> & agent_only_servers,
-+                         const std::string & agent_request_key) {
++                         const std::string & agent_request_key,
++                         bool requests_keyed) {
 +    agent_only = agent_only_servers;
 +    agent_key  = agent_request_key;
++    keyed      = requests_keyed;
      if (!tools_runtime.empty()) {
          runtime = make_tools_runtime(tools_runtime);
      }
@@ -610,7 +698,7 @@ index 12e9dbb8c..ba392f6b2 100644
          if (!common_subproc::is_supported()) {
              throw std::runtime_error("subprocess is not enabled on this build");
          }
-@@ -2038,48 +2043,76 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools,
+@@ -2038,48 +2045,86 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools,
      // append MCP tools, skipping any that collide with a server tool or another MCP tool of the same "<server>_<tool>" name
      if (!mcp_mgr.empty()) {
          std::unordered_set<std::string> seen_names;
@@ -659,13 +747,23 @@ index 12e9dbb8c..ba392f6b2 100644
 +        return agent_key.empty() || get_header(req.headers, "x-tosh-agent-key") != agent_key;
 +    };
 +
-+    handle_get = [this, from_browser, hidden_from](const server_http_req & req) -> server_http_res_ptr {
++    // The built-in tools reach this computer's shell and files: another computer gets them only with the
++    // API key, which the server then checks on every request.
++    auto local_only = [this](const server_http_req & req, const server_tool & tool) {
++        if (tool.type() == "mcp" || keyed) {
++            return false;
++        }
++        const std::string & a = req.remote_addr;
++        return !(a.empty() || a == "::1" || a.rfind("127.", 0) == 0 || a.rfind("::ffff:127.", 0) == 0);
++    };
++
++    handle_get = [this, from_browser, hidden_from, local_only](const server_http_req & req) -> server_http_res_ptr {
          auto res = std::make_unique<server_http_res>();
          try {
              json result = json::array();
 +            const bool browser = from_browser(req);
              for (const auto & t : tools) {
-+                if ((browser && t->type() == "mcp") || hidden_from(req, *t)) {
++                if ((browser && t->type() == "mcp") || hidden_from(req, *t) || local_only(req, *t)) {
 +                    continue;
 +                }
                  result.push_back(t->to_json());
@@ -680,7 +778,7 @@ index 12e9dbb8c..ba392f6b2 100644
      };
  
 -    handle_post = [this](const server_http_req & req) -> server_http_res_ptr {
-+    handle_post = [this, from_browser, hidden_from](const server_http_req & req) -> server_http_res_ptr {
++    handle_post = [this, from_browser, hidden_from, local_only](const server_http_req & req) -> server_http_res_ptr {
          auto res = std::make_unique<server_tools_res>();
          try {
              json body = json::parse(req.body);
@@ -689,7 +787,7 @@ index 12e9dbb8c..ba392f6b2 100644
              bool stream = body.value("stream", false);
  
              // accept x-tool-cwd header to override of the process
-@@ -2108,16 +2141,26 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools,
+@@ -2108,16 +2153,32 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools,
                  params.erase("resp_type");
              }
              auto resp_type = get_header(req.headers, "x-resp-type");
@@ -701,6 +799,12 @@ index 12e9dbb8c..ba392f6b2 100644
 +            if (hidden_from(req, tool)) {
 +                // the same answer as a tool that does not exist
 +                throw std::invalid_argument(string_format("unknown tool \"%s\"", tool_name.c_str()));
++            }
++            if (local_only(req, tool)) {
++                res->status = 403;
++                res->data   = safe_json_to_str(format_error_response(
++                    "built-in tools run for this computer, or for others with the API key", ERROR_TYPE_PERMISSION));
++                return res;
 +            }
 +            if (from_browser(req) && tool.type() == "mcp") {
 +                res->status = 403;
@@ -717,7 +821,7 @@ index 12e9dbb8c..ba392f6b2 100644
  
                  res->worker = std::thread([this, id, &req, &tool, params]() mutable {
 diff --git a/tools/server/server-tools.h b/tools/server/server-tools.h
-index e7332f2e5..8e43dc07d 100644
+index e7332f2e5..66811a44c 100644
 --- a/tools/server/server-tools.h
 +++ b/tools/server/server-tools.h
 @@ -1,15 +1,17 @@
@@ -738,7 +842,7 @@ index e7332f2e5..8e43dc07d 100644
      std::string name;
      std::string display_name;
      bool permission_write = false;
-@@ -38,18 +40,25 @@ struct server_tools {
+@@ -38,18 +40,28 @@ struct server_tools {
  
      // for streaming
      server_response queue_res;
@@ -750,6 +854,8 @@ index e7332f2e5..8e43dc07d 100644
 +    // servers whose tools only the agent may list and call, and the key its requests carry
 +    std::set<std::string> agent_only;
 +    std::string           agent_key;
++    // requests carry a key the server checked, so built-in tools may run for other computers
++    bool                  keyed = false;
 +
      void setup(const std::vector<std::string> & enabled_tools,
                 server_mcp & mcp_mgr,
@@ -757,7 +863,8 @@ index e7332f2e5..8e43dc07d 100644
 +               const std::string & tools_runtime,
 +               const std::string & hidden_server = "",
 +               const std::set<std::string> & agent_only_servers = {},
-+               const std::string & agent_request_key = "");
++               const std::string & agent_request_key = "",
++               bool requests_keyed = false);
  
      server_http_context::handler_t handle_get;
      server_http_context::handler_t handle_post;
@@ -766,7 +873,7 @@ index e7332f2e5..8e43dc07d 100644
      ~server_tools();
  };
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index 6e2d8ff9d..fe32d3ae3 100644
+index 6e2d8ff9d..7a4baa272 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
 @@ -7,18 +7,23 @@
@@ -1103,7 +1210,7 @@ index 6e2d8ff9d..fe32d3ae3 100644
      ctx_http.post("/v1/messages",              ex_wrapper(routes.post_anthropic_messages)); // anthropic messages API
      ctx_http.post("/infill",                   ex_wrapper(routes.post_infill));
      ctx_http.post("/embedding",                ex_wrapper(routes.post_embeddings)); // legacy
-@@ -360,17 +637,23 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
+@@ -360,17 +637,24 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
          mcp_mgr.start(params);
      } catch (const std::exception & e) {
          SRV_ERR("MCP starting failed: %s\n", e.what());
@@ -1119,7 +1226,8 @@ index 6e2d8ff9d..fe32d3ae3 100644
 +                    agent_only.insert(name);
 +                }
 +            }
-+            tools.setup(params.server_tools, mcp_mgr, params.server_tools_runtime, params.mcp_agent, agent_only, agent_key);
++            tools.setup(params.server_tools, mcp_mgr, params.server_tools_runtime, params.mcp_agent, agent_only, agent_key,
++                        !params.api_keys.empty());
          } catch (const std::exception & e) {
              SRV_ERR("tools setup failed: %s\n", e.what());
              return 1;

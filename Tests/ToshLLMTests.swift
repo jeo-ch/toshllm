@@ -1775,6 +1775,16 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertTrue(env["PATH"]?.contains("/opt/homebrew/bin") == true)
     }
 
+    func testAutomaticVRAMReserveLeavesTheEngineItsOwnShare() {
+        var s = makeSettings()
+        s.vramReserveMB = 0
+        XCTAssertNil(s.environment["GGML_METAL_VRAM_RESERVE_MB"])
+        XCTAssertEqual(ServerSettings.effectiveVramReserveMB(0, vramMB: 12_288), 983)
+        XCTAssertEqual(ServerSettings.effectiveVramReserveMB(0, vramMB: 8_192), 768)
+        XCTAssertEqual(ServerSettings.effectiveVramReserveMB(0, vramMB: 32_768), 1_536)
+        XCTAssertEqual(ServerSettings.effectiveVramReserveMB(2_048, vramMB: 12_288), 2_048)
+    }
+
     func testSingleGPUSelectionPinsDeviceUnlessMultiGPUIsEnabled() {
         var s = makeSettings()
         s.gpuIndex = 1

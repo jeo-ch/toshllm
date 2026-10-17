@@ -449,13 +449,18 @@ struct ServerSettings {
     /// Router writes one entry per model with the same context, but a multi-head model
     /// caches several times more per token than a GQA one and can overflow VRAM on
     /// load, which hangs the driver. Shrink the context for the models that don't fit.
+    /// The reserve the user set, or the share the engine's memory plan keeps on its own.
+    nonisolated static func effectiveVramReserveMB(_ setting: Int, vramMB: Int) -> Int {
+        setting > 0 ? setting : Int(min(max(0.08 * Double(vramMB), 768), 1536))
+    }
+
     nonisolated static func routerCtx(forModel path: String, requested: Int, ncmoe: Int,
                                       kvScale: Double, reserveMB: Int) -> Int {
         let kvPerToken = ModelSpec.kvBytesPerToken(atPath: path) * kvScale
         guard kvPerToken > 0, requested > 2048 else { return requested }
-        let vramGB = Double(ServerController.availableGPUs().map(\.vramMB).max() ?? 0) / 1024
-        guard vramGB > 0 else { return requested }
-        let budget = vramGB - Double(reserveMB) / 1024
+        let vramMB = ServerController.availableGPUs().map(\.vramMB).max() ?? 0
+        guard vramMB > 0 else { return requested }
+        let budget = Double(vramMB - effectiveVramReserveMB(reserveMB, vramMB: vramMB)) / 1024
         let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int64) ?? 0
         let weightsGB = Double(size) / 1_073_741_824 * (ncmoe > 0 ? 0.45 : 1.0)
         let computeGB = 0.9
@@ -792,7 +797,8 @@ struct ServerSettings {
         // The engine logs this, so a log pasted from a bug report identifies the
         // app build even when the engine binary is older than the app.
         env["TOSH_APP_VERSION"] = AppInfo.version
-        env["GGML_METAL_VRAM_RESERVE_MB"] = String(vramReserveMB)
+        // the engine's memory plan keeps its own share of the card unless the user set one
+        if vramReserveMB > 0 { env["GGML_METAL_VRAM_RESERVE_MB"] = String(vramReserveMB) }
         // Physical GPU selection (consumed by the patched Metal backend, which maps
         // these to MTLCopyAllDevices() — the same order as the app's GPU picker).
         let gpus = ServerController.availableGPUs()
@@ -957,7 +963,7 @@ struct ServerSettings {
             flashAttn: d.string(forKey: SettingsKeys.flashAttn) ?? "auto",
             noMmap: bool(SettingsKeys.noMmap, true),
             jinja: bool(SettingsKeys.jinja, true),
-            vramReserveMB: int(SettingsKeys.vramReserve, 1024),
+            vramReserveMB: int(SettingsKeys.vramReserve, 0),
             gpuIndex: int(SettingsKeys.gpuIndex, -1),
             gpuList: gpuList(fromCSV: d.string(forKey: SettingsKeys.gpuList)),
             extraArgs: d.string(forKey: SettingsKeys.extraArgs) ?? "",
@@ -1130,7 +1136,8 @@ struct ServerSettings {
             * (keyLength + valueLength) * q8BytesPerElement
         let mainKVScale = (Estimator.kvTypeScale(cacheTypeK) + Estimator.kvTypeScale(cacheTypeV)) / 2
         let vramGB = Double(selected.reduce(0) { $0 + $1.vramMB }) / 1024
-        let reserveGB = honorReserve ? Double(vramReserveMB * max(1, selected.count)) / 1024 : 0
+        let reserveGB = honorReserve
+            ? Double(selected.reduce(0) { $0 + Self.effectiveVramReserveMB(vramReserveMB, vramMB: $1.vramMB) }) / 1024 : 0
         return DflashMemoryPlanner.plan(
             vramGB: vramGB, reserveGB: reserveGB,
             baseFileGB: baseBytes / 1_073_741_824, baseLayers: baseLayers, ncmoe: ncmoe,

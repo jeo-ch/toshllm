@@ -2217,6 +2217,12 @@ final class ChatStore: ObservableObject {
         save()
     }
 
+    func disableAllTools() {
+        guard let i = currentIndex else { return }
+        conversations[i].enabledToolNames = []
+        save()
+    }
+
     private func beginAlternativeBranch(conversationIndex i: Int, messages: [ChatMessage]) {
         conversations[i].beginAlternativeBranch(messages: messages)
     }

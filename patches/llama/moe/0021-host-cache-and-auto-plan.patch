@@ -925,7 +925,7 @@ index e6befba34..7b82d081c 100644
  
      auto find = [&](const std::string & mode, ggml_type kv, int ub) -> tosh_plan_candidate * {
          for (auto & c : p.candidates) if (c.mode == mode && c.kv == kv && (ub == 0 || c.ubatch == ub)) return &c;
-@@ -416,16 +808,38 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+@@ -416,16 +808,39 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
  
      const tosh_plan_candidate * sel = nullptr;
      // VRAM kept free after every known allocation, for the desktop and other apps; the plan
@@ -944,7 +944,8 @@ index e6befba34..7b82d081c 100644
 +        head_file = !head.empty() && !ec;
 +        mtp_mib = env_mib("TOSH_AUTO_MTP_RESERVE_MIB", 768.0 + (head_file ? head_bytes/MiB : 0.0));
 +    }
-+    const double reserve_base = std::clamp(RESERVE_FRACTION*p.vram_total_mib, RESERVE_MIN_MIB, RESERVE_MAX_MIB);
++    // the app's VRAM reserve setting replaces the default share of the card; the head adds to either
++    const double reserve_base = env_mib("GGML_METAL_VRAM_RESERVE_MB", std::clamp(RESERVE_FRACTION*p.vram_total_mib, RESERVE_MIN_MIB, RESERVE_MAX_MIB));
 +    const double reserve_pref = env_mib("TOSH_AUTO_RESERVE_MIB", reserve_base + mtp_mib);
 +    std::vector<double> reserves = { reserve_pref, env_mib("TOSH_AUTO_MIN_RESERVE_MIB", std::max(512.0, reserve_pref - 256.0)) };
 +    // the head is optional: where it leaves no room, the plan is made again without it
@@ -964,7 +965,7 @@ index e6befba34..7b82d081c 100644
              else if (q8 && q8->valid) { sel = q8; p.reason = "q8_0 cache makes the full model fit with the reserve"; }
          }
          if (sel == nullptr && !no_dmoe && (force.empty() || force == "dmoe")) {
-@@ -442,59 +856,196 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+@@ -442,59 +857,196 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
          }
          if (sel == nullptr && (force.empty() || force == "legacy")) {
              const tosh_plan_candidate * l16 = find("legacy_offload", kvs[0], 0);
@@ -1161,7 +1162,7 @@ index e6befba34..7b82d081c 100644
          setenv("GGML_SCHED_PREFETCH_EXPERTS", "1", 0);
          setenv("GGML_CPU_NO_REPACK", "1", 0);
          // the host executor computes the missed experts on every core; the backend's own threads find little
-@@ -506,17 +1057,60 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+@@ -506,17 +1058,60 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
                      cp->n_threads = cpu_threads;
                  }
              }

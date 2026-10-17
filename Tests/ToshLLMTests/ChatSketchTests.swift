@@ -66,6 +66,60 @@ final class ChatSketchTests: XCTestCase {
         let plain = try XCTUnwrap(ChatSketch(["points": [[0, 0], [0, 100], [0, 0]], "unit": "ft", "plane": "ignored"]))
         XCTAssertNil(plain.plane)
         XCTAssertEqual(plain.csv().split(separator: "\n").first, "point,east_ft,north_ft")
+        XCTAssertFalse(plain.dxf().contains("NOTICE"))
+    }
+
+    func testAShapefileZipHoldsTheFigureAtItsCoordinatesWithItsSystem() throws {
+        let sketch = try XCTUnwrap(ChatSketch(["title": "Tract", "points": [[0, 0], [0, 100], [100, 100], [100, 0], [1, 1]],
+                                               "unit": "ft", "closed": true, "origin": [2000, 3000],
+                                               "plane": "Zone, US ft", "prj": "PROJCS[\"Zone\"]"]))
+        let zip = sketch.shapefile(named: "Tract")
+        // the local headers in order: name, then the stored bytes, whose CRC the header gives
+        var files: [String: Data] = [:]
+        var at = 0
+        func le<T: FixedWidthInteger>(_ offset: Int, _: T.Type) -> T {
+            zip.subdata(in: offset..<offset + MemoryLayout<T>.size).withUnsafeBytes { T(littleEndian: $0.loadUnaligned(as: T.self)) }
+        }
+        while le(at, UInt32.self) == 0x0403_4B50 {
+            let size = Int(le(at + 18, UInt32.self)), nameLength = Int(le(at + 26, UInt16.self))
+            let name = String(decoding: zip.subdata(in: at + 30..<at + 30 + nameLength), as: UTF8.self)
+            let data = zip.subdata(in: at + 30 + nameLength..<at + 30 + nameLength + size)
+            XCTAssertEqual(le(at + 14, UInt32.self), StoredZip.crc32(data), name)
+            files[name] = data
+            at += 30 + nameLength + size
+        }
+        XCTAssertEqual(Set(files.keys), ["Tract.shp", "Tract.shx", "Tract.dbf", "Tract.cpg", "Tract.prj"])
+        XCTAssertEqual(String(decoding: try XCTUnwrap(files["Tract.prj"]), as: UTF8.self), "PROJCS[\"Zone\"]")
+        let shp = try XCTUnwrap(files["Tract.shp"])
+        func double(_ offset: Int) -> Double {
+            Double(bitPattern: shp.subdata(in: offset..<offset + 8).withUnsafeBytes { UInt64(littleEndian: $0.loadUnaligned(as: UInt64.self)) })
+        }
+        XCTAssertEqual(Array(shp.prefix(4)), [0, 0, 0x27, 0x0A])
+        XCTAssertEqual(shp[32], 5, "a closed figure is a polygon")
+        XCTAssertEqual(Int(shp[24]) << 24 | Int(shp[25]) << 16 | Int(shp[26]) << 8 | Int(shp[27]), shp.count / 2)
+        // six points: the five drawn and the first again, clockwise from the start at its coordinates
+        XCTAssertEqual(shp[100 + 8 + 40], 6)
+        let first = 100 + 8 + 48
+        XCTAssertEqual([double(first), double(first + 8)], [2000, 3000])
+        XCTAssertEqual([double(first + 16), double(first + 24)], [2000, 3100])
+        XCTAssertEqual([double(first + 80), double(first + 88)], [2000, 3000])
+        let dbf = try XCTUnwrap(files["Tract.dbf"])
+        XCTAssertEqual(dbf[4], 1, "one record")
+        XCTAssertTrue(String(decoding: dbf, as: UTF8.self).contains("NAME"))
+        XCTAssertFalse(String(decoding: dbf, as: UTF8.self).contains("NOTE"))
+        // without coordinates there is no system to write
+        let plain = try XCTUnwrap(ChatSketch(["points": [[0, 0], [0, 100]], "prj": "PROJCS[\"Zone\"]"]))
+        XCTAssertNil(plain.prj)
+    }
+
+    func testANoticeTravelsWithEveryExportOnlyWhenGiven() throws {
+        let sketch = try XCTUnwrap(ChatSketch(["points": [[0, 0], [0, 100], [100, 100], [0, 0]], "unit": "ft", "closed": true,
+                                               "notice": "Not survey quality, \"approximate\""]))
+        let csv = sketch.csv().split(separator: "\n")
+        XCTAssertEqual(csv.first, "point,east_ft,north_ft,note")
+        XCTAssertEqual(csv[1], "1,0.000,0.000,\"Not survey quality, \"\"approximate\"\"\"")
+        XCTAssertTrue(sketch.dxf().contains("8\nNOTICE\n10\n0.000\n20\n"))
+        XCTAssertNil(try XCTUnwrap(ChatSketch(["points": [[0, 0], [1, 1]], "notice": ""])).notice)
     }
 
     func testTheFigureStaysWithTheAnswerItCameWith() throws {

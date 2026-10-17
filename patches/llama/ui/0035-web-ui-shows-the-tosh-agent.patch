@@ -461,14 +461,15 @@ index 000000000..f58a6b59d
 +</button>
 diff --git a/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshSketch.svelte b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshSketch.svelte
 new file mode 100644
-index 000000000..d4ab266f2
+index 000000000..891c7270c
 --- /dev/null
 +++ b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshSketch.svelte
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,80 @@
 +<script lang="ts">
 +	import ToshResize from './ToshResize.svelte';
 +	import { download, fileStem } from '$lib/tosh/download';
-+	import { csv, dxf, figure, gap, isOpen, png, svg } from '$lib/tosh/sketch';
++	import { csv, dxf, figure, gap, isOpen, notice, png, svg } from '$lib/tosh/sketch';
++	import { shapefile } from '$lib/tosh/shapefile';
 +	import type { ToshSketch } from '$lib/types';
 +
 +	interface Props {
@@ -518,7 +519,7 @@ index 000000000..d4ab266f2
 +				? `Sketch in ${sketch.plane}`
 +				: 'Sketch, not placed on a map'}{#if isOpen(sketch)}{` · in red, what it lacks to close: ${figure(
 +					gap(sketch)
-+				)} ${sketch.unit}`}{/if}
++				)} ${sketch.unit}`}{/if}{#if notice(sketch)}{` · ${notice(sketch)}`}{/if}
 +		</span>
 +
 +		<span class="flex gap-3">
@@ -533,6 +534,13 @@ index 000000000..d4ab266f2
 +			<button
 +				class="hover:text-foreground"
 +				onclick={() => download(`${stem}.csv`, csv(sketch), 'text/csv')}>Corners CSV</button
++			>
++
++			<button
++				class="hover:text-foreground"
++				onclick={() => download(`${stem}.zip`, shapefile(sketch, stem), 'application/zip')}
++				title="Shapefile in a ZIP, with its coordinate system when the figure has one"
++				>Shapefile</button
 +			>
 +		</span>
 +	</div>
@@ -1020,12 +1028,244 @@ index 000000000..b131c780c
 +
 +	return { data: zipped, name: 'map.zip', type: 'application/zip' };
 +}
+diff --git a/tools/ui/src/lib/tosh/shapefile.ts b/tools/ui/src/lib/tosh/shapefile.ts
+new file mode 100644
+index 000000000..a1f6515be
+--- /dev/null
++++ b/tools/ui/src/lib/tosh/shapefile.ts
+@@ -0,0 +1,226 @@
++import type { ToshSketch } from '$lib/types';
++import { notice, placed } from '$lib/tosh/sketch';
++
++const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
++	let c = n;
++
++	for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
++
++	return c >>> 0;
++});
++
++export function crc32(data: Uint8Array): number {
++	let c = 0xffffffff;
++
++	for (const byte of data) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
++
++	return (c ^ 0xffffffff) >>> 0;
++}
++
++class Bytes {
++	private parts: number[] = [];
++
++	get length(): number {
++		return this.parts.length;
++	}
++
++	u8(...values: number[]): this {
++		this.parts.push(...values.map((v) => v & 0xff));
++
++		return this;
++	}
++
++	le16(value: number): this {
++		return this.u8(value, value >>> 8);
++	}
++
++	le32(value: number): this {
++		return this.u8(value, value >>> 8, value >>> 16, value >>> 24);
++	}
++
++	be32(value: number): this {
++		return this.u8(value >>> 24, value >>> 16, value >>> 8, value);
++	}
++
++	double(value: number): this {
++		const view = new DataView(new ArrayBuffer(8));
++
++		view.setFloat64(0, value, true);
++
++		return this.u8(...new Uint8Array(view.buffer));
++	}
++
++	bytes(data: Uint8Array | Bytes): this {
++		const values = data instanceof Bytes ? data.parts : Array.from(data);
++
++		for (const v of values) this.parts.push(v);
++
++		return this;
++	}
++
++	array(): Uint8Array<ArrayBuffer> {
++		return Uint8Array.from(this.parts);
++	}
++}
++
++/** A ZIP of files stored without compression, which every unzip tool reads. */
++export function storedZip(files: { name: string; data: Uint8Array }[]): Uint8Array<ArrayBuffer> {
++	const out = new Bytes();
++	const directory = new Bytes();
++
++	for (const file of files) {
++		const name = new TextEncoder().encode(file.name);
++		const offset = out.length;
++		// UTF-8 names, and 1 January 1980 as the date
++		const shared = new Bytes()
++			.le16(20)
++			.le16(0x0800)
++			.le16(0)
++			.le16(0)
++			.le16(0x21)
++			.le32(crc32(file.data))
++			.le32(file.data.length)
++			.le32(file.data.length)
++			.le16(name.length)
++			.le16(0);
++
++		out.le32(0x04034b50).bytes(shared).bytes(name).bytes(file.data);
++		directory
++			.le32(0x02014b50)
++			.le16(20)
++			.bytes(shared)
++			.le16(0)
++			.le16(0)
++			.le16(0)
++			.le32(0)
++			.le32(offset)
++			.bytes(name);
++	}
++
++	const start = out.length;
++
++	out
++		.bytes(directory)
++		.le32(0x06054b50)
++		.le16(0)
++		.le16(0)
++		.le16(files.length)
++		.le16(files.length)
++		.le32(directory.length)
++		.le32(start)
++		.le16(0);
++
++	return out.array();
++}
++
++/** A dBase table of one record with a text field per value, cut at a character boundary to fit. */
++function table(fields: [string, string][]): Uint8Array {
++	const width = 254;
++	const today = new Date();
++	const out = new Bytes()
++		.u8(0x03, today.getFullYear() - 1900, today.getMonth() + 1, today.getDate())
++		.le32(1)
++		.le16(32 + 32 * fields.length + 1)
++		.le16(1 + width * fields.length)
++		.bytes(new Uint8Array(20));
++
++	for (const [name] of fields) {
++		const encoded = new TextEncoder().encode(name).slice(0, 10);
++
++		out
++			.bytes(encoded)
++			.bytes(new Uint8Array(11 - encoded.length))
++			.u8('C'.charCodeAt(0), 0, 0, 0, 0, width, 0)
++			.bytes(new Uint8Array(14));
++	}
++
++	out.u8(0x0d, 0x20);
++
++	for (const [, value] of fields) {
++		const kept: number[] = [];
++
++		for (const character of value) {
++			const next = new TextEncoder().encode(character);
++
++			if (kept.length + next.length > width) break;
++
++			kept.push(...next);
++		}
++
++		out.u8(...kept).bytes(new Uint8Array(width - kept.length).fill(0x20));
++	}
++
++	return out.u8(0x1a).array();
++}
++
++/**
++ * The figure as a shapefile in a ZIP: a polygon when it should close, else a line, at its coordinates and with its
++ * coordinate system as the .prj when it has them, and its title and notice as attributes.
++ */
++export function shapefile(sketch: ToshSketch, stem: string): Uint8Array<ArrayBuffer> {
++	const path = sketch.points.map((p) => placed(sketch, p));
++
++	if (sketch.closed) {
++		const first = path[0];
++		const last = path[path.length - 1];
++
++		if (first[0] !== last[0] || first[1] !== last[1]) path.push(first);
++
++		// an outer ring runs clockwise
++		let doubled = 0;
++
++		for (let i = 0; i + 1 < path.length; i++) {
++			doubled += path[i][0] * path[i + 1][1] - path[i + 1][0] * path[i][1];
++		}
++
++		if (doubled > 0) path.reverse();
++	}
++
++	const xs = path.map((p) => p[0]);
++	const ys = path.map((p) => p[1]);
++	const box = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
++	const type = sketch.closed ? 5 : 3;
++	const record = new Bytes().le32(type);
++
++	box.forEach((v) => record.double(v));
++	record.le32(1).le32(path.length).le32(0);
++	path.forEach((p) => record.double(p[0]).double(p[1]));
++
++	const header = (bytes: number) => {
++		const out = new Bytes().be32(9994);
++
++		for (let i = 0; i < 5; i++) out.be32(0);
++
++		out
++			.be32(bytes / 2)
++			.le32(1000)
++			.le32(type);
++		[...box, 0, 0, 0, 0].forEach((v) => out.double(v));
++
++		return out;
++	};
++	const shp = header(100 + 8 + record.length)
++		.be32(1)
++		.be32(record.length / 2)
++		.bytes(record);
++	const shx = header(100 + 8)
++		.be32(50)
++		.be32(record.length / 2);
++	const note = notice(sketch);
++	const fields: [string, string][] = [['NAME', sketch.title ?? '']];
++
++	if (note) fields.push(['NOTE', note]);
++
++	const files = [
++		{ name: `${stem}.shp`, data: shp.array() },
++		{ name: `${stem}.shx`, data: shx.array() },
++		{ name: `${stem}.dbf`, data: table(fields) },
++		{ name: `${stem}.cpg`, data: new TextEncoder().encode('UTF-8') }
++	];
++
++	if (sketch.prj && sketch.origin) {
++		files.push({ name: `${stem}.prj`, data: new TextEncoder().encode(sketch.prj) });
++	}
++
++	return storedZip(files);
++}
 diff --git a/tools/ui/src/lib/tosh/sketch.ts b/tools/ui/src/lib/tosh/sketch.ts
 new file mode 100644
-index 000000000..67224996a
+index 000000000..71f833bfa
 --- /dev/null
 +++ b/tools/ui/src/lib/tosh/sketch.ts
-@@ -0,0 +1,285 @@
+@@ -0,0 +1,326 @@
 +import type { ToshSketch } from '$lib/types';
 +
 +/** How far the last point ends from the first, in the sketch's unit. */
@@ -1043,13 +1283,17 @@ index 000000000..67224996a
 +	return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
 +}
 +
++export function notice(sketch: ToshSketch): string | null {
++	return sketch.notice?.trim() || null;
++}
++
 +export function isOpen(sketch: ToshSketch): boolean {
 +	return sketch.closed && gap(sketch) > span(sketch) * 1e-4;
 +}
 +
 +/** The points to number: the corners, without the last one of a closed figure, which is its first again. */
 +/** A point where an export writes it: at the figure's coordinates when it has an origin, else from its first point. */
-+function placed(sketch: ToshSketch, point: number[]): number[] {
++export function placed(sketch: ToshSketch, point: number[]): number[] {
 +	const origin = sketch.origin?.length === 2 ? sketch.origin : null;
 +
 +	return origin ? [point[0] + origin[0], point[1] + origin[1]] : point;
@@ -1270,6 +1514,31 @@ index 000000000..67224996a
 +			);
 +		});
 +
++	const note = notice(sketch);
++
++	if (note) {
++		const placedAll = [...sketch.points, ...corners(sketch)].map((p) => placed(sketch, p));
++		const left = Math.min(...placedAll.map((p) => p[0]));
++		const bottom = Math.min(...placedAll.map((p) => p[1]));
++
++		out.push(
++			'0',
++			'TEXT',
++			'8',
++			'NOTICE',
++			'10',
++			number(left),
++			'20',
++			number(bottom - 3 * size),
++			'30',
++			'0.0',
++			'40',
++			number(size),
++			'1',
++			note.replace(/\n/g, ' ')
++		);
++	}
++
 +	out.push('0', 'ENDSEC', '0', 'EOF');
 +
 +	return out.join('\n') + '\n';
@@ -1278,14 +1547,17 @@ index 000000000..67224996a
 +/** The numbered corners, east and north of the first one. */
 +export function csv(sketch: ToshSketch): string {
 +	const suffix = sketch.unit ? `_${sketch.unit}` : '';
++	// a column rather than a comment line, which some table imports reject
++	const note = notice(sketch);
++	const column = note ? `,"${note.replace(/"/g, '""')}"` : '';
 +	const rows = corners(sketch).map((corner, i) => {
 +		const c = placed(sketch, corner);
 +
-+		return `${i + 1},${number(c[0])},${number(c[1])}`;
++		return `${i + 1},${number(c[0])},${number(c[1])}${column}`;
 +	});
-+	const header = sketch.origin
-+		? `point,x${suffix},y${suffix}`
-+		: `point,east${suffix},north${suffix}`;
++	const header =
++		(sketch.origin ? `point,x${suffix},y${suffix}` : `point,east${suffix},north${suffix}`) +
++		(note ? ',note' : '');
 +
 +	return [header, ...rows].join('\n') + '\n';
 +}
@@ -1299,15 +1571,24 @@ index 000000000..67224996a
 +	await image.decode();
 +	const canvas = document.createElement('canvas');
 +
++	const note = notice(sketch);
++
 +	canvas.width = 2400;
-+	canvas.height = 1600;
++	canvas.height = note ? 1680 : 1600;
 +	const context = canvas.getContext('2d');
 +
 +	if (!context) return null;
 +
 +	context.fillStyle = '#fff';
 +	context.fillRect(0, 0, canvas.width, canvas.height);
-+	context.drawImage(image, 0, 0, canvas.width, canvas.height);
++	context.drawImage(image, 0, 0, 2400, 1600);
++
++	if (note) {
++		context.fillStyle = '#111';
++		context.font = '40px system-ui, sans-serif';
++		context.textAlign = 'center';
++		context.fillText(note, 1200, 1640);
++	}
 +
 +	return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
 +}
@@ -1456,10 +1737,10 @@ index 377a57040..20260b4c3 100644
  	onConnectionState?: (state: StreamConnectionState) => void;
 diff --git a/tools/ui/src/lib/types/tosh.d.ts b/tools/ui/src/lib/types/tosh.d.ts
 new file mode 100644
-index 000000000..6418555ed
+index 000000000..30f3ddc58
 --- /dev/null
 +++ b/tools/ui/src/lib/types/tosh.d.ts
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,60 @@
 +/** A call the server's Tosh agent made while it answered, as its progress events report it. */
 +export interface ToshCall {
 +	id?: string;
@@ -1481,6 +1762,10 @@ index 000000000..6418555ed
 +	/** Where the first point lies in the coordinate system `plane` names: exports put the figure there. */
 +	origin?: number[];
 +	plane?: string;
++	/** A line every export carries, such as a disclaimer that the figure is not a survey. */
++	notice?: string;
++	/** The coordinate system of `origin` as a shapefile's .prj holds it. */
++	prj?: string;
 +}
 +
 +export interface ToshMapRequest {

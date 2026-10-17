@@ -368,7 +368,7 @@ The **Chat / Images** toggle at the top of the window switches to the image stud
 
 **MoE experts on CPU** — See the MoE section.
 
-**VRAM reserve** — Memory left free for the system. 1024 MB is safe.
+**VRAM reserve** — Memory left free for the system. Automatic leaves 8% of the card, between 768 and 1536 MB, as the engine does on its own.
 
 **Copy weights to VRAM (--no-mmap)** — Essential on discrete GPUs: without it, weights are read over PCIe on every token and speed drops ~6×.
 

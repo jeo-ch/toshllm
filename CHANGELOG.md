@@ -7,10 +7,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Russian interface.** Contributed by [SergeySlice](https://github.com/SergeySlice) in [#127](https://github.com/engeldlgado/toshllm/issues/127).
 - **Chat: a figure an agent places in a coordinate system, such as a State Plane zone, exports at those coordinates.** Its DXF drawing and its CSV of corners carry the system's X and Y, so they open in place in CAD or GIS.
+- **Chat: a figure an agent sends exports as a shapefile, in a ZIP.** It is a polygon when the figure should close and a line otherwise, with its title and notice as attributes and, when the agent gives its coordinate system, a .prj, in the app and the web chat.
+- **Chat: a figure an agent sends can carry a notice that each of its exports repeats.** It goes under the drawing in the PNG, as text on a layer of its own in the DXF and as a column in the CSV, in the app and the web chat.
+- **Chat: the tools popover can uncheck every tool at once.** With many MCP servers on, one click starts from none so you pick only the few you need; the popover also shows how many are on. Requested in [#126](https://github.com/engeldlgado/toshllm/issues/126).
+
+### Improved
+
+- **Chat: a Markdown table gives each column the width of its text, wrapping past a limit, and scrolls sideways when it is wider than the answer.** Long words that cannot wrap, such as slugs, no longer squeeze the other columns, and the table has no widths left to work out as the window changes.
 
 ### Fixed
 
+- **Engine: with the server open to the local network and no API key, other computers no longer get the built-in shell and file tools.** They still chat and use the agent and the tools of extensions; this computer, or a request with the API key, keeps every tool.
+- **Settings: the VRAM reserve reaches the engine.** The app passed it in a variable the engine never read, so only router mode and DFlash kept it; Dynamic MoE's memory plan now leaves what you set. Automatic, the new default, keeps the engine's own 8% of the card. Reported in [#124](https://github.com/engeldlgado/toshllm/issues/124).
 - **Web chat: an agent's answer survives a phone locking or switching apps.** The agent kept going only while the browser stayed connected, so a long turn such as reading a scanned deed failed when the page went to the background; it now runs to its end and the page picks the answer up when it comes back.
 
 ## [0.87.25] - 2026-10-15
