@@ -171,7 +171,6 @@ struct NativeChatView: View {
     @AppStorage(SettingsKeys.chatSamplers) private var samplers = ""
     @AppStorage(SettingsKeys.chatBackendSampling) private var backendSampling = false
     @AppStorage(SettingsKeys.chatCustomJSON) private var customJSON = ""
-    @AppStorage(SettingsKeys.chatAgenticMaxTurns) private var agenticMaxTurns = 10
     @AppStorage(SettingsKeys.chatPasteLongTextLength) private var pasteLongTextLength = 2500
     @AppStorage(SettingsKeys.chatMaxImageMegapixels) private var maxImageMegapixels = 1.0
     @AppStorage(SettingsKeys.chatPDFAsImages) private var pdfAsImages = false
@@ -1265,138 +1264,6 @@ struct NativeChatView: View {
                     .font(.caption).foregroundStyle(.orange)
             }
 
-            if false { DisclosureGroup {
-                VStack(alignment: .leading, spacing: 10) {
-                    samplingSlider(loc.t("Top P", "Top P"), value: $topP, range: 0...1)
-                    samplingSlider(loc.t("Min P", "Min P"), value: $minP, range: 0...1)
-                    samplingSlider(loc.t("Typical P", "Typical P"), value: $typicalP, range: 0...1)
-                    Stepper(value: $topK, in: 0...200) {
-                        parameterValue(loc.t("Top K", "Top K"), value: topK.formatted())
-                    }
-                    samplingSlider(loc.t("Penalización de repetición", "Repeat penalty"),
-                                   value: $repeatPenalty, range: 0.5...2)
-                    samplingSlider(loc.t("Penalización de presencia", "Presence penalty"),
-                                   value: $presencePenalty, range: -2...2)
-                    samplingSlider(loc.t("Penalización de frecuencia", "Frequency penalty"),
-                                   value: $frequencyPenalty, range: -2...2)
-                    Stepper(value: $repeatLastN, in: 0...4096, step: 16) {
-                        parameterValue(loc.t("Ventana de repetición", "Repeat window"),
-                                       value: repeatLastN.formatted())
-                    }
-                    HStack {
-                        Text(loc.t("Semilla", "Seed"))
-                        Spacer()
-                        DeferredNumberField("-1", value: $seed, width: 90)
-                    }
-                    GroupBox(loc.t("Temperatura dinámica y XTC", "Dynamic temperature and XTC")) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            samplingSlider(loc.t("Rango dinámico", "Dynamic range"),
-                                           value: $dynatempRange, range: 0...2)
-                            samplingSlider(loc.t("Exponente dinámico", "Dynamic exponent"),
-                                           value: $dynatempExponent, range: 0.1...4)
-                            samplingSlider(loc.t("Probabilidad XTC", "XTC probability"),
-                                           value: $xtcProbability, range: 0...1)
-                            samplingSlider(loc.t("Umbral XTC", "XTC threshold"),
-                                           value: $xtcThreshold, range: 0...1)
-                        }
-                    }
-                    GroupBox("DRY") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            samplingSlider(loc.t("Multiplicador", "Multiplier"),
-                                           value: $dryMultiplier, range: 0...2)
-                            samplingSlider(loc.t("Base", "Base"), value: $dryBase, range: 1...3)
-                            Stepper(value: $dryAllowedLength, in: 0...32) {
-                                parameterValue(loc.t("Longitud permitida", "Allowed length"),
-                                               value: dryAllowedLength.formatted())
-                            }
-                            Stepper(value: $dryPenaltyLastN, in: 0...32768, step: 64) {
-                                parameterValue(loc.t("Ventana DRY", "DRY window"),
-                                               value: dryPenaltyLastN.formatted())
-                            }
-                        }
-                    }
-                    TextField(loc.t("Orden: top_k;typ_p;top_p;min_p;temperature",
-                                    "Order: top_k;typ_p;top_p;min_p;temperature"),
-                              text: $samplers)
-                        .workspaceTextField()
-                    Toggle(loc.t("Muestreo en backend", "Backend sampling"),
-                           isOn: $backendSampling)
-                    Stepper(value: $agenticMaxTurns, in: 1...100) {
-                        parameterValue(loc.t("Turnos máximos del agente", "Maximum agent turns"),
-                                       value: agenticMaxTurns.formatted())
-                    }
-                    Stepper(value: $pasteLongTextLength, in: 0...100_000, step: 500) {
-                        parameterValue(loc.t("Texto pegado a archivo", "Paste text to file"),
-                                       value: pasteLongTextLength == 0
-                                           ? loc.t("Desactivado", "Off")
-                                           : pasteLongTextLength.formatted())
-                    }
-                    HStack {
-                        Text(loc.t("Máximo de imagen (MP)", "Maximum image size (MP)"))
-                        Spacer()
-                        DeferredNumberField("0", value: $maxImageMegapixels, width: 80)
-                    }
-                    Toggle(loc.t("PDF como imágenes para modelos con visión",
-                                 "PDF as images for vision models"), isOn: $pdfAsImages)
-                    DisclosureGroup(loc.t("JSON personalizado de la petición",
-                                          "Custom request JSON")) {
-                        TextEditor(text: $customJSON)
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(minHeight: 80)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-                        Text(loc.t("Las claves válidas reemplazan los parámetros anteriores para esta petición.",
-                                   "Valid keys override the parameters above for this request."))
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-                    Button(loc.t("Restaurar muestreo", "Reset sampling"),
-                           systemImage: "arrow.counterclockwise") {
-                        topP = 0.95
-                        minP = 0.05
-                        topK = 40
-                        repeatPenalty = 1
-                        repeatLastN = 64
-                        seed = -1
-                        dynatempRange = 0
-                        dynatempExponent = 1
-                        xtcProbability = 0
-                        xtcThreshold = 0.1
-                        typicalP = 1
-                        presencePenalty = 0
-                        frequencyPenalty = 0
-                        dryMultiplier = 0
-                        dryBase = 1.75
-                        dryAllowedLength = 2
-                        dryPenaltyLastN = 0
-                        samplers = ""
-                        backendSampling = false
-                        customJSON = ""
-                        agenticMaxTurns = 10
-                        pasteLongTextLength = 2500
-                        maxImageMegapixels = ProductDefaults.double(SettingsKeys.chatMaxImageMegapixels, or: 1)
-                        pdfAsImages = ProductDefaults.bool(SettingsKeys.chatPDFAsImages, or: false)
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
-                }
-                .padding(.top, 8)
-            } label: {
-                Label(loc.t("Muestreo avanzado", "Advanced sampling"),
-                      systemImage: "slider.horizontal.2.square")
-            }
-
-            Divider()
-
-            Label(loc.t("Prompt de sistema global", "Global system prompt"), systemImage: "gearshape")
-                .font(.subheadline.weight(.medium))
-                .infoTip(loc.t("Instrucciones permanentes para el modelo. Prioridad: prompt de la conversación, luego el del proyecto, luego este global.",
-                               "Permanent instructions for the model. Priority: the conversation's prompt, then the project's, then this global one."))
-            TextEditor(text: $systemPrompt)
-                .font(.system(size: 12))
-                .frame(height: 90)
-                .scrollContentBackground(.hidden)
-                .padding(6)
-                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 7))
-            }
 
             Button {
                 showSystem = false
@@ -1437,25 +1304,6 @@ struct NativeChatView: View {
         }
         .padding(14)
         .frame(width: 380)
-    }
-
-    private func samplingSlider(_ title: String, value: Binding<Double>,
-                                range: ClosedRange<Double>) -> some View {
-        HStack(spacing: 8) {
-            Text(title)
-            Slider(value: value, in: range)
-            Text(value.wrappedValue, format: .number.precision(.fractionLength(2)))
-                .font(.system(.caption, design: .monospaced))
-                .frame(width: 38, alignment: .trailing)
-        }
-    }
-
-    private func parameterValue(_ title: String, value: String) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Text(value).font(.system(.caption, design: .monospaced))
-        }
     }
 
     /// Which system prompt actually applies to the open conversation.
