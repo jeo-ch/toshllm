@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.87.26] - 2026-10-17
 
 ### Added
 
@@ -11,14 +11,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Chat: a figure an agent places in a coordinate system, such as a State Plane zone, exports at those coordinates.** Its DXF drawing and its CSV of corners carry the system's X and Y, so they open in place in CAD or GIS.
 - **Chat: a figure an agent sends exports as a shapefile, in a ZIP.** It is a polygon when the figure should close and a line otherwise, with its title and notice as attributes and, when the agent gives its coordinate system, a .prj, in the app and the web chat.
 - **Chat: a figure an agent sends can carry a notice that each of its exports repeats.** It goes under the drawing in the PNG, as text on a layer of its own in the DXF and as a column in the CSV, in the app and the web chat.
+- **Engine: `--tiles-path` serves a folder of map files at `/tiles/`, in byte ranges.** A map reads a PMTiles file of many gigabytes a piece at a time instead of loading it whole.
+- **Engine: a server listening beyond this computer without an API key says so once at startup.** It names the addresses others can reach and the MCP servers they can use; nothing is blocked and no key is made.
+- **Math: the runtime lists each helper module with its SHA-256 in `HELPERS.sha256`.** In the app it sits in `Contents/Resources/tosh-sympy`, so anyone can check which relay and math helpers an install runs.
+- **Settings: a folder of offline maps and a base map style, with the map options.** The folder's PMTiles regions draw the background of maps in the app and the web chat without internet, with place names when their fonts sit in an assets subfolder, and the app hands the folder to the server on its own. A style of `none` draws a plain background without connecting.
+- **Engine and chat: an extension's agent can take the chat's own tools with every turn.** With `--mcp-agent-client-tools`, a request that brings tools reaches the agent, which offers them to the model beside its own and hands back the calls to them, streamed like any tool call. The app sends its tools, MCP servers included, to an agent whose extension asks for them, runs the calls it gets back and sends the next round to the agent again.
 - **Chat: the tools popover can uncheck every tool at once.** With many MCP servers on, one click starts from none so you pick only the few you need; the popover also shows how many are on. Requested in [#126](https://github.com/engeldlgado/toshllm/issues/126).
 
 ### Improved
 
+- **Web chat: maps draw with MapLibre, on OpenFreeMap online and on map files the server holds without internet.** OpenFreeMap takes the place of the OpenStreetMap tiles, whose policy is for light use; a server can name its own style instead, or PMTiles regions with their fonts under `--tiles-path`, and with neither reachable the layers still show on a plain ground. A server can also name an index of its regions, read each time a map opens, so regions it adds while running show without a restart.
+- **Chat: maps in the app draw with MapLibre too, and only road routes stay on Apple Maps.** Apple's terms keep its route data on its own map; every other map uses OpenFreeMap online, a style of your own or the offline regions, and a click on a feature still shows its attributes.
 - **Chat: a Markdown table gives each column the width of its text, wrapping past a limit, and scrolls sideways when it is wider than the answer.** Long words that cannot wrap, such as slugs, no longer squeeze the other columns, and the table has no widths left to work out as the window changes.
 
 ### Fixed
 
+- **MCP: a remote server can no longer send your headers or requests to another address (security fix).** The app and the engine's relay refuse an endpoint or a redirect on another scheme, host or port, which up to 0.87.25 could receive them; update earlier installs, and check that a `remote.py` you run from a path of your own matches `HELPERS.sha256`.
+- **MCP: a local server that stops answering no longer holds a request past its timeout.** Cancelling returns at once too, later requests keep working, idle servers no longer stall the app, and one that closes its input no longer ends it.
+- **MCP: servers on the older HTTP+SSE transport connect from the app.** Connecting used to wait without end.
+- **Engine: an MCP tool call through `/tools` stops when its client goes away.** The server is told within half a second and the next call to it no longer waits out the abandoned one's timeout, so cancelling an agent's turn also stops its tool call.
+- **Math: after a calculation the answer is written in the language of the question, and an integral or a root the exact tools can give is computed exactly.** A note added after each tool call made the model answer in English, and the numerical tool came first for definite integrals.
 - **Engine: with the server open to the local network and no API key, other computers no longer get the built-in shell and file tools.** They still chat and use the agent and the tools of extensions; this computer, or a request with the API key, keeps every tool.
 - **Settings: the VRAM reserve reaches the engine.** The app passed it in a variable the engine never read, so only router mode and DFlash kept it; Dynamic MoE's memory plan now leaves what you set. Automatic, the new default, keeps the engine's own 8% of the card. Reported in [#124](https://github.com/engeldlgado/toshllm/issues/124).
 - **Web chat: an agent's answer survives a phone locking or switching apps.** The agent kept going only while the browser stayed connected, so a long turn such as reading a scanned deed failed when the page went to the background; it now runs to its end and the page picks the answer up when it comes back.

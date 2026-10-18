@@ -72,6 +72,7 @@ enum SymPyToolsService {
         guard !arguments.isEmpty else { return [] }
         return arguments + ["--mcp-agent", agentName] + (agent ? [] : ["--mcp-agent-explicit"])
             + (agentOnly.isEmpty ? [] : ["--mcp-agent-only", agentOnly.joined(separator: ",")])
+            + (bundled.clientTools ? ["--mcp-agent-client-tools"] : [])
     }
 
     /// The MCP servers an administrator approved for the engine, by the name the engine gives them.

@@ -200,6 +200,21 @@ final class EngineExtensionsTests: XCTestCase {
         XCTAssertEqual(args.firstIndex(of: "--mcp-agent-only").map { args[$0 + 1] }, "maps")
     }
 
+    func testAnAgentThatTakesTheChatsToolsGetsThemFromTheEngine() throws {
+        let root = try folder()
+        try write(manifest(id(), agent: true, extra: #", "client_tools": true"#), in: root, as: "x")
+        let item = try XCTUnwrap(EngineExtensions.discover(in: root, bundled: true).extensions.first)
+        XCTAssertTrue(item.agentTakesClientTools)
+        XCTAssertTrue(SymPyToolsService.serverArguments(enabled: false, resources: try runtime(), extensions: [item])
+            .contains("--mcp-agent-client-tools"))
+        let plain = try folder()
+        try write(manifest(id(), agent: true), in: plain, as: "y")
+        let other = try XCTUnwrap(EngineExtensions.discover(in: plain, bundled: true).extensions.first)
+        XCTAssertFalse(other.agentTakesClientTools)
+        XCTAssertFalse(SymPyToolsService.serverArguments(enabled: false, resources: try runtime(), extensions: [other])
+            .contains("--mcp-agent-client-tools"))
+    }
+
     func testTheChatCallsOnlyTheServersNotKeptForTheAgent() throws {
         let root = try folder()
         try write(manifest(id()), in: root, as: "x")

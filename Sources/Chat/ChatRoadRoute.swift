@@ -124,7 +124,7 @@ enum ChatRoadRoute {
                             kilometres, time, mode),
             fields: [ChatMap.Field(name: "name", alias: loc.t("Nombre", "Name")),
                      ChatMap.Field(name: "note", alias: loc.t("Nota", "Note"))],
-            count: features.count)
+            count: features.count, apple: true)
         let reply = "Road route drawn on the map under your answer (Apple Maps): \(names), \(kilometres), about \(time) \(walking ? "walking" : "by car"). These figures come from Apple Maps; give them as they are."
         return ChatMapTool.Drawn(result: ToolExecutionResult(content: reply, isError: false), map: ChatMap(layers: [layer]))
     }

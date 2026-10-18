@@ -129,6 +129,10 @@ enum SettingsKeys {
     static let chatMapToolEnabled = "chatMapToolEnabled"
     /// show_road_route: Apple Maps routes by road, each call approved by the user since it uses the internet.
     static let chatRoadRouteEnabled = "chatRoadRouteEnabled"
+    /// The base map's MapLibre style URL; empty for OpenFreeMap.
+    static let mapStyle = "mapStyle"
+    /// A folder of PMTiles regions, with their fonts and sprites under assets/, drawn without internet.
+    static let mapFolder = "mapFolder"
 
     /// Models whose template accepts tools but that write the call in the wrong shape: the
     /// engine rejects it and the turn dies, so they stop being offered any tool.
@@ -307,7 +311,7 @@ enum SettingsKeys {
         audioVADProfile, audioVADThreshold, audioVADMinSpeechMS,
         audioVADMinSilenceMS, audioVADMaxSpeechSeconds, audioVADSpeechPadMS,
         extraArgs, embeddings, agentToolsEnabled, toolsRuntime, jsSandboxEnabled, sympyEnabled, scientificEnabled, mathAgentEnabled, mathToolsAllowed, toolResultLimit,
-        memoryToolsEnabled, chatMapToolEnabled, chatRoadRouteEnabled, toolsUnsupportedModels, mcpServers, uiMcpProxy,
+        memoryToolsEnabled, chatMapToolEnabled, chatRoadRouteEnabled, mapStyle, mapFolder, toolsUnsupportedModels, mcpServers, uiMcpProxy,
         cacheTypeK, cacheTypeV, mlock, cacheRAM,
 parallelSlots, reasoningInline, serverDefaultReasoning, serverDefaultMaxTokens, specMTP, mtpDisabledModels, faAmd, prefetchExperts, ubatch,
         dynamicMoeEnabled, dynamicMoeLeanRAM, routerMode, routerModelsMax,

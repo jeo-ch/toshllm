@@ -779,12 +779,20 @@ struct ServerSettings {
         let d = UserDefaults.standard
         let megapixels = d.object(forKey: SettingsKeys.chatMaxImageMegapixels) == nil
             ? 1 : d.double(forKey: SettingsKeys.chatMaxImageMegapixels)
-        let config: [String: Any] = ["pdfAsImage": d.bool(forKey: SettingsKeys.chatPDFAsImages),
+        var config: [String: Any] = ["pdfAsImage": d.bool(forKey: SettingsKeys.chatPDFAsImages),
                                      "maxImageMPixels": megapixels]
-        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]) else {
-            return ["--path", ui]
+        var tiles: [String] = []
+        if !MapBase.style.isEmpty { config["mapStyle"] = MapBase.style }
+        if let folder = MapBase.folder, !MapBase.regions.isEmpty {
+            tiles = ["--tiles-path", folder.path]
+            config["mapRegions"] = MapBase.regions.map { "/tiles/" + ($0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? $0) }
+                .joined(separator: ",")
+            if !MapBase.labels { config["mapLabels"] = false }
         }
-        return ["--path", ui, "--ui-config", String(decoding: data, as: UTF8.self)]
+        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]) else {
+            return ["--path", ui] + tiles
+        }
+        return ["--path", ui, "--ui-config", String(decoding: data, as: UTF8.self)] + tiles
     }
 
     var environment: [String: String] {

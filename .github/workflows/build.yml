@@ -9,9 +9,11 @@ on:
       - "Package.swift"
       - "Package.resolved"
       - "helpers/**"
-      - ".github/workflows/build.yml"
       - "patches/**"
       - "scripts/build-engines.sh"
+      - "scripts/build-sympy.sh"
+      - "scripts/test-engine.sh"
+      - ".github/workflows/build.yml"
     tags: ["v*"]
   pull_request:
     branches: [main, master]
@@ -35,10 +37,14 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # a push only checks what it changed, so a later push must not cancel it
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Direct pushes to main only run the unit tests — a fast gate
+  # Direct pushes to main run the unit tests, and the engine tests when the engine
+  # changed. The full app + DMG build for both CPU variants happens once, on the
+  # release tag (below), so a version-bump commit and its tag don't compile the app
+  # twice on the same SHA.
   test:
     if: github.event_name == 'push' && github.ref_type == 'branch'
     name: Unit tests
@@ -76,9 +82,8 @@ jobs:
 
   build:
     # PRs validate a single variant; tags and manual runs build BOTH CPU variants
-    # (standard = AVX2, noavx2 = pre-AVX2 legacy) and ship a DMG for each. Branch
-    # pushes are handled by the test job above, so build is skipped for them.
-    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
+    # (standard = AVX2, noavx2 = pre-AVX2 legacy) and ship a DMG for each. A branch
+    # push only builds and tests the engines, and only when they changed.
     name: Build ${{ matrix.variant }} (x86_64)
     runs-on: macos-26
     # Apple's notary queue took 66 min on this account's first submission.
@@ -97,20 +102,38 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Detect documentation-only PR
-        if: github.event_name == 'pull_request'
+      # Tags and manual runs build everything; a PR builds unless it only touches documentation; a
+      # branch push builds and tests the engines when they or this workflow changed, and never the app.
+      - name: Decide what this run builds
         id: scope
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          if git diff --name-only "$BASE_SHA"...HEAD | grep -Ev '(^|/).*\.md$|^Assets/lang/|^scripts/(extract-strings|check-translations|translation-status|sync-translations)\.py$|^\.github/|^LICENSE$|^\.gitignore$' >/dev/null; then
-            echo "build=true" >> "$GITHUB_OUTPUT"
+          docs='(^|/).*\.md$|^Assets/lang/|^scripts/(extract-strings|check-translations|translation-status|sync-translations)\.py$|^\.github/|^LICENSE$|^\.gitignore$'
+          engine='^patches/|^scripts/(build-engines|test-engine)\.sh$|^\.github/workflows/build\.yml$'
+          app=false; engines=false
+          if [ "$GITHUB_REF_TYPE" = tag ] || [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            app=true; engines=true
+          elif ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            # nothing to compare with (a new branch or a forced push): check all this event can
+            engines=true
+            [ "$GITHUB_EVENT_NAME" = pull_request ] && app=true
           else
-            echo "build=false" >> "$GITHUB_OUTPUT"
+            if [ "$GITHUB_EVENT_NAME" = pull_request ]; then range="$BASE_SHA...HEAD"; else range="$BASE_SHA..HEAD"; fi
+            changed=$(git diff --name-only "$range")
+            if [ -n "$changed" ]; then
+              echo "$changed" | grep -Eq "$engine" && engines=true
+              if [ "$GITHUB_EVENT_NAME" = pull_request ] && { [ "$engines" = true ] || echo "$changed" | grep -Evq "$docs"; }; then
+                app=true; engines=true
+              fi
+            fi
           fi
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "engines=$engines" >> "$GITHUB_OUTPUT"
+          echo "Builds the app: **$app**. Builds and tests the engines: **$engines**." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cache engine builds
-        if: github.event_name != 'pull_request' || steps.scope.outputs.build == 'true'
+        if: steps.scope.outputs.engines == 'true'
         uses: actions/cache@v5
         with:
           path: vendor
@@ -123,7 +146,7 @@ jobs:
       # Pinned CPython, SymPy, NumPy and SciPy, checked against their SHA-256. Rebuilt every
       # time: it is a download and an unpack, and the helper sources live outside the engine cache key.
       - name: Build math runtime (x86_64)
-        if: github.event_name != 'pull_request' || steps.scope.outputs.build == 'true'
+        if: steps.scope.outputs.app == 'true'
         run: |
           ARCH=x86_64 ./scripts/build-sympy.sh
           PY=vendor/tosh-sympy/python/bin/python3
@@ -139,12 +162,13 @@ jobs:
             echo "x86_64 runtime cannot run on this runner; its tests ran in the unit test job"
           fi
 
+      # also on tags: the release job waits for this one, not for the unit test job of the push
       - name: Run unit tests
-        if: github.event_name == 'pull_request' && steps.scope.outputs.build == 'true'
+        if: steps.scope.outputs.app == 'true' && matrix.variant == 'standard'
         run: swift test
 
       - name: Build inference engines (x86_64)
-        if: github.event_name != 'pull_request' || steps.scope.outputs.build == 'true'
+        if: steps.scope.outputs.engines == 'true'
         shell: zsh {0}
         run: |
           # Use parallel builds for faster CI, incremental builds for cache hits
@@ -152,8 +176,14 @@ jobs:
           export FORCE_REBUILD=${{ inputs.force_rebuild && '1' || '0' }}
           ARCH=x86_64 ./scripts/build-engines.sh
 
+      # On the engine of this variant; a failure, a missing binary or a runner that cannot run it fails the job
+      - name: Engine tests (x86_64)
+        if: steps.scope.outputs.engines == 'true'
+        timeout-minutes: 20
+        run: ./scripts/test-engine.sh -v
+
       - name: Build app (x86_64)
-        if: github.event_name != 'pull_request' || steps.scope.outputs.build == 'true'
+        if: steps.scope.outputs.app == 'true'
         shell: zsh {0}
         run: TOSH_ARCH=x86_64 ./make-app.sh
 
@@ -249,7 +279,7 @@ jobs:
       # The app needs macOS 14; on macOS 12 the engine runs alone. Only this zip is built for
       # macOS 12 and Metal 2.4, in its own directory: the DMGs above are unchanged.
       - name: Package macOS 12 engine
-        if: matrix.variant == 'noavx2' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+        if: matrix.variant == 'noavx2' && (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch')
         env:
           SIGN_IDENTITY: ${{ steps.sign.outputs.identity }}
           NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}

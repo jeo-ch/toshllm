@@ -83,6 +83,9 @@ enum EngineExtensions {
         var agent: Server?
         /// Starts the app's math servers with it even when they are off, for an agent that relies on them.
         var mathTools: Bool?
+        /// The agent takes the chat's own tools with every turn and hands back the calls to them, so the
+        /// chat runs those and the next round goes to the agent again.
+        var clientTools: Bool?
         var settings: [Section]?
     }
 
@@ -95,6 +98,7 @@ enum EngineExtensions {
         var id: String { manifest.id }
         var fields: [Field] { manifest.settings?.flatMap(\.fields) ?? [] }
         var hasAgent: Bool { manifest.agent != nil }
+        var agentTakesClientTools: Bool { hasAgent && manifest.clientTools == true }
     }
 
     struct Problem: Error, Sendable, Identifiable {
@@ -279,7 +283,7 @@ enum EngineExtensions {
     /// The servers whose switch is on and the agent, with {python}, {runtime}, {extension} and
     /// {trust_key} filled in, in the shape --mcp-servers-json takes.
     static func engineEntries(_ extensions: [Extension], runtime: URL, trustKey: String)
-        -> (servers: [String: Any], agent: [String: Any]?, agentOnly: [String], mathTools: Bool) {
+        -> (servers: [String: Any], agent: [String: Any]?, agentOnly: [String], mathTools: Bool, clientTools: Bool) {
         let python = runtime.appendingPathComponent("python/bin/python3").path
         var servers: [String: Any] = [:]
         var agent: [String: Any]?
@@ -316,6 +320,7 @@ enum EngineExtensions {
             }
             if agent == nil, let declared = item.manifest.agent { agent = entry(declared) }
         }
-        return (servers, agent, agentOnly.sorted(), extensions.contains { $0.manifest.mathTools == true })
+        return (servers, agent, agentOnly.sorted(), extensions.contains { $0.manifest.mathTools == true },
+                extensions.contains(where: \.agentTakesClientTools))
     }
 }

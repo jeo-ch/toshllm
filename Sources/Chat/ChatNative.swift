@@ -679,7 +679,10 @@ final class ChatStore: ObservableObject {
         let agentHistory = Self.agentHistory(system: systemWithCwd, summary: conversations[i].summary,
                                              messages: conversations[i].messages, from: conversations[i].summarizedCount ?? 0,
                                              modalities: modalities)
-        let agentAllowed = agentRun == nil && continuationInstruction == nil && !Self.serverAgentMissing && !agentDeclined
+        // an agent that takes the chat's tools also gets the rounds after the chat runs the calls it handed back
+        let clientToolsAgent = EngineExtensions.active().contains(where: \.agentTakesClientTools)
+        let agentAllowed = (agentRun == nil || clientToolsAgent && agentRun?.instruction == nil && agentRun?.finalizing != true)
+            && continuationInstruction == nil && !Self.serverAgentMissing && !agentDeclined
         var history = Self.requestHistory(system: systemWithCwd,
                                           summary: conversations[i].summary,
                                           messages: conversations[i].messages,
@@ -934,10 +937,15 @@ final class ChatStore: ObservableObject {
                 if !samplerOrder.isEmpty { body["samplers"] = samplerOrder }
                 if let activeModel { body["model"] = activeModel }
                 // a request for a computed result may not be answered before a math tool is called
+                // what the agent cannot run itself: its extension's servers and the math ones are on its side
+                let clientTools = availableTools.filter { tool in
+                    !MathTranscriptionService.isMathTool(tool.name)
+                        && !EngineExtensions.chatToolPrefixes(active).contains { tool.name.hasPrefix($0) }
+                }
                 if agentTurn {
-                    body["messages"] = agentHistory
+                    body["messages"] = clientToolsAgent ? history : agentHistory
                     var tosh: [String: Any] = ["max_rounds": agentTurnLimit]
-                    if Self.hasOwnTools(availableTools) { tosh["client_tools"] = true }
+                    if !clientToolsAgent && Self.hasOwnTools(availableTools) { tosh["client_tools"] = true }
                     body["tosh"] = tosh
                 } else if let request, availableTools.contains(where: { MathTranscriptionService.isMathTool($0.name) }) {
                     let (intent, asked) = await MathIntent.decide(request, context: Array(userTexts.dropLast()), port: port)
@@ -950,7 +958,13 @@ final class ChatStore: ObservableObject {
                     let owner = self
                     await MainActor.run { owner?.lastMathIntent = nil }
                 }
-                if agentTurn || agentRun?.finalizing == true {
+                if agentTurn && clientToolsAgent {
+                    let definitions = clientTools.compactMap(\.openAIDefinition)
+                    if !definitions.isEmpty {
+                        body["tools"] = definitions
+                        body["tool_choice"] = "auto"
+                    }
+                } else if agentTurn || agentRun?.finalizing == true {
                     // no tools: the agent's are on the server, and a last round only states what was validated
                 } else if gate || agentRun?.mathGuard.next == .mathOnly {
                     // after a refused math call: correct it or ask, never answer from memory

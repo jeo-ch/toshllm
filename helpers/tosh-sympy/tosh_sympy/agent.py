@@ -260,7 +260,7 @@ class Turn:
         messages = ([{"role": "system", "content": self.system}] if self.system else []) + self.history
         messages = messages + [{"role": "user", "content": self.question}] + self.messages
         if note:
-            messages = messages + [{"role": "user", "content": note}]
+            messages = messages + [{"role": "user", "content": note + policy.language_note(_text(self.question))}]
         if body["chat_template_kwargs"].get("enable_thinking") is False:
             # Qwen3 templates that ignore enable_thinking still honour the switch in the text, as the app's chat sends it
             last = max(i for i, m in enumerate(messages) if m["role"] == "user")
@@ -445,7 +445,9 @@ class Turn:
             # no math tools on this engine: the model answers as it is
             message = self._generate(self._body(None, None, None), live=True)
             return message.get("content") or "", "answered"
-        tools = [t["definition"] for t in listed if isinstance(t.get("definition"), dict)]
+        # the model leans to the first tool that fits: exact ones go before their numerical twins
+        tools = [t["definition"] for t in sorted(listed, key=lambda t: not str(t.get("tool", "")).startswith("sympy_"))
+                 if isinstance(t.get("definition"), dict)]
         # with an approved server the model may also ask for what its tools need, in any round
         clarify_anywhere = any(approved(t.get("tool")) for t in listed)
         self.intent, asked = self._intent()

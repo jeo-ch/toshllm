@@ -101,7 +101,9 @@ if [ -x "$SYMPY_RUNTIME/python/bin/python3" ]; then
         "$BUNDLED_SYMPY/python/bin/python3" -I -m compileall -q -j 0 --invalidation-mode checked-hash \
             "$BUNDLED_SYMPY/tosh_sympy" "$BUNDLED_SYMPY/tosh_scientific"
     fi
-    echo "bundled math runtime ($(<"$SYMPY_RUNTIME/VERSION"))"
+    # which helper modules this runtime carries, for anyone who runs it to check
+    (cd "$BUNDLED_SYMPY" && shasum -a 256 tosh_sympy/*.py tosh_scientific/*.py) > "$BUNDLED_SYMPY/HELPERS.sha256"
+    echo "bundled math runtime ($(<"$SYMPY_RUNTIME/VERSION"), helpers $(shasum -a 256 < "$BUNDLED_SYMPY/HELPERS.sha256" | cut -c1-12))"
 else
     echo "WARNING: math runtime not built; run ./scripts/build-sympy.sh to include it"
 fi
@@ -129,6 +131,10 @@ cp Assets/rich-content/katex/dist/fonts/* \
    "$APP/Contents/Resources/rich-content/katex/dist/fonts/"
 cp Assets/rich-content/marked/lib/marked.umd.js \
    "$APP/Contents/Resources/rich-content/marked/lib/"
+mkdir -p "$APP/Contents/Resources/rich-content/maplibre/licenses"
+cp Assets/rich-content/maplibre/map.html Assets/rich-content/maplibre/toshmap.js Assets/rich-content/maplibre/maplibre-gl.css \
+   "$APP/Contents/Resources/rich-content/maplibre/"
+cp Assets/rich-content/maplibre/licenses/* "$APP/Contents/Resources/rich-content/maplibre/licenses/"
 
 # Community translation overlays (English-string -> translation). Optional:
 # es/en are built in; missing keys fall back to English. Copied both for the

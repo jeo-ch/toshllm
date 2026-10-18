@@ -26,6 +26,10 @@ struct ChatMap: Codable, Equatable {
         /// Drawn by the model from coordinates it gave, not read from data: shown dashed. Optional so that maps
         /// saved before it still load.
         var drawn: Bool? = nil
+        /// Apple Maps data, which may only be shown on an Apple map.
+        var apple: Bool? = nil
+
+        var isApple: Bool { apple == true || subtitle?.contains("Apple Maps") == true }
     }
 
     var layers: [Layer]
@@ -137,7 +141,7 @@ struct ChatMapSection: View {
     var body: some View {
         if let map = message.map {
             VStack(alignment: .leading, spacing: 6) {
-                ChatMapCanvas(map: map, onSelect: { selected = $0 })
+                canvas(map)
                     .frame(height: enlarged ? 460 : 220)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .overlay(alignment: .topTrailing) {
@@ -173,6 +177,16 @@ struct ChatMapSection: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+
+    /// Apple Maps data may only be shown on an Apple map; every other map draws with MapLibre, also without internet.
+    @ViewBuilder
+    private func canvas(_ map: ChatMap) -> some View {
+        if map.layers.contains(where: \.isApple) {
+            ChatMapCanvas(map: map, onSelect: { selected = $0 })
+        } else {
+            ChatMapLibreCanvas(map: map, onSelect: { selected = $0 })
         }
     }
 
@@ -402,7 +416,7 @@ struct ChatMapCanvas: NSViewRepresentable {
     }
 
     /// The attributes to read, in the layer's order and with its names, without ids and geometry sizes.
-    private static func feature(_ properties: [String: Any], layer: ChatMap.Layer, index: Int) -> ChatMapFeature {
+    static func feature(_ properties: [String: Any], layer: ChatMap.Layer, index: Int) -> ChatMapFeature {
         let hidden = try? NSRegularExpression(pattern: "^(objectid(_\\d+)?|fid|globalid|shape_?_?(area|length|leng|len))$",
                                               options: .caseInsensitive)
         let order = (layer.fields ?? []).map(\.name)
