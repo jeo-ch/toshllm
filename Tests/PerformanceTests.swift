@@ -112,16 +112,17 @@ struct PerformanceTests {
     
     @Test("Memory allocation performance")
     func testMemoryAllocationPerformance() async throws {
-        let startTime = CFAbsoluteTimeGetCurrent()
-        
         // Test typical memory allocation patterns used by the app
         var buffer = Data(count: 1024 * 1024)  // 1MB
         buffer.append(contentsOf: [UInt8](repeating: 0, count: 1024 * 1024))
-        
-        let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-        let memoryUsed = buffer.count
-        
-        #expect(memoryUsed == 2 * 1024 * 1024, "Memory allocation should be correct")
+        #expect(buffer.count == 2 * 1024 * 1024, "Memory allocation should be correct")
+
+        // A single cold allocation mostly measures the allocator waking up and
+        // whatever else the runner is doing, so time the steady state instead.
+        let elapsed = steadyState {
+            var scratch = Data(count: 1024 * 1024)  // 1MB
+            scratch.append(contentsOf: [UInt8](repeating: 0, count: 1024 * 1024))
+        }
         #expect(elapsed < Baselines.memoryAllocTime,
                 "Memory allocation took \(String(format: "%.3f", elapsed))s, should be under \(Baselines.memoryAllocTime)s")
     }
