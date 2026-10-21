@@ -72,6 +72,10 @@ enum NetworkManager {
             kCFNetworkProxiesHTTPSEnable as String: true,
             kCFNetworkProxiesHTTPSProxy as String: host,
             kCFNetworkProxiesHTTPSPort as String: port,
+            // The local engine, local MCP servers and mDNS peers must never be
+            // sent through a remote proxy: with a proxy configured, a request
+            // to 127.0.0.1 otherwise fails or leaves the machine entirely.
+            kCFNetworkProxiesExceptionsList as String: ["localhost", "127.0.0.1", "::1", "*.local"],
         ]
         config.connectionProxyDictionary = proxyDict
     }

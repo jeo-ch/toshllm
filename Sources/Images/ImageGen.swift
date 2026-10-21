@@ -1300,6 +1300,16 @@ final class ImageGenPool: ObservableObject {
     weak var modelStore: ModelStore?
     private var generators: [UUID: ImageGenerator] = [:]
     private var forwards: [UUID: AnyCancellable] = [:]
+    /// Slots whose config was removed while their engine was still running.
+    /// They keep their GPU (and split-mode aux GPU) reserved until the process
+    /// actually exits; dropping the generator with the config would let the
+    /// next run start a second Metal context on the same device.
+    private struct RetiredSlot {
+        let generator: ImageGenerator
+        let gpuIndex: Int
+        let auxGPU: Int?
+    }
+    private var retired: [UUID: RetiredSlot] = [:]
     /// Debounced write of `configs`: it used to run on every keystroke in the
     /// prompt field (encode the whole array + UserDefaults), so it is batched
     /// with a 1s ceiling — a steady stream of edits still reaches disk.
@@ -1373,7 +1383,10 @@ final class ImageGenPool: ObservableObject {
         return "\(idx + 1) · \(configs[idx].resolvedModel(for: hardware).name)"
     }
 
-    var anyBusy: Bool { configs.contains { generator(for: $0.id).isSlotBusy } }
+    var anyBusy: Bool {
+        configs.contains { generator(for: $0.id).isSlotBusy }
+            || retired.values.contains { $0.generator.isSlotBusy }
+    }
     var anyResult: Bool { configs.contains { generator(for: $0.id).resultImage != nil } }
 
     /// New instance as a copy of the last one, landing on a free GPU when there
@@ -1382,7 +1395,14 @@ final class ImageGenPool: ObservableObject {
         var c = configs.last ?? ImageInstanceConfig()
         c.id = UUID()
         c.prompt = ""
-        let used = Set(configs.map(\.gpuIndex))
+        var used = Set(configs.map(\.gpuIndex))
+        for existing in configs {
+            if let aux = existing.auxGPU(gpuCount: hardware.gpus.count) { used.insert(aux) }
+        }
+        for slot in retired.values {
+            used.insert(slot.gpuIndex)
+            if let aux = slot.auxGPU { used.insert(aux) }
+        }
         let candidates = hardware.gpus.filter { !$0.isIntegrated }.map(\.index)
         if let free = (candidates.isEmpty ? Array(0 ..< max(hardware.gpus.count, 1)) : candidates)
             .first(where: { !used.contains($0) }) {
@@ -1407,11 +1427,21 @@ final class ImageGenPool: ObservableObject {
     }
 
     func remove(_ id: UUID) {
-        guard configs.count > 1 else { return }
-        generator(for: id).cancel()
-        configs.removeAll { $0.id == id }
+        guard configs.count > 1,
+              let idx = configs.firstIndex(where: { $0.id == id }) else { return }
+        let config = configs[idx]
+        let gen = generator(for: id)
+        gen.cancel()
+        if gen.isTerminating {
+            // The engine is still exiting. Keep its GPU reserved after the
+            // config disappears; `pump()` releases it from `clearTermination`.
+            retired[id] = RetiredSlot(generator: gen, gpuIndex: config.gpuIndex,
+                                      auxGPU: config.auxGPU(gpuCount: hardware.gpus.count))
+        }
+        configs.remove(at: idx)
         generators[id] = nil
         forwards[id] = nil
+        pump()
     }
 
     func cancelAll() {
@@ -1455,6 +1485,10 @@ final class ImageGenPool: ObservableObject {
     /// Metal contexts on one AMD GPU can hang it). Each free instance takes its
     /// first *runnable* item, so a targeted prompt never blocks untargeted ones.
     func pump() {
+        // A removed instance stays reserved until its engine exits. Prune
+        // before the queue guard so a termination callback still releases it
+        // when the queue is inactive.
+        retired = retired.filter { $0.value.generator.isSlotBusy }
         guard queueActive, let models = modelStore else { return }
         let gpuCount = hardware.gpus.count
         // A split instance occupies its encoder/VAE GPU too.
@@ -1462,6 +1496,10 @@ final class ImageGenPool: ObservableObject {
         for c in configs where generator(for: c.id).isSlotBusy {
             busyGPUs.insert(c.gpuIndex)
             if let aux = c.auxGPU(gpuCount: gpuCount) { busyGPUs.insert(aux) }
+        }
+        for slot in retired.values {
+            busyGPUs.insert(slot.gpuIndex)
+            if let aux = slot.auxGPU { busyGPUs.insert(aux) }
         }
         let existingIDs = Set(configs.map(\.id))
         for c in configs {

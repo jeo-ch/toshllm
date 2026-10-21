@@ -15,40 +15,68 @@ final class SubtitleVideoExporter: ObservableObject {
 
     private var session: AVAssetExportSession?
     private var progressTask: Task<Void, Never>?
+    private var exportTask: Task<Void, Never>?
+    /// Identifies the export that owns `session`, `progress` and `isExporting`.
+    /// `cancel()` clears it immediately, so a late completion from the old
+    /// export cannot overwrite the state of an export started afterwards.
+    private var runID: UUID?
 
     func export(sourceURL: URL, cues: [SubtitleCue], outputURL: URL,
                 style: SubtitleStyle = .load()) {
         guard !isExporting, !cues.isEmpty else { return }
+        let id = UUID()
+        runID = id
         isExporting = true
         progress = 0
         error = nil
         completedURL = nil
-        Task {
+        exportTask = Task { [weak self] in
+            guard let self else { return }
             do {
-                try await performExport(sourceURL: sourceURL, cues: cues, outputURL: outputURL, style: style)
-                progress = 1
-                completedURL = outputURL
+                try await self.performExport(sourceURL: sourceURL, cues: cues,
+                                             outputURL: outputURL, style: style, runID: id)
+                guard self.runID == id else { return }
+                self.progress = 1
+                self.completedURL = outputURL
             } catch {
+                guard self.runID == id else { return }
                 self.error = error.localizedDescription
             }
-            progressTask?.cancel()
-            progressTask = nil
-            session = nil
-            isExporting = false
+            guard self.runID == id else { return }
+            self.progressTask?.cancel()
+            self.progressTask = nil
+            self.session = nil
+            self.exportTask = nil
+            self.runID = nil
+            self.isExporting = false
         }
     }
 
     func cancel() {
+        // Invalidate first: the old task may already be past its last await and
+        // about to publish progress or a completed URL.
+        runID = nil
+        exportTask?.cancel()
+        exportTask = nil
         session?.cancelExport()
+        session = nil
         progressTask?.cancel()
+        progressTask = nil
         isExporting = false
     }
 
+    private func ensureCurrent(_ id: UUID) throws {
+        try Task.checkCancellation()
+        guard runID == id else { throw CancellationError() }
+    }
+
     private func performExport(sourceURL: URL, cues: [SubtitleCue], outputURL: URL,
-                               style: SubtitleStyle) async throws {
+                               style: SubtitleStyle, runID id: UUID) async throws {
+        try ensureCurrent(id)
         let asset = AVURLAsset(url: sourceURL)
         let composition = AVMutableComposition()
         let duration = try await asset.load(.duration)
+        try ensureCurrent(id)
         let range = CMTimeRange(start: .zero, duration: duration)
         guard let sourceVideo = try await asset.loadTracks(withMediaType: .video).first,
               let videoTrack = composition.addMutableTrack(withMediaType: .video,
@@ -56,13 +84,16 @@ final class SubtitleVideoExporter: ObservableObject {
             throw CocoaError(.fileReadUnsupportedScheme,
                              userInfo: [NSLocalizedDescriptionKey: "El archivo no contiene vídeo / the file contains no video."])
         }
+        try ensureCurrent(id)
         try videoTrack.insertTimeRange(range, of: sourceVideo, at: .zero)
         videoTrack.preferredTransform = try await sourceVideo.load(.preferredTransform)
+        try ensureCurrent(id)
         if let sourceAudio = try await asset.loadTracks(withMediaType: .audio).first,
            let audioTrack = composition.addMutableTrack(withMediaType: .audio,
                                                         preferredTrackID: kCMPersistentTrackID_Invalid) {
             try audioTrack.insertTimeRange(range, of: sourceAudio, at: .zero)
         }
+        try ensureCurrent(id)
 
         let videoComposition = AVMutableVideoComposition(propertiesOf: composition)
         let size = videoComposition.renderSize
@@ -77,8 +108,10 @@ final class SubtitleVideoExporter: ObservableObject {
         )
 
         try await Self.preserveColour(from: sourceVideo, on: videoComposition)
+        try ensureCurrent(id)
 
         let preset = await Self.preset(for: composition, source: sourceVideo)
+        try ensureCurrent(id)
         guard let export = AVAssetExportSession(asset: composition, presetName: preset) else {
             throw CocoaError(.fileWriteUnknown)
         }
@@ -87,16 +120,22 @@ final class SubtitleVideoExporter: ObservableObject {
         export.outputFileType = .mov
         export.shouldOptimizeForNetworkUse = true
         export.videoComposition = videoComposition
+        // Cancellation can only happen on this actor, and there is no await
+        // between the check and publishing the session, so the export cannot
+        // be installed after `cancel()` has already cleared it.
+        try ensureCurrent(id)
         session = export
         progressTask = Task { [weak self, weak export] in
             while !Task.isCancelled, let export {
-                self?.progress = Double(export.progress)
+                guard let self, self.runID == id else { return }
+                self.progress = Double(export.progress)
                 try? await Task.sleep(for: .milliseconds(250))
             }
         }
         await withCheckedContinuation { continuation in
             export.exportAsynchronously { continuation.resume() }
         }
+        try ensureCurrent(id)
         if export.status != .completed {
             throw export.error ?? CocoaError(.fileWriteUnknown)
         }

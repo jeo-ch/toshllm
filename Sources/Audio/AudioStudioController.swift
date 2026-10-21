@@ -328,7 +328,7 @@ final class AudioStudioController: ObservableObject {
         // Whatever the run managed to translate is worth keeping.
         flushRecoverySave()
         runID = nil
-        process?.terminate()
+        process?.terminateWithEscalation()
         process = nil
         stderrPipe?.fileHandleForReading.readabilityHandler = nil
         stderrPipe = nil

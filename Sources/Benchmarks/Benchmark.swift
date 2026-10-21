@@ -178,6 +178,11 @@ final class BenchmarkController: ObservableObject {
     @Published var sweepSamples: [SweepSample] = []
 
     private var process: Process?
+    /// Identifies the run that owns `process`, `running` and `output`. A
+    /// termination handler or an awaiting task from a cancelled run must not
+    /// finish, or start, the run that replaced it.
+    private var runToken: UUID?
+    private var sweepToken: UUID?
     private let storeKey = "benchHistory"
     /// Persists every run (full header + llama-bench output) to one `benchmarks.txt`,
     /// pruned to the last 3 days, so a shareable history survives restarts and a
@@ -229,12 +234,15 @@ final class BenchmarkController: ObservableObject {
         guard !running else { return }
         // llama-bench does not plan: under Dynamic MoE it runs the plan the engine would pick
         if settings.usesAutoPlan && settings.benchmarkPlan == nil {
+            let token = UUID()
+            runToken = token
             running = true
             replaceOutput("Dynamic MoE: planning memory…\n")
             Task { [weak self] in
                 let plan = await AutoMemoryPlan.preview(settings: settings)
-                guard let self else { return }
+                guard let self, self.runToken == token else { return }
                 self.running = false
+                self.runToken = nil
                 guard let plan else {
                     self.replaceOutput("Dynamic MoE: the engine could not plan memory for this model.\n")
                     return
@@ -265,6 +273,8 @@ final class BenchmarkController: ObservableObject {
         let head = header(for: settings)
         replaceOutput(head)
         fileLog.append(head)
+        let token = UUID()
+        runToken = token
         running = true
 
         let p = Process()
@@ -279,11 +289,16 @@ final class BenchmarkController: ObservableObject {
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            log.append(text)
-            Task { @MainActor in self?.appendOutput(text) }
+            Task { @MainActor in
+                guard let self, self.runToken == token else { return }
+                self.appendOutput(text)
+                log.append(text)
+            }
         }
         p.terminationHandler = { [weak self] _ in
-            Task { @MainActor in self?.finish(settings: settings) }
+            Task { @MainActor in
+                await self?.finish(settings: settings, token: token)
+            }
         }
 
         do {
@@ -291,11 +306,17 @@ final class BenchmarkController: ObservableObject {
             process = p
         } catch {
             replaceOutput(error.localizedDescription)
+            if runToken == token { runToken = nil }
             running = false
+            process = nil
         }
     }
 
     func cancel() {
+        // Invalidate first: the old process's termination handler is already
+        // queued on the main actor and would otherwise finish a run that starts
+        // before it lands.
+        runToken = nil
         process?.terminate()
         process = nil
         running = false
@@ -331,10 +352,12 @@ final class BenchmarkController: ObservableObject {
         let head = header(for: s).replacingOccurrences(of: "args:", with: "mode:   real generation (llama-server)\nargs:")
         replaceOutput(head)
         fileLog.append(head)
+        let token = UUID()
+        runToken = token
         running = true
 
         Task {
-            defer { running = false; process?.terminate(); process = nil }
+            defer { finishReal(token: token) }
             let p = Process()
             p.executableURL = URL(fileURLWithPath: s.serverBinary)
             p.arguments = s.arguments
@@ -342,30 +365,36 @@ final class BenchmarkController: ObservableObject {
             p.standardOutput = FileHandle.nullDevice
             p.standardError = FileHandle.nullDevice
             do { try p.run() } catch {
-                emit("→ \(error.localizedDescription)\n")
+                emit("→ \(error.localizedDescription)\n", token: token)
                 return
             }
             process = p
 
-            emit("… cargando modelo / loading model\n")
-            guard await waitForHealth(port: s.port, process: p) else {
-                emit("→ el servidor no arrancó / server did not start\n")
+            emit("… cargando modelo / loading model\n", token: token)
+            guard await waitForHealth(port: s.port, process: p, token: token) else {
+                emit("→ el servidor no arrancó / server did not start\n", token: token)
                 return
             }
 
-            emit("… calentamiento (descartado) / warm-up (discarded)\n")
-            guard await completeOnce(port: s.port, nPredict: 64) != nil else {
-                emit("→ la generación falló / generation failed\n")
+            emit("… calentamiento (descartado) / warm-up (discarded)\n", token: token)
+            let warm = await completeOnce(port: s.port, nPredict: 64)
+            guard runToken == token else { return }
+            guard warm != nil else {
+                emit("→ la generación falló / generation failed\n", token: token)
                 return
             }
 
             var reps: [(tg: Double, pp: Double, accept: Double?)] = []
             for i in 1...3 {
-                guard running, let r = await completeOnce(port: s.port, nPredict: s.benchTGClamped) else { break }
+                guard runToken == token else { break }
+                guard let r = await completeOnce(port: s.port, nPredict: s.benchTGClamped) else { break }
+                guard runToken == token else { break }
                 reps.append(r)
                 let acc = r.accept.map { String(format: " · MTP %.0f%%", $0 * 100) } ?? ""
-                emit(String(format: "rep %d: %.2f t/s gen · %.1f t/s prompt%@\n", i, r.tg, r.pp, acc))
+                emit(String(format: "rep %d: %.2f t/s gen · %.1f t/s prompt%@\n", i, r.tg, r.pp, acc),
+                     token: token)
             }
+            guard runToken == token else { return }
             guard reps.count == 3 else {
                 fileLog.append("→ result: real-generation run incomplete\n\n")
                 fileLog.prune()
@@ -378,6 +407,7 @@ final class BenchmarkController: ObservableObject {
             let name = URL(fileURLWithPath: s.modelPath).lastPathComponent
             let engine = s.serverBinary == ServerSettings.defaultBinary ? "bundled" : "externo"
             let realPlan = s.usesAutoPlan ? AutoMemoryPlan.readPlan(port: s.port) : nil
+            guard runToken == token else { return }
             history.insert(BenchResult(date: .now, model: name, ncmoe: realPlan?.ncmoe ?? s.ncmoe,
                                        dmoeK: nil, dynamicMoe: s.usesAutoPlan ? (realPlan?.mode ?? AutoMemoryPlan.Mode.dmoe.rawValue) : nil, pp: pp, tg: tg,
                                        ctk: realPlan?.kv ?? s.cacheTypeK, ctv: realPlan?.kv ?? s.cacheTypeV, engine: engine,
@@ -388,12 +418,22 @@ final class BenchmarkController: ObservableObject {
                            at: 0)
             save()
             let accLine = accept.map { String(format: " · MTP %.0f%%", $0 * 100) } ?? ""
-            emit(String(format: "→ mediana / median: %.2f t/s gen · %.1f t/s prompt%@\n\n", tg, pp, accLine))
+            emit(String(format: "→ mediana / median: %.2f t/s gen · %.1f t/s prompt%@\n\n", tg, pp, accLine),
+                 token: token)
             fileLog.prune()
         }
     }
 
-    private func emit(_ text: String) {
+    private func finishReal(token: UUID) {
+        guard runToken == token else { return }
+        runToken = nil
+        running = false
+        process?.terminate()
+        process = nil
+    }
+
+    private func emit(_ text: String, token: UUID) {
+        guard runToken == token else { return }
         appendOutput(text)
         fileLog.append(text)
     }
@@ -404,9 +444,9 @@ final class BenchmarkController: ObservableObject {
     }
 
     /// Polls /health until the model is loaded (large MoE loads take minutes).
-    private func waitForHealth(port: Int, process: Process) async -> Bool {
+    private func waitForHealth(port: Int, process: Process, token: UUID) async -> Bool {
         for _ in 0..<240 {
-            guard running, process.isRunning else { return false }
+            guard runToken == token, process.isRunning else { return false }
             if let url = URL(string: "http://127.0.0.1:\(port)/health") {
                 var data: Data?
                 do {
@@ -464,7 +504,14 @@ final class BenchmarkController: ObservableObject {
         return (tg, pp, accept)
     }
 
-    private func finish(settings: ServerSettings) {
+    private func finish(settings: ServerSettings, token: UUID) async {
+        guard runToken == token else { return }
+        // The pipe's readability callbacks are main-actor tasks too. Give the
+        // last chunk a turn to land before parsing `output`; otherwise the
+        // final result line can be missing even though the run succeeded.
+        await Task.yield()
+        guard runToken == token else { return }
+        runToken = nil
         running = false
         process = nil
 
@@ -499,8 +546,10 @@ final class BenchmarkController: ObservableObject {
     private func runOnce(
         settings: ServerSettings,
         extraArgs: [String] = [],
-        environmentOverrides: [String: String?] = [:]
+        environmentOverrides: [String: String?] = [:],
+        token: UUID
     ) async -> (pp: Double, tg: Double, vram: Double?)? {
+        guard sweepToken == token else { return nil }
         let benchPath = URL(fileURLWithPath: settings.serverBinary)
             .deletingLastPathComponent().appendingPathComponent("llama-bench").path
         guard FileManager.default.fileExists(atPath: benchPath) else { return nil }
@@ -530,10 +579,13 @@ final class BenchmarkController: ObservableObject {
                 continuation.resume()
             }
         }
-        process = nil
+        // A cancelled sweep must not clear the process of the sweep that
+        // replaced it, nor append its output to the new run's log.
+        if sweepToken == token { process = nil }
         try? outputHandle.close()
         let data = (try? Data(contentsOf: outputURL)) ?? Data()
         try? FileManager.default.removeItem(at: outputURL)
+        guard sweepToken == token else { return nil }
         let text = String(data: data, encoding: .utf8) ?? ""
         fileLog.append(text)
 
@@ -584,6 +636,8 @@ final class BenchmarkController: ObservableObject {
     /// final recommendation is persisted.
     func sweep(settings base: ServerSettings) {
         guard !running, !sweeping, base.ncmoe > 0 else { return }
+        let token = UUID()
+        sweepToken = token
         sweeping = true
         sweepBest = nil
         sweepSamples = []
@@ -607,11 +661,13 @@ final class BenchmarkController: ObservableObject {
             let vramCeiling = 0.95   // never descend into (or recommend) a saturated setting
 
             @MainActor func measure(_ candidate: Int) async -> Double? {
+                guard sweepToken == token else { return nil }
                 if let cached = pp[candidate] { return cached }
                 var s = fast
                 s.ncmoe = candidate
                 sweepStatus = "ncmoe \(candidate)…"
-                guard let r = await runOnce(settings: s, extraArgs: ["-v"]) else { return nil }
+                guard let r = await runOnce(settings: s, extraArgs: ["-v"], token: token) else { return nil }
+                guard sweepToken == token else { return nil }
                 pp[candidate] = r.pp
                 tg[candidate] = r.tg
                 if let v = r.vram { vram[candidate] = v }
@@ -625,12 +681,16 @@ final class BenchmarkController: ObservableObject {
             var prevPp: Double? = nil
             var cliff: Int? = nil
             while candidate >= floorValue {
+                guard sweepToken == token else { return }
                 guard let cur = await measure(candidate) else { break }
+                guard sweepToken == token else { return }
                 if cur < 1 { break }
                 if let v = vram[candidate], v > vramCeiling { break }
                 if cliff == nil, let pv = prevPp, cur >= pv * 1.5 {
                     let middle = candidate + 1
-                    if let middlePp = await measure(middle), middlePp >= cur * 0.7 {
+                    let middlePp = await measure(middle)
+                    guard sweepToken == token else { return }
+                    if let middlePp, middlePp >= cur * 0.7 {
                         cliff = middle + 1
                     } else {
                         cliff = middle
@@ -639,6 +699,7 @@ final class BenchmarkController: ObservableObject {
                 prevPp = cur
                 candidate -= 2
             }
+            guard sweepToken == token else { return }
 
             let safe = pp.keys.filter { (vram[$0] ?? 0) <= vramCeiling }
             let bestPp = safe.compactMap { pp[$0] }.max() ?? 0
@@ -648,14 +709,16 @@ final class BenchmarkController: ObservableObject {
                 sweepStatus = pp.isEmpty
                     ? "Sweep sin resultados / sweep produced no results"
                     : "Sweep sin configuración VRAM segura / no VRAM-safe result"
-                sweeping = false
+                endSweep(token: token)
                 fileLog.prune()
                 return
             }
 
             // Move three steps away from the VRAM-tight edge without crossing a known cliff.
             var recommended = Self.sweepHeadroomCandidate(lowestSafe: lowestSafe, cliff: cliff)
-            if await measure(recommended) == nil {
+            let measured = await measure(recommended)
+            guard sweepToken == token else { return }
+            if measured == nil {
                 let target = recommended
                 recommended = fastSafe.min {
                     abs($0 - target) < abs($1 - target)
@@ -664,19 +727,22 @@ final class BenchmarkController: ObservableObject {
 
             while recommended > lowestSafe,
                   ((vram[recommended] ?? 0) > vramCeiling || (pp[recommended] ?? 0) < bestPp * 0.6) {
+                guard sweepToken == token else { return }
                 cliff = min(cliff ?? recommended, recommended)
                 recommended -= 1
                 _ = await measure(recommended)
+                guard sweepToken == token else { return }
             }
 
             if let cliff {
                 ServerSettings.rememberPrefetchCliff(cliff, forModel: modelPath)
             }
 
+            guard sweepToken == token else { return }
             guard let finalPp = pp[recommended], let finalTg = tg[recommended] else {
                 sweepBest = nil
                 sweepStatus = "Sweep sin resultados / sweep produced no results"
-                sweeping = false
+                endSweep(token: token)
                 fileLog.prune()
                 return
             }
@@ -702,13 +768,23 @@ final class BenchmarkController: ObservableObject {
             } else {
                 sweepStatus = String(format: "Óptimo: ncmoe %d (%.0f pp)%@", recommended, finalPp, vpct)
             }
-            sweeping = false
+            endSweep(token: token)
             fileLog.prune()
         }
     }
 
+    private func endSweep(token: UUID) {
+        guard sweepToken == token else { return }
+        sweepToken = nil
+        sweeping = false
+    }
+
     func cancelSweep() {
+        // Invalidate before terminating: the old sweep's runOnce continuation
+        // and its final writes are still queued on the main actor.
+        sweepToken = nil
         process?.terminate()
+        process = nil
         sweeping = false
         sweepStatus = ""
     }

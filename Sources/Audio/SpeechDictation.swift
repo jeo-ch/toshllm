@@ -246,7 +246,7 @@ final class SpeechDictationController: ObservableObject {
     func unloadPersistentModel() {
         serverStartTask?.cancel()
         serverStartTask = nil
-        if let serverProcess, serverProcess.isRunning { serverProcess.terminate() }
+        if let serverProcess, serverProcess.isRunning { serverProcess.terminateWithEscalation() }
         serverErrorPipe?.fileHandleForReading.readabilityHandler = nil
         serverProcess = nil
         serverErrorPipe = nil
@@ -478,7 +478,7 @@ final class SpeechDictationController: ObservableObject {
         transcriptionID = nil
         recorder?.stop()
         recorder = nil
-        process?.terminate()
+        process?.terminateWithEscalation()
         process = nil
         inferenceTask?.cancel()
         inferenceTask = nil

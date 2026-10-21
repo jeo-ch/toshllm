@@ -625,6 +625,27 @@ enum ProcessIdentity {
     }
 }
 
+extension Process {
+    /// Sends SIGTERM, then SIGKILL after a grace period if this exact process is
+    /// still running.
+    ///
+    /// Audio converters and Whisper can be wedged in a Metal or CoreAudio call
+    /// that ignores SIGTERM. Keeping the `Process` object alive until the timer
+    /// fires also guards against the pid being reused: `isRunning` and the pid
+    /// are checked before the signal, and the executable path is compared again
+    /// inside `killIfStill`.
+    func terminateWithEscalation(after seconds: TimeInterval = 6) {
+        guard isRunning else { return }
+        let pid = processIdentifier
+        let path = ProcessIdentity.executablePath(of: pid)
+        terminate()
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) { [self] in
+            guard isRunning, processIdentifier == pid else { return }
+            ProcessIdentity.killIfStill(pid: pid, running: path, signal: SIGKILL)
+        }
+    }
+}
+
 enum EngineLock {
     private static var url: URL { AppSupport.directory.appendingPathComponent("engine.pid") }
     private static let engineMarker = AppInfo.name + ".app/Contents/Resources/bin"

@@ -297,6 +297,10 @@ final class VideoGenerator: ObservableObject {
     var onFinish: (() -> Void)?
 
     private var process: Process?
+    /// Identifies the run that owns `process` and the published progress.
+    /// Termination and output callbacks from an older run must not finish the
+    /// run that replaced it.
+    private var runID: UUID?
     private var startedAt: Date?
     private var firstStepAt: Date?
     private var logTail = ""
@@ -337,7 +341,9 @@ final class VideoGenerator: ObservableObject {
                   width: Int, height: Int, frames frameCount: Int, steps: Int,
                   seed: Int, fps: Int, gpuIndex: Int,
                   initImagePath: String = "") {
-        guard !isBusy else { return }
+        guard !isBusy, process == nil else { return }
+        let id = UUID()
+        runID = id
         lastPrompt = prompt; lastSeed = seed; lastFPS = fps
         lastWidth = width; lastHeight = height; lastFrameCount = frameCount
         lastModelName = model.name
@@ -409,10 +415,12 @@ final class VideoGenerator: ObservableObject {
         pipe.fileHandleForReading.readabilityHandler = { [weak self] h in
             let data = h.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            Task { @MainActor in self?.consume(text) }
+            Task { @MainActor in self?.consume(text, runID: id) }
         }
         p.terminationHandler = { [weak self] proc in
-            Task { @MainActor in self?.finish(status: proc.terminationStatus, runDir: runDir) }
+            Task { @MainActor in
+                self?.finish(status: proc.terminationStatus, runDir: runDir, runID: id)
+            }
         }
 
         fileLog.startSession()
@@ -430,23 +438,37 @@ final class VideoGenerator: ObservableObject {
             try p.run()
             process = p
         } catch {
+            if runID == id { runID = nil }
+            process = nil
             state = .failed(error.localizedDescription)
             onFinish?()
         }
     }
 
     func cancel() {
+        guard let id = runID else { return }
+        guard let p = process else {
+            // The engine already exited and its frames are being decoded. Let
+            // the next request start; the decode task checks `runID` before it
+            // publishes anything.
+            runID = nil
+            state = .failed("")
+            onFinish?()
+            return
+        }
         // SIGTERM alone is not enough: a wedged engine would keep its Metal context
         // and the VRAM, so the escalation Server.swift uses is applied here too.
-        if let pid = process?.processIdentifier {
-            // The generator's claim on the slot cannot change while we wait, but
-            // the kernel is free to reuse the number once the process exits — so
-            // the executable is remembered and compared again before the kill.
-            ImageGenerator.killIfStillRunning(
-                pid, running: ProcessIdentity.executablePath(of: pid),
-                after: ImageGenerator.terminationGraceSeconds) { true }
-        }
-        process?.terminate()
+        // The delayed kill is tied to this run and this Process object: after the
+        // engine exits, its pid can be reused by the next run, which must not be
+        // killed by the old timer.
+        let pid = p.processIdentifier
+        ImageGenerator.killIfStillRunning(
+            pid, running: ProcessIdentity.executablePath(of: pid),
+            after: ImageGenerator.terminationGraceSeconds) { [weak self, weak p] in
+                guard let self, let p else { return false }
+                return self.runID == id && self.process === p && p.isRunning
+            }
+        p.terminate()
     }
 
     /// Playback copy: full frames are only needed for the mp4, which reads the PNGs.
@@ -462,7 +484,8 @@ final class VideoGenerator: ObservableObject {
         return NSImage(cgImage: cg, size: .zero)
     }
 
-    private func consume(_ text: String) {
+    private func consume(_ text: String, runID id: UUID) {
+        guard runID == id else { return }
         logTail = String((logTail + text).suffix(4000))
         fileLog.append(text)
         for raw in text.split(whereSeparator: \.isNewline) {
@@ -476,13 +499,17 @@ final class VideoGenerator: ObservableObject {
         }
     }
 
-    private func finish(status: Int32, runDir: URL) {
+    private func finish(status: Int32, runDir: URL, runID id: UUID) {
+        // A termination handler from an older run must not clear the process or
+        // publish frames for the run that replaced it.
+        guard runID == id else { return }
         process = nil
         let urls = ((try? FileManager.default.contentsOfDirectory(at: runDir,
                                                                   includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension.lowercased() == "png" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         guard status == 0, !urls.isEmpty else {
+            runID = nil
             if status == 15 || status == 2 { state = .failed(""); onFinish?(); return }
             if logTail.contains("failed to allocate") { state = .failed("OOM"); onFinish?(); return }
             let timedOut = logTail.contains("Timeout") || logTail.contains("status 5")
@@ -493,12 +520,15 @@ final class VideoGenerator: ObservableObject {
         frameURLs = urls
         progress = 1
         lastDuration = elapsed
+        let controller = self
         Task.detached(priority: .userInitiated) {
             let decoded = urls.compactMap { Self.displayFrame($0) }
             await MainActor.run {
-                self.frames = decoded
-                self.state = .done
-                self.onFinish?()
+                guard controller.runID == id else { return }
+                controller.frames = decoded
+                controller.state = .done
+                controller.runID = nil
+                controller.onFinish?()
             }
         }
     }
