@@ -72,10 +72,10 @@ final class AgentClientTests: XCTestCase {
     }
 
     func testAnyOtherToolShowsItsOperationAndLaidOutJSON() {
-        let call = ChatToolCall(name: "arcgis_query", arguments: #"{"operation":"count","target":"https:\/\/x\/MapServer"}"#,
+        let call = ChatToolCall(name: "gis_query", arguments: #"{"operation":"count","target":"https:\/\/x\/MapServer"}"#,
                                 result: #"{"success": true, "data": {"count": 7}}"#, state: .completed)
         let shown = ToolCallPresentation.make(call)
-        XCTAssertEqual(shown.title, "arcgis_query (count)")
+        XCTAssertEqual(shown.title, "gis_query (count)")
         XCTAssertEqual(shown.code?.contains("\"https://x/MapServer\""), true)
         XCTAssertEqual(shown.result?.components(separatedBy: "\n").count, 6)
         XCTAssertNil(ToolCallPresentation.indented("plain text"))
@@ -86,7 +86,7 @@ final class AgentClientTests: XCTestCase {
         let (store, id) = store()
         for (callID, status) in [("a", "ok"), ("b", "not_found")] {
             store.agentEvent(["type": "tool_call", "pass": 1,
-                              "call": ["id": callID, "tool": "arcgis_query", "status": status, "result": "{}"]], conversation: id)
+                              "call": ["id": callID, "tool": "gis_query", "status": status, "result": "{}"]], conversation: id)
         }
         let messages = try XCTUnwrap(store.current?.messages)
         XCTAssertEqual(messages[1].toolCalls?.map(\.state), [.completed, .failed])

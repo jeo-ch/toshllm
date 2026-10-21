@@ -89,6 +89,9 @@ struct ServerSettings {
     /// for the GPU, and a prefill aborted by a client timeout stays in the slot so
     /// the retry resumes where it left off.
     var parallelSlots: Int = 1
+    /// Each slot gets its own share of the context: faster with several requests at once, but
+    /// no single conversation can grow past its share.
+    var separateKV: Bool = false
     var apiKeyEnabled: Bool = false
     /// Serve beyond loopback and advertise with Bonjour. Off by default: it opens
     /// the API to the whole local network, so it wants `apiKeyEnabled` alongside.
@@ -398,9 +401,9 @@ struct ServerSettings {
         }
         if parallelSlots > 0 { args += ["--parallel", String(parallelSlots)] }
         // An explicit --parallel N splits the context pool across slots instead of
-        // sharing it (only "auto" unifies), so ask for one pool ourselves: the chat
-        // keeps its full window and API requests don't multiply KV memory.
-        if parallelSlots > 1 { args.append("--kv-unified") }
+        // sharing it (only "auto" unifies), so ask for one pool ourselves unless the user
+        // chose separate shares: the chat then keeps its full window.
+        if parallelSlots > 1 && !separateKV { args.append("--kv-unified") }
         // Which devices to split across is decided by the env vars below.
         if isSplitting { args += ["--split-mode", effectiveSplitMode] }
         if let counts = layerBalancedTensorSplit {
@@ -565,7 +568,7 @@ struct ServerSettings {
             lines.append("cache-ram = \(cacheRAM)")
             if cacheReuse && mmproj == nil { lines.append("cache-reuse = 256") }
             if parallelSlots > 0 { lines.append("parallel = \(parallelSlots)") }
-            if parallelSlots > 1 { lines.append("kv-unified = true") }
+            if parallelSlots > 1 && !separateKV { lines.append("kv-unified = true") }
             if isSplitting { lines.append("split-mode = \(effectiveSplitMode)") }
             if persistCache && effectiveFaAmd {
                 // the engine rejects a slot path that isn't an existing directory
@@ -989,8 +992,11 @@ struct ServerSettings {
             cacheRAM: int(SettingsKeys.cacheRAM, 2048),
             reasoningInline: bool(SettingsKeys.reasoningInline, false),
             defaultReasoning: d.string(forKey: SettingsKeys.serverDefaultReasoning) ?? "model",
-            defaultMaxTokens: int(SettingsKeys.serverDefaultMaxTokens, 0),
+            // -1 is "same as the chat": the web chat and API clients get the in-app chat's limit
+            defaultMaxTokens: int(SettingsKeys.serverDefaultMaxTokens, -1) < 0
+                ? int(SettingsKeys.chatMaxTokens, 2048) : int(SettingsKeys.serverDefaultMaxTokens, -1),
             parallelSlots: int(SettingsKeys.parallelSlots, 1),
+            separateKV: bool(SettingsKeys.separateKV, false),
             apiKeyEnabled: bool(SettingsKeys.apiKeyEnabled, false),
             localNetworkDiscovery: bool(SettingsKeys.localNetworkDiscovery, false),
             specMTP: bool(SettingsKeys.specMTP, false),
@@ -1457,12 +1463,43 @@ struct ServerSettings {
     }
 
     /// Whether to offer the projector control for a model: it has a paired or
-    /// pinned projector, an explicit choice (incl. off), or is a catalog vision model.
+    /// pinned projector, an explicit choice (incl. off), a projector beside it that
+    /// matches its dimension, or is a catalog vision model.
     nonisolated static func mightSupportVision(modelPath: String) -> Bool {
         if mmprojOverride(forModel: modelPath) != nil { return true }
         if mmprojPath(forModel: modelPath) != nil { return true }
+        if !compatibleProjectors(forModel: modelPath).isEmpty { return true }
         let name = URL(fileURLWithPath: modelPath).lastPathComponent
         return Catalog.models.contains { $0.fileName == name && $0.isVision }
+    }
+
+    /// Whether a projector named after this model sits beside it, as a download saves it.
+    nonisolated static func hasOwnProjector(forModel modelPath: String) -> Bool {
+        func core(_ s: String) -> String {
+            String(s.lowercased().replacingOccurrences(of: "mmproj", with: "").filter { $0.isLetter || $0.isNumber })
+        }
+        let url = URL(fileURLWithPath: modelPath)
+        let mn = core(url.deletingPathExtension().lastPathComponent)
+        guard !mn.isEmpty,
+              let files = try? FileManager.default.contentsOfDirectory(at: url.deletingLastPathComponent(), includingPropertiesForKeys: nil)
+        else { return false }
+        return files.contains {
+            $0.pathExtension.lowercased() == "gguf" && $0.lastPathComponent.lowercased().contains("mmproj")
+                && core($0.deletingPathExtension().lastPathComponent) == mn
+        }
+    }
+
+    /// Projectors beside the model whose output matches its embedding, by name. Auto-pairing
+    /// also asks for a matching name, so these are the ones a user may pick by hand.
+    nonisolated static func compatibleProjectors(forModel modelPath: String) -> [String] {
+        guard !modelPath.isEmpty, let embd = ggufUInt32("embedding_length", at: modelPath) else { return [] }
+        let dir = URL(fileURLWithPath: modelPath).deletingLastPathComponent()
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return [] }
+        return files
+            .filter { $0.pathExtension.lowercased() == "gguf" && $0.lastPathComponent.lowercased().contains("mmproj") }
+            .filter { ggufUInt32("projection_dim", at: $0.path) == embd && !isIncompatibleMmproj(model: modelPath, projector: $0.path) }
+            .map(\.path)
+            .sorted { URL(fileURLWithPath: $0).lastPathComponent < URL(fileURLWithPath: $1).lastPathComponent }
     }
 
     /// The DFlash draft downloaded for a model, saved as `<model>.dflash.gguf`.
@@ -2718,10 +2755,27 @@ final class ServerController: ObservableObject {
             if line.contains("mixed expert execution failed"), !recoveredFromExecutorFailure,
                state == .running, let settings = launchedSettings {
                 recoveredFromExecutorFailure = true
-                autoPlanNote = (UserDefaults.standard.string(forKey: SettingsKeys.language) ?? "en") == "es"
-                    ? "El sistema dejó sin CPU a Dynamic MoE; el servidor se reinició."
-                    : "The system starved Dynamic MoE of CPU; the server was restarted."
+                autoPlanNote = Localizer().t("El sistema dejó sin CPU a Dynamic MoE; el servidor se reinició.",
+                                             "The system starved Dynamic MoE of CPU; the server was restarted.")
                 restartAfterFailure(settings)
+            }
+            if GPURecovery.reports(Substring(line)), state == .running, let settings = launchedSettings, let failed = process {
+                if GPURecovery.shared.admit(port: currentPort) {
+                    autoPlanNote = Localizer().t(
+                        "Un trabajo de la GPU no terminó a tiempo y el motor dejó de poder usarla; el servidor se reinició. Vuelve a enviar el último mensaje.",
+                        "A GPU job did not finish in time and the engine could no longer use the GPU; the server was restarted. Send the last message again.")
+                    // the request in flight gets its error before the process goes
+                    Task { [weak self] in
+                        try? await Task.sleep(for: .seconds(3))
+                        // a server the user stopped or restarted meanwhile is left as it is
+                        guard let self, self.process === failed, self.state == .running else { return }
+                        self.restartAfterFailure(settings)
+                    }
+                } else {
+                    autoPlanNote = Localizer().t(
+                        "La GPU volvió a fallar menos de 10 minutos después del último reinicio automático, así que el servidor no se reinició: reinícialo a mano.",
+                        "The GPU failed again less than 10 minutes after the last automatic restart, so the server was not restarted: restart it by hand.")
+                }
             }
             let ns = line as NSString
             let whole = NSRange(location: 0, length: ns.length)

@@ -17,6 +17,8 @@ struct ChatAttachment: Identifiable, Codable, Equatable {
     var byteCount: Int? = nil
     var durationSeconds: Double? = nil
     var videoFrameArea: Int? = nil
+    /// SHA-256 of the file's bytes, which tells the same file attached again from another with its name.
+    var digest: String? = nil
 
     // mtmd samples video at ~4 fps with no cap; Qwen-VL bills each frame by its
     // pixels (≈1 token / 32x32) up to a per-frame cap.
@@ -228,6 +230,12 @@ struct ChatProject: Identifiable, Codable, Equatable {
 
 struct StreamError: LocalizedError {
     let message: String
+    /// The server ended the turn with this error: resuming the stream would only replace it.
+    var fromServer = false
+    /// The engine failed on the GPU.
+    var gpu = false
+    /// The stream was cut before the answer ended and could not be resumed.
+    var cut = false
     var errorDescription: String? { message }
 }
 

@@ -12,6 +12,8 @@ argument.
     slow   stops reading for `seconds`, then answers
     die    exits mid-call
     eof    closes its output and keeps running
+
+A file at the log's path plus ".hold" holds every initialize until it is removed, as a server slow to start.
 """
 
 import json
@@ -24,7 +26,7 @@ PID = os.getpid()
 TOOLS = [{"name": name, "description": name,
           "inputSchema": {"type": "object", "properties": {"message": {"type": "string"}, "path": {"type": "string"},
                                                             "seconds": {"type": "number"}}}}
-         for name in ("echo", "hang", "defer", "gate", "slow", "die", "eof")]
+         for name in ("echo", "hang", "defer", "gate", "slow", "die", "eof", "run")]
 
 
 def log(**entry):
@@ -45,7 +47,7 @@ def answer(rid, text):
     return {"jsonrpc": "2.0", "id": rid, "result": {"content": [{"type": "text", "text": text}]}}
 
 
-log(started=True)
+log(started=True, timeout_ms=os.environ.get("TOSH_MCP_TIMEOUT_MS"))
 held = []
 for line in sys.stdin:
     message = json.loads(line)
@@ -55,8 +57,13 @@ for line in sys.stdin:
         continue
     method = message.get("method")
     if method == "initialize":
+        while os.path.exists(LOG + ".hold"):
+            time.sleep(0.01)
         send({"jsonrpc": "2.0", "id": rid, "result": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}},
                                                       "serverInfo": {"name": "probe", "version": "1"}}})
+        continue
+    if method == "ping":
+        send({"jsonrpc": "2.0", "id": rid, "result": {}})
         continue
     if method == "tools/list":
         send({"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOLS}})
@@ -64,6 +71,19 @@ for line in sys.stdin:
     name = message["params"]["name"]
     arguments = message["params"].get("arguments") or {}
     text = arguments.get("message", "")
+    if name == "run":
+        # as the agent: a pass whose text is only a draft and ends in a call, then a live pass that answers
+        token = (message["params"].get("_meta") or {}).get("progressToken")
+        events = [{"type": "pass", "n": 1, "state": "start", "live": True}, {"type": "draft", "content": "Let me check."},
+                  {"type": "retract", "n": 1}, {"type": "pass", "n": 2, "state": "start", "live": True},
+                  {"type": "delta", "content": "The answer"}]
+        for n, event in enumerate(events, 1):
+            send({"jsonrpc": "2.0", "method": "notifications/progress",
+                  "params": {"progressToken": token, "progress": n, "message": json.dumps(event)}})
+        reply = {"choices": [{"index": 0, "message": {"role": "assistant", "content": "The answer is 42."},
+                              "finish_reason": "stop"}]}
+        send(answer(rid, json.dumps(reply)))
+        continue
     if name == "hang":
         continue
     if name == "defer":

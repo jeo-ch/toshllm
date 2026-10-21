@@ -3,6 +3,53 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.28] - 2026-10-20
+
+### Improved
+
+- **Chat: a PDF sent as page images also carries its own text, page by page,** in the app and the web chat, so a model or agent can read the figures the document writes. Every page's text goes, and text cut at the size limit says where; a scan without a text layer sends its images alone.
+- **Web chat: an agent shows what it is doing while it works**, such as the page it is reading, until its answer starts.
+- **Chat: files dropped anywhere on the chat are attached, with a visible target while one is dragged over it.** A file dropped on the message field came in as its path; dropped text still goes into the field.
+- **Chat: pages attached together keep their names' order.** A document's pages picked or dropped at once could arrive in any order and be read out of sequence; files whose names carry numbers ("page1", "page10", "735") go in their order, and others keep the order they came in.
+- **Chat: a file attached again is not added twice.** It is told by its contents, so two files with the same name and different contents are both attached.
+- **Chat: while an answer is prepared, the app says what is happening and for how long**: the prompt's progress when the server reports it, the model's pass and what an agent says it is doing, in the app's language, instead of phrases that rotated on their own.
+- **Settings: requests that set no response limit get the chat's own by default.** The web chat and API clients without `max_tokens` stop where the in-app chat does, instead of writing until the context runs out; "No limit" is still available.
+
+### Fixed
+
+- **Web chat: an error the server sends during an answer is shown.** It used to leave an empty message, or keep a draft as the answer; what arrived before it is now marked as incomplete, and a GPU failure is told as such instead of "Compute error.".
+- **Chat: an error the server sends during an answer is shown as it is**, not replaced by a failed attempt to resume the stream.
+- **Math: the engine's failures are told as such.** A request larger than the context says how many tokens it needs and the context holds, and a GPU that fails says the request did not finish; neither comes out as "I couldn't validate the mathematical interpretation". An answer cut at its token limit says it is incomplete, in the app, the web chat and the API.
+- **Engine: after a GPU job times out, the server restarts by itself**, at most once every ten minutes, and not if it was stopped or restarted by hand in the meantime. The engine kept failing every request until it was restarted by hand.
+- **Chat: a GPU failure is told as such whatever reaches the app.** An answer cut by the restart no longer says "Could not connect to the server", a second failure within ten minutes says the server was not restarted and how to do it, and a connection cut for any other reason says the answer is incomplete.
+- **Chat: a conversation holding a tool call the model cut short answers again.** Every later message failed with "context full" while the context was far from full; the cut call now goes back empty in the app, the web chat, the agent and API clients, and "context full" is only shown when the engine says so.
+- **LLMs: GLM-4-0414 models keep a tool's name as declared when they call it.** In a conversation that already held a call written as text, the model copied it with another case or a space in the name, and the call came out as text again; once a name is begun it can only be finished as declared. Reported by [andruwa13](https://github.com/andruwa13) in [#129](https://github.com/engeldlgado/toshllm/issues/129).
+
+## [0.87.27] - 2026-10-19
+
+### Added
+
+- **MCP: each server is told how long the engine waits for a call.** It gets `TOSH_MCP_TIMEOUT_MS` in its environment, so an agent can end its turn and answer before the engine gives up on it.
+- **Settings: with two or more concurrent requests, each one can keep its own share of the context.** "Separate context per request" generates 7 to 11% faster with several requests at once on a Radeon RX 6700 XT, but no conversation can grow past its share. It is off by default.
+
+### Improved
+
+- **LLMs: Qwen 3.5 to 3.8 models start a follow-up answer sooner.** On a Radeon RX 6700 XT the prompt of a short turn takes half as long (Qwen3.8-9B 500 to 250 ms, Qwen3.5-4B 430 to 180 ms), and an agent's turn about 14% less.
+- **LLMs: with two or more requests at once, a long prompt no longer stops the others for seconds.** A reply in progress pauses under a second instead of up to three, and first words come 15 to 35% sooner; a single request runs as before.
+- **LLMs: requests that start alike, such as an agent's passes with their instructions and tools, reuse that start from one another while they run.** With four agent turns at once on Qwen3.8-9B, 25% more turns per minute and the slowest one 45% shorter.
+- **Models: a vision projector beside a model can be picked for it when it matches the model's dimension, even from another family.** One projector serves several models without a copy for each, and a catalog model can still download its own.
+
+### Fixed
+
+- **LLMs: GLM-4-0414 models call tools instead of writing the call as text.** The name and arguments of a tool came out in the answer, sometimes with a result the model made up; the call now runs and the answer uses what it returned. Reported by [andruwa13](https://github.com/andruwa13) in [#129](https://github.com/engeldlgado/toshllm/issues/129).
+- **LLMs: Qwen 3.5 to 3.8 models split across GPUs by tensor start again with MTP.** They stopped at startup since 0.87.13. Reported by [Basten7](https://github.com/Basten7) in [#130](https://github.com/engeldlgado/toshllm/issues/130).
+- **LLMs on Radeon RX 400/500, Vega, Radeon VII and Radeon Pro Vega/WX: Q2_K models no longer write past an array in the matrix-vector kernel.** Reported by [SergeySlice](https://github.com/SergeySlice) in [#131](https://github.com/engeldlgado/toshllm/issues/131).
+- **Engine and math: the agent answers on a server that listens on an IPv6 address.** Every turn failed on an address such as `::1`.
+- **Engine: API keys and the agent's key are compared in constant time.** How long a refusal takes no longer depends on how much of a guessed key is right.
+- **MCP: calls waiting for a server that is slow to start can be cancelled, and a start that fails is not retried by each of them.** Every queued call used to wait the full timeout again; now they fail together, and the start is tried again a few seconds later.
+- **MCP: a server that stops answering is replaced.** After two calls in a row time out and it misses a ping, new calls go to a fresh process while the old one finishes the calls it had; one that hangs again waits 10 s, then 20 and so on up to 5 minutes before it starts again.
+- **Math: an API client that only reads the text no longer gets words the agent took back.** Text of a pass that may still end in a tool call goes out as a draft, which the app and the web chat show as before until the answer replaces it; cancelling a turn also stops every request the agent has in flight.
+
 ## [0.87.26] - 2026-10-17
 
 ### Added

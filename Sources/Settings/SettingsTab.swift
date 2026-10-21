@@ -58,9 +58,10 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.cacheRAM) private var cacheRAM = 2048
     @AppStorage(SettingsKeys.imageMaxTokens) private var imageMaxTokens = 0
     @AppStorage(SettingsKeys.parallelSlots) private var parallelSlots = 1
+    @AppStorage(SettingsKeys.separateKV) private var separateKV = false
     @AppStorage(SettingsKeys.reasoningInline) private var reasoningInline = false
     @AppStorage(SettingsKeys.serverDefaultReasoning) private var serverDefaultReasoning = "model"
-    @AppStorage(SettingsKeys.serverDefaultMaxTokens) private var serverDefaultMaxTokens = 0
+    @AppStorage(SettingsKeys.serverDefaultMaxTokens) private var serverDefaultMaxTokens = -1
     @AppStorage(SettingsKeys.modelPath) private var modelPath = ""
     @AppStorage(SettingsKeys.dynamicMoeEnabled) private var dynamicMoeEnabled = false
     @AppStorage(SettingsKeys.executionMode) private var executionMode = "auto"
@@ -1152,6 +1153,11 @@ struct SettingsView: View {
                 }
                 .infoTip(loc.t("Cuántas peticiones procesa el motor a la vez. Con 1, las peticiones hacen cola en vez de competir por la GPU, y un prompt enorme interrumpido por el timeout de un cliente (VS Code) se retoma donde iba al reintentar. Sube el valor solo si varios clientes usan el servidor a la vez.",
                             "How many requests the engine processes at once. With 1, requests queue instead of competing for the GPU, and a huge prompt interrupted by a client timeout (VS Code) resumes where it was on retry. Raise it only if several clients use the server at the same time."))
+                if parallelSlots > 1 {
+                    Toggle(loc.t("Contexto separado por petición", "Separate context per request"), isOn: $separateKV)
+                        .infoTip(loc.t("Cada petición simultánea tiene su propia parte del contexto (el contexto dividido entre las peticiones) en vez de compartirlo. Medido en una Radeon RX 6700 XT con varias peticiones a la vez: entre un 7 y un 11% más rápido al generar y entre un 11 y un 18% menos de espera con prompts largos. A cambio, ninguna conversación puede pasar de su parte; apagado, el chat conserva su ventana completa.",
+                                    "Each simultaneous request gets its own share of the context (the context divided by the requests) instead of sharing it. Measured on a Radeon RX 6700 XT with several requests at once: 7 to 11% faster generation and 11 to 18% less wait with long prompts. In exchange, no conversation can grow past its share; off, the chat keeps its full window."))
+                }
                 Toggle(loc.t("Razonamiento como texto (clientes externos)",
                              "Reasoning as plain text (external clients)"), isOn: $reasoningInline)
                     .settingsGlyph("brain")
@@ -1171,6 +1177,7 @@ struct SettingsView: View {
                             "Reasoning level for requests that do not choose one, such as those from VS Code or many agents. A request that sets it always wins. Levels only change anything on models whose template accepts them; Off works on every reasoning model."))
                 LabeledContent(loc.t("Longitud máxima por defecto", "Default response limit")) {
                     ToshDropdown(selection: $serverDefaultMaxTokens, options: [
+                        .init(value: -1, title: loc.t("Como el chat", "Same as the chat")),
                         .init(value: 0, title: loc.t("Sin límite", "No limit")),
                         .init(value: 2048, title: "2K"), .init(value: 4096, title: "4K"),
                         .init(value: 8192, title: "8K"), .init(value: 16384, title: "16K"),
@@ -1178,8 +1185,8 @@ struct SettingsView: View {
                     ])
                 }
                 .settingsGlyph("text.append")
-                .infoTip(loc.t("Tokens de respuesta para las peticiones que no fijan max_tokens. Evita que un cliente sin límite deje al modelo razonando o escribiendo sin fin. El chat de la app usa su propio límite.",
-                            "Response tokens for requests that do not set max_tokens. It keeps a client without a limit from leaving the model reasoning or writing without end. The in-app chat uses its own limit."))
+                .infoTip(loc.t("Tokens de respuesta para las peticiones que no fijan max_tokens, como las del chat web o muchas apps. Evita que un cliente sin límite deje al modelo razonando o escribiendo sin fin. «Como el chat» usa el mismo máximo que el chat de la app.",
+                            "Response tokens for requests that do not set max_tokens, such as the web chat's or many apps'. It keeps a client without a limit from leaving the model reasoning or writing without end. “Same as the chat” uses the in-app chat's maximum."))
                 Toggle(loc.t("Plantilla de chat (--jinja)", "Chat template (--jinja)"), isOn: $jinja)
                     .infoTip(loc.t("Usa la plantilla de chat oficial del modelo (formato de mensajes, herramientas). Déjalo activado salvo problemas con un modelo concreto.",
                                 "Uses the model's official chat template (message format, tools). Keep it on unless a specific model misbehaves."))

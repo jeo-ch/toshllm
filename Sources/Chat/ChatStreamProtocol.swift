@@ -38,7 +38,7 @@ struct ChatStreamAccumulator {
         else { return nil }
 
         if let message = ChatStore.streamedError(from: object) {
-            throw StreamError(message: message)
+            throw StreamError(message: message, fromServer: true, gpu: ChatStore.isGPUFailure(object["error"] as? [String: Any]))
         }
 
         if let value = object["usage"] as? [String: Any],

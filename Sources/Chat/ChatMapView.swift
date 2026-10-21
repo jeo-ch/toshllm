@@ -20,7 +20,7 @@ struct ChatMap: Codable, Equatable {
         var complete: Bool
         /// Which features of the layer these are, such as its filter or "first 5 by POP2000 DESC".
         var subtitle: String? = nil
-        /// The attributes in the layer's own order, with the names ArcGIS shows for them.
+        /// The attributes in the layer's own order, with the names a GIS shows for them.
         var fields: [Field]? = nil
         var count: Int? = nil
         /// Drawn by the model from coordinates it gave, not read from data: shown dashed. Optional so that maps
@@ -217,8 +217,8 @@ struct ChatMapSection: View {
             ChatFigureResizeButton(enlarged: enlarged) { enlarged.toggle() }
             Button(loc.t("Exportar GeoJSON", "Export GeoJSON")) { export(map) }
                 .buttonStyle(.link).font(.caption)
-                .help(loc.t("Guarda lo dibujado en archivos que abren ArcGIS Pro, QGIS y otros: uno por capa y tipo de geometría, como pide la herramienta JSON To Features de ArcGIS Pro.",
-                            "Saves what is drawn to files that ArcGIS Pro, QGIS and others open: one per layer and kind of geometry, as ArcGIS Pro's JSON To Features tool takes them."))
+                .help(loc.t("Guarda lo dibujado en archivos que abren QGIS y otras aplicaciones GIS: uno por capa y tipo de geometría, como los toman sus herramientas de importación.",
+                            "Saves what is drawn to files that QGIS and other GIS applications open: one per layer and kind of geometry, as their import tools take them."))
         }
     }
 
@@ -252,8 +252,8 @@ struct ChatMapSection: View {
 }
 
 extension ChatMap {
-    /// The drawn features as GeoJSON files with one kind of geometry each: a layer of ArcGIS Pro holds a single
-    /// kind, and its JSON To Features takes one kind per run.
+    /// The drawn features as GeoJSON files with one kind of geometry each: a GIS layer holds a single kind,
+    /// and import tools take one kind per run.
     func exportFiles() -> [(name: String, data: Data)] {
         let kinds: [(suffix: String, types: Set<String>)] = [
             ("polygons", ["Polygon", "MultiPolygon"]), ("lines", ["LineString", "MultiLineString"]),
@@ -294,7 +294,7 @@ extension ChatMap {
     }
 }
 
-/// The attributes of the clicked feature, as ArcGIS shows a feature's pop-up.
+/// The attributes of the clicked feature, as a GIS shows a feature's pop-up.
 struct ChatMapFeatureCard: View {
     let feature: ChatMapFeature
     let onClose: () -> Void

@@ -273,7 +273,12 @@ def _handle(message, worker):
                                                    "message": json.dumps(event)})
 
         def work():
-            reply = agent.run(params.get("arguments") or {}, emit, lambda engine: _TURNS.__setitem__(message_id, engine))
+            try:
+                reply = agent.run(params.get("arguments") or {}, emit,
+                                  lambda engine: _TURNS.__setitem__(message_id, engine))
+            except Exception as error:  # a turn that fails still answers, or the engine waits out its timeout
+                reply = {"status": 502, "error": {"message": f"the agent failed: {type(error).__name__}",
+                                                  "type": "agent_error"}}
             _TURNS.pop(message_id, None)
             _respond(message_id, {"content": [{"type": "text", "text": json.dumps(reply)}], "isError": False})
         threading.Thread(target=work, daemon=True).start()

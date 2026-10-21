@@ -26,7 +26,7 @@ The port to upstream `d81235049` (v0.6.0), one patch per feature, in a folder pe
 | `core/` | CPU expert dot products, loader and scheduler, 8-bit recurrent state |
 | `model/` | DFlash, Flash-Next, rope and clip fixes |
 | `spec/` | MTP |
-| `server/` | chat templates and tool calls, MCP agent, reasoning budget |
+| `server/` | chat templates and tool calls, MCP agent, reasoning budget, checkpoints, requests running together |
 
 The number is global across the folders. Patches overlap in files, so they only apply in order.
 **A new change gets its own numbered patch after the last one**, in the folder of its area, so it

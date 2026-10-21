@@ -104,7 +104,7 @@ extension ChatSketch {
     }
 
     /// The figure as a CAD drawing in its own unit, at its coordinates or with the first point at the origin: an R12
-    /// DXF, which AutoCAD and ArcGIS Pro open. The path stays open as it was drawn, and what it lacks to close is a line
+    /// DXF, which CAD and GIS applications open. The path stays open as it was drawn, and what it lacks to close is a line
     /// of its own layer.
     func dxf() -> String {
         var out = ["0", "SECTION", "2", "HEADER", "9", "$ACADVER", "1", "AC1009",
@@ -218,8 +218,8 @@ struct ChatSketchSection: View {
                     }
                 }
                 .menuStyle(.borderlessButton).fixedSize().font(.caption)
-                .help(loc.t("PNG para un informe; DXF para AutoCAD o ArcGIS Pro, en %@ desde el punto 1; CSV con las esquinas numeradas.",
-                            "PNG for a report; DXF for AutoCAD or ArcGIS Pro, in %@ from point 1; CSV with the numbered corners.",
+                .help(loc.t("PNG para un informe; DXF para aplicaciones CAD y GIS, en %@ desde el punto 1; CSV con las esquinas numeradas.",
+                            "PNG for a report; DXF for CAD and GIS applications, in %@ from point 1; CSV with the numbered corners.",
                             sketch.unit))
             }
         }

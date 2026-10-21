@@ -144,6 +144,8 @@ enum SettingsKeys {
     static let mlock = "mlock"
     static let cacheRAM = "cacheRAM"
     static let parallelSlots = "parallelSlots"
+    /// With two or more slots, each one keeps its own share of the context instead of one shared pool.
+    static let separateKV = "separateKV"
     static let reasoningInline = "reasoningInline"
     /// Reasoning level for requests that do not choose one: "model", "off", "low", "medium", "high".
     static let serverDefaultReasoning = "serverDefaultReasoning"
@@ -313,7 +315,7 @@ enum SettingsKeys {
         extraArgs, embeddings, agentToolsEnabled, toolsRuntime, jsSandboxEnabled, sympyEnabled, scientificEnabled, mathAgentEnabled, mathToolsAllowed, toolResultLimit,
         memoryToolsEnabled, chatMapToolEnabled, chatRoadRouteEnabled, mapStyle, mapFolder, toolsUnsupportedModels, mcpServers, uiMcpProxy,
         cacheTypeK, cacheTypeV, mlock, cacheRAM,
-parallelSlots, reasoningInline, serverDefaultReasoning, serverDefaultMaxTokens, specMTP, mtpDisabledModels, faAmd, prefetchExperts, ubatch,
+        parallelSlots, separateKV, reasoningInline, serverDefaultReasoning, serverDefaultMaxTokens, specMTP, mtpDisabledModels, faAmd, prefetchExperts, ubatch,
         dynamicMoeEnabled, dynamicMoeLeanRAM, routerMode, routerModelsMax,
         pagedAttention,
         persistCache, multiGPU, multiGPUCount, splitMode, splitGroupSize, mgpuEvents, mgpuPeer,
@@ -706,6 +708,10 @@ enum FileHash {
             hasher.update(data: chunk)
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func sha256(of data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
 

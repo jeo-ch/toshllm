@@ -388,8 +388,8 @@ struct ChatAdvancedSettingsSection: View {
                 ChatSettingsGroup(title: loc.t("Mapa", "Map")) {
                     SettingsRow(icon: "map",
                                 title: loc.t("Mapa en el chat", "Map in the chat"),
-                                help: loc.t("Da al modelo una herramienta para dibujar puntos, líneas y áreas en un mapa bajo su respuesta. Lo que dibuja va con línea discontinua y marcado como posiciones aproximadas, porque las coordenadas pueden ser estimadas por el modelo; los mapas de datos que devuelve un agente, como el de ArcGIS, no cambian.",
-                                       "Gives the model a tool to draw points, lines and areas on a map under its answer. What it draws is dashed and marked as approximate positions, since the model may estimate the coordinates; maps of data an agent returns, such as ArcGIS's, are unchanged.")) {
+                                help: loc.t("Da al modelo una herramienta para dibujar puntos, líneas y áreas en un mapa bajo su respuesta. Lo que dibuja va con línea discontinua y marcado como posiciones aproximadas, porque las coordenadas pueden ser estimadas por el modelo; los mapas de datos que devuelve un agente, como los de un servicio GIS, no cambian.",
+                                       "Gives the model a tool to draw points, lines and areas on a map under its answer. What it draws is dashed and marked as approximate positions, since the model may estimate the coordinates; maps of data an agent returns, such as a GIS service's, are unchanged.")) {
                         SettingsToggle(isOn: $chatMapToolEnabled)
                     }
                     if chatMapToolEnabled {

@@ -927,7 +927,10 @@ final class ModelStore: ObservableObject {
     /// can offer to download the missing mmproj.
     func missingVisionProjector(for model: LocalModel) -> CatalogModel? {
         guard let cat = Catalog.models.first(where: { $0.fileName == model.name }), cat.isVision else { return nil }
-        guard ServerSettings.mmprojPath(forModel: model.url.path) == nil else { return nil }   // already paired
+        let path = model.url.path
+        // a projector shared by hand can still give way to the model's own
+        if ServerSettings.hasOwnProjector(forModel: path) { return nil }
+        if ServerSettings.mmprojOverride(forModel: path) == nil, ServerSettings.mmprojPath(forModel: path) != nil { return nil }
         return cat
     }
 

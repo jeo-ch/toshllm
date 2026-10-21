@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import AppKit
+import CoreText
+import PDFKit
 import XCTest
 @testable import ToshLLM
 
@@ -1266,6 +1269,18 @@ final class ServerSettingsTests: XCTestCase {
         try data.write(to: url)
     }
 
+    func testSlotsShareOneContextUnlessSeparated() {
+        var s = makeSettings()
+        s.parallelSlots = 4
+        XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--parallel")! + 1], "4")
+        XCTAssertTrue(s.arguments.contains("--kv-unified"), "one pool keeps the chat's full window")
+        s.separateKV = true
+        XCTAssertFalse(s.arguments.contains("--kv-unified"))
+        s.parallelSlots = 1
+        s.separateKV = false
+        XCTAssertFalse(s.arguments.contains("--kv-unified"), "one slot has nothing to share")
+    }
+
     func testBaseArguments() {
         let args = makeSettings().arguments
         XCTAssertEqual(args[args.firstIndex(of: "--load-mode")! + 1], "none")
@@ -1597,6 +1612,34 @@ final class ServerSettingsTests: XCTestCase {
         s.modelPath = model.path
         XCTAssertFalse(s.isMultimodal, "Qwen3-8B must not pair with Qwen3.5-9B's projector")
         XCTAssertNil(ServerSettings.mmprojPath(forModel: model.path))
+    }
+
+    func testAProjectorOfAnotherFamilyIsOfferedWhenItMatchesTheDimension() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("toshllm-share-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        func gguf(_ name: String, _ key: String, _ value: UInt32) -> String {
+            var data = Data("GGUF".utf8)
+            func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { data.append(contentsOf: $0) } }
+            func u64(_ v: UInt64) { withUnsafeBytes(of: v.littleEndian) { data.append(contentsOf: $0) } }
+            u32(3); u64(0); u64(1)
+            u64(UInt64(key.utf8.count)); data.append(contentsOf: key.utf8); u32(4); u32(value)
+            let url = dir.appendingPathComponent(name)
+            FileManager.default.createFile(atPath: url.path, contents: data)
+            return url.path
+        }
+        let model = gguf("Qwen3.8-9B-Q4_K_M.gguf", "qwen35.embedding_length", 4096)
+        let shared = gguf("Qwen3.5-9B-Q4_K_M.mmproj.gguf", "clip.vision.projection_dim", 4096)
+        _ = gguf("gemma-4-12b-it-Q4_K_M.mmproj.gguf", "clip.vision.projection_dim", 3840)
+
+        func resolved(_ p: [String]) -> [String] { p.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path } }
+        XCTAssertNil(ServerSettings.mmprojPath(forModel: model), "another family is never paired on its own")
+        XCTAssertEqual(resolved(ServerSettings.compatibleProjectors(forModel: model)), resolved([shared]))
+        XCTAssertTrue(ServerSettings.mightSupportVision(modelPath: model), "the control shows so the user can pick it")
+        XCTAssertFalse(ServerSettings.hasOwnProjector(forModel: model), "a shared projector is not the model's own")
+        _ = gguf("Qwen3.8-9B-Q4_K_M.mmproj.gguf", "clip.vision.projection_dim", 4096)
+        XCTAssertTrue(ServerSettings.hasOwnProjector(forModel: model))
     }
 
     func testRenamedProjectorsPairUnambiguouslyInSharedFolder() throws {
@@ -2272,6 +2315,17 @@ final class ChatMessageTests: XCTestCase {
         XCTAssertEqual(history[1]["tool_call_id"] as? String, "call_1")
     }
 
+    func testToolCallWithBrokenArgumentsGoesBackAsEmptyObject() throws {
+        let cut = ChatToolCall(serverID: "call_1", name: "run_python", arguments: #"{"code": "print(1"#,
+                               result: "invalid arguments", state: .failed)
+        let kept = ChatToolCall(serverID: "call_2", name: "get_datetime", arguments: #"{"tz":"UTC"}"#,
+                                result: "2026-07-21", state: .completed)
+        let history = ChatStore.requestHistory(system: "", summary: nil,
+                                               messages: [ChatMessage(role: "assistant", content: "", toolCalls: [cut, kept])], from: 0)
+        let calls = try XCTUnwrap(history.first?["tool_calls"] as? [[String: Any]])
+        XCTAssertEqual(calls.map { ($0["function"] as? [String: Any])?["arguments"] as? String }, ["{}", #"{"tz":"UTC"}"#])
+    }
+
     func testBuiltinToolMetadataPreservesDefinition() throws {
         let json: [String: Any] = [
             "display_name": "Read file", "tool": "read_file", "type": "builtin",
@@ -2442,6 +2496,60 @@ final class ChatMessageTests: XCTestCase {
         XCTAssertEqual(inputAudio["format"] as? String, "wav")
         let inputVideo = try XCTUnwrap(parts[2]["input_video"] as? [String: Any])
         XCTAssertEqual(inputVideo["format"] as? String, "mp4")
+    }
+
+    func testAPDFSentAsImagesCarriesItsTextLayerPageByPage() throws {
+        func pdf(_ pages: [String]) -> PDFDocument {
+            let data = NSMutableData()
+            var box = CGRect(x: 0, y: 0, width: 612, height: 792)
+            let context = CGContext(consumer: CGDataConsumer(data: data)!, mediaBox: &box, nil)!
+            for text in pages {
+                context.beginPDFPage(nil)
+                let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
+                    .font: NSFont.systemFont(ofSize: 10)]))
+                context.textPosition = CGPoint(x: 36, y: 700)
+                CTLineDraw(line, context)
+                context.endPDFPage()
+            }
+            context.closePDF()
+            return PDFDocument(data: data as Data)!
+        }
+        let course = "Thence North 29 degrees 52 minutes 04 seconds East 540.79 feet to the TRUE POINT OF BEGINNING"
+        let layer = try XCTUnwrap(NativeChatView.pdfTextLayer(pdf([course, course]), maxChars: 100_000))
+        XCTAssertTrue(layer.hasPrefix("[Page 1]\nThence North 29 degrees"))
+        XCTAssertTrue(layer.contains("\n[Page 2]\n"))
+        XCTAssertTrue(layer.hasSuffix("\n[Page 2]\n\(course)\n[End of text layer]"))
+        XCTAssertEqual(layer.components(separatedBy: "[Page ").count - 1, 2)
+        // a scan has no text of its own to send
+        XCTAssertNil(NativeChatView.pdfTextLayer(pdf(["", ""]), maxChars: 100_000))
+    }
+
+    func testAPDFTextLayerPastThePageImagesKeepsEveryPageAndACutOneSaysWhere() throws {
+        func pdf(_ count: Int) -> PDFDocument {
+            let data = NSMutableData()
+            var box = CGRect(x: 0, y: 0, width: 612, height: 792)
+            let context = CGContext(consumer: CGDataConsumer(data: data)!, mediaBox: &box, nil)!
+            for page in 1...count {
+                context.beginPDFPage(nil)
+                let line = CTLineCreateWithAttributedString(NSAttributedString(
+                    string: "Course \(page): thence South 12 degrees 30 minutes West 100.00 feet", attributes: [
+                        .font: NSFont.systemFont(ofSize: 10)]))
+                context.textPosition = CGPoint(x: 36, y: 700)
+                CTLineDraw(line, context)
+                context.endPDFPage()
+            }
+            context.closePDF()
+            return PDFDocument(data: data as Data)!
+        }
+        // more pages than the 20 sent as images: the text of every one goes
+        let whole = try XCTUnwrap(NativeChatView.pdfTextLayer(pdf(36), maxChars: 400_000))
+        XCTAssertTrue(whole.contains("[Page 36]\nCourse 36: thence"))
+        XCTAssertTrue(whole.hasSuffix("100.00 feet\n[End of text layer]"))
+        XCTAssertFalse(whole.contains("cut"))
+        // past the size limit it ends where it was cut and says so before the end line
+        let cut = try XCTUnwrap(NativeChatView.pdfTextLayer(pdf(36), maxChars: 700))
+        XCTAssertTrue(cut.hasSuffix("\n[Text layer cut in page 10 of 36]\n[End of text layer]"), cut)
+        XCTAssertFalse(cut.contains("[Page 11]"))
     }
 
     func testMultimediaFormatsMatchLlamaWebUICompatibilityRules() {
@@ -2705,9 +2813,87 @@ final class CompactionTests: XCTestCase {
         XCTAssertEqual(decoded.wireContent, "hola")
     }
 
+    func testFilesAttachedTogetherGoInTheOrderTheirNamesGive() {
+        func order(_ names: [String]) -> [String] {
+            NativeChatView.pageOrder(names.map { URL(fileURLWithPath: "/tmp/" + $0) }).map(\.lastPathComponent)
+        }
+        XCTAssertEqual(order(["page10.png", "page2.png", "page1.png"]), ["page1.png", "page2.png", "page10.png"])
+        XCTAssertEqual(order(["739.jpg", "735.jpg", "737.jpg"]), ["735.jpg", "737.jpg", "739.jpg"])
+        XCTAssertEqual(order(["10.jpg", "9.jpg", "11.jpg"]), ["9.jpg", "10.jpg", "11.jpg"])
+        // names without a sequence keep the order they came in, never one made up from them
+        XCTAssertEqual(order(["scan.jpg", "back.jpg", "front.jpg"]), ["scan.jpg", "back.jpg", "front.jpg"])
+        XCTAssertEqual(order(["cover.jpg", "page2.jpg", "page1.jpg"]), ["cover.jpg", "page2.jpg", "page1.jpg"])
+    }
+
+    func testAnAttachmentIsToldApartByItsBytesNotItsName() throws {
+        // two scans named alike are different files; the same one attached again is not
+        let first = FileHash.sha256(of: Data("page one".utf8)), second = FileHash.sha256(of: Data("page two".utf8))
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(first, FileHash.sha256(of: Data("page one".utf8)))
+        // attachments saved before the digest existed still load
+        let json = #"{"id":"00000000-0000-0000-0000-000000000002","name":"scan.pdf","content":"text"}"#
+        XCTAssertNil(try JSONDecoder().decode(ChatAttachment.self, from: Data(json.utf8)).digest)
+    }
+
     func testStreamingErrorIsExtractedFromSuccessfulHTTPStream() {
-        let object: [String: Any] = ["error": ["message": "Compute error."]]
-        XCTAssertEqual(ChatStore.streamedError(from: object), "Compute error.")
+        let object: [String: Any] = ["error": ["message": "the model refused the request"]]
+        XCTAssertEqual(ChatStore.streamedError(from: object), "the model refused the request")
+    }
+
+    func testEngineFailuresAreToldAsSuch() throws {
+        // the engine's raw GPU failure says the request did not finish and the server restarts
+        let gpu = ChatStore.streamedError(from: ["error": ["code": 500, "message": "Compute error."]]) ?? ""
+        XCTAssertTrue(gpu.contains("GPU"), gpu)
+        XCTAssertNotEqual(gpu, "Compute error.")
+        // an agent's own text for it is kept; what the app does about it is added where the server is known
+        let told = ChatStore.streamedError(from: ["error": ["type": "engine_gpu_error", "message": "Agent text."]]) ?? ""
+        XCTAssertEqual(told, "Agent text.")
+        XCTAssertTrue(ChatStore.gpuFailureMessage(told: told, outlook: .restarting).hasPrefix("Agent text. "))
+        let context = ChatStore.streamedError(from: ["error": ["type": "exceed_context_size_error", "n_prompt_tokens": 22300,
+                                                                "n_ctx": 16384, "message": "request exceeds"]]) ?? ""
+        XCTAssertTrue(context.contains("22300") && context.contains("16384"), context)
+        // an error that quotes the model's text is not a full context because that text mentions one
+        let quoted = #"{"error":{"code":500,"message":"Failed to parse tool call arguments as JSON: last read: 'raise the context size'"}}"#
+        XCTAssertTrue(ChatStore.describeServerError(status: 500, body: quoted).hasPrefix("HTTP 500: Failed to parse"))
+        let full = #"{"error":{"code":400,"message":"request (70000 tokens) exceeds the available context size (65536 tokens), try increasing it"}}"#
+        XCTAssertTrue(ChatStore.describeServerError(status: 400, body: full).hasPrefix("Contexto lleno"))
+        // a server error inside the stream ends the turn: the app does not try to resume it
+        var accumulator = ChatStreamAccumulator()
+        XCTAssertThrowsError(try accumulator.consume(#"data: {"error":{"message":"Compute error."}}"#)) { error in
+            XCTAssertEqual((error as? StreamError)?.fromServer, true)
+            XCTAssertEqual((error as? StreamError)?.gpu, true)
+        }
+        XCTAssertThrowsError(try accumulator.consume(#"data: {"error":{"message":"The slot was released."}}"#)) { error in
+            XCTAssertEqual((error as? StreamError)?.gpu, false)
+        }
+        XCTAssertTrue(ChatStore.isGPUFailure(ChatStore.errorObject(#"{"error":{"code":500,"message":"Compute error."}}"#)))
+        XCTAssertFalse(ChatStore.cutAnswerMessage().isEmpty)
+    }
+
+    func testGPURecoveryRestartsOnceEveryTenMinutesAndSaysWhen() {
+        let recovery = GPURecovery()
+        let start = Date(timeIntervalSince1970: 1_000)
+        XCTAssertTrue(recovery.admit(port: 8080, at: start))
+        // one failure logs several lines: a single restart
+        XCTAssertFalse(recovery.admit(port: 8080, at: start.addingTimeInterval(1)))
+        XCTAssertEqual(recovery.outlook(port: 8080, at: start.addingTimeInterval(2)), .restarting)
+        // another failure within ten minutes is not restarted, and the chat does not promise it
+        XCTAssertFalse(recovery.admit(port: 8080, at: start.addingTimeInterval(120)))
+        XCTAssertEqual(recovery.outlook(port: 8080, at: start.addingTimeInterval(120)), .withheld)
+        XCTAssertNotEqual(ChatStore.gpuFailureMessage(told: nil, outlook: .withheld),
+                          ChatStore.gpuFailureMessage(told: nil, outlook: .restarting))
+        // each server counts its own
+        XCTAssertTrue(recovery.admit(port: 8081, at: start.addingTimeInterval(120)))
+        XCTAssertTrue(recovery.admit(port: 8080, at: start.addingTimeInterval(601)))
+        // a stream cut is the GPU's only when the restart came after its request was sent
+        XCTAssertTrue(recovery.restarted(port: 8080, since: start.addingTimeInterval(590)))
+        XCTAssertFalse(recovery.restarted(port: 8080, since: start.addingTimeInterval(650)))
+        XCTAssertFalse(recovery.restarted(port: 8082, since: start))
+        XCTAssertTrue(GPURecovery.reports("error: Caused GPU Timeout Error (00000002:kIOAccelCommandBufferCallbackErrorTimeout)"))
+        XCTAssertTrue(GPURecovery.reports("ggml_metal_graph_compute: backend is in error state from a previous command buffer failure"))
+        XCTAssertFalse(GPURecovery.reports("srv  log_server_r: request: POST /v1/chat/completions 127.0.0.1 200"))
+        // a cut connection is not told as a GPU failure
+        XCTAssertFalse(ChatStore.cutConnectionMessage().contains("GPU"))
     }
 
     func testReasoningOnlyLengthMessageExplainsTokenLimit() {

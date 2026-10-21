@@ -1547,7 +1547,7 @@ index 000000000..3cbf45a3a
 +		);
 +	}
 +
-+	/** The attributes of a feature in the layer's own order, with the names ArcGIS shows for them. */
++	/** The attributes of a feature in the layer's own order, with the names a GIS shows for them. */
 +	function popup(properties: Record<string, unknown>, layer: ToshMapLayer): string {
 +		const names = layer.fields?.length
 +			? layer.fields
@@ -1726,7 +1726,7 @@ index 000000000..3cbf45a3a
 +			<button
 +				class="hover:text-foreground"
 +				onclick={exportGeojson}
-+				title="One .geojson file per layer and kind of geometry, for ArcGIS Pro (JSON To Features)"
++				title="One .geojson file per layer and kind of geometry, as GIS import tools take them"
 +				>GeoJSON</button
 +			>
 +		</span>
@@ -1946,7 +1946,7 @@ index 000000000..891c7270c
 +			<button
 +				class="hover:text-foreground"
 +				onclick={() => download(`${stem}.dxf`, dxf(sketch), 'application/dxf')}
-+				title="For AutoCAD or ArcGIS Pro, from point 1">DXF</button
++				title="For CAD and GIS applications, from point 1">DXF</button
 +			>
 +
 +			<button
@@ -2395,7 +2395,7 @@ index 000000000..b654ecffa
 +	['multipoints', ['MultiPoint']]
 +];
 +
-+/** One GeoJSON file per layer and kind of geometry, as ArcGIS Pro's JSON To Features takes one kind per run. */
++/** One GeoJSON file per layer and kind of geometry, as GIS import tools take one kind per run. */
 +export function geojsonFiles(layers: ToshMapLayer[]): [string, string][] {
 +	const files: [string, string][] = [];
 +	const taken = new Set<string>();
