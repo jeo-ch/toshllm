@@ -8,6 +8,9 @@ actor ToshMCPService {
     static let shared = ToshMCPService()
 
     private struct Session {
+        /// Identifies this connection, so a late timeout or a stream that closes
+        /// after a reconnect cannot touch the replacement session's waiters.
+        let connectionID = UUID()
         var server: MCPServer
         var sessionID: String?
         var nextID = 1
@@ -255,13 +258,15 @@ actor ToshMCPService {
             guard result["protocolVersion"] is String else { throw MCPError.invalidResponse }
             try await notify(serverID: server.id, method: "notifications/initialized", params: [:])
         } catch {
+            // Release the socket, listener, waiters and child process before
+            // either retrying or reporting the failure; a bare dictionary
+            // removal used to leave the transport running.
+            await disconnect(server.id)
             if server.transport == .automatic && connected.transport == .streamableHTTP {
-                sessions.removeValue(forKey: server.id)
                 connected.transport = .serverSentEvents
                 try await connect(connected)
                 return
             }
-            sessions.removeValue(forKey: server.id)
             throw error
         }
     }
@@ -378,25 +383,56 @@ actor ToshMCPService {
     }
 
     private func sendWebSocket(serverID: UUID, payload: [String: Any], id: Int) async throws -> WireResponse {
-        guard let socket = sessions[serverID]?.webSocket else { throw MCPError.invalidResponse }
-        startSocketReader(serverID: serverID, socket: socket)
+        guard let session = sessions[serverID], let socket = session.webSocket else {
+            throw MCPError.invalidResponse
+        }
+        let connectionID = session.connectionID
+        startSocketReader(serverID: serverID, socket: socket, connectionID: connectionID)
         let data = try JSONSerialization.data(withJSONObject: payload)
+        let timeout = TimeInterval(max(5, session.server.timeoutSeconds))
+        let timeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(timeout))
+            guard !Task.isCancelled else { return }
+            await self?.failSocketWaiter(
+                serverID: serverID, id: id, connectionID: connectionID,
+                error: MCPError.remote("MCP WebSocket request timed out after \(Int(timeout))s"))
+        }
+        defer { timeoutTask.cancel() }
         // Registered before the send, not after: a reply that arrives in between
         // would find no waiter and be dropped.
-        return try await withCheckedThrowingContinuation { continuation in
-            sessions[serverID]?.socketWaiters[id] = continuation
-            Task { [weak self] in
-                do { try await socket.send(.data(data)) }
-                catch {
-                    do {
-                        try (socket.delegate as? MCPRedirectGuard)?.check()
-                        await self?.failSocketWaiter(serverID: serverID, id: id, error: error)
-                    } catch let refused {
-                        await self?.failSocketWaiter(serverID: serverID, id: id, error: refused)
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                guard sessions[serverID]?.connectionID == connectionID else {
+                    continuation.resume(throwing: MCPError.invalidResponse)
+                    return
+                }
+                sessions[serverID]?.socketWaiters[id] = continuation
+                // Cancellation can land before this body runs; onCancel would
+                // then find no waiter, so check once more after registering.
+                if Task.isCancelled {
+                    sessions[serverID]?.socketWaiters.removeValue(forKey: id)?
+                        .resume(throwing: CancellationError())
+                    return
+                }
+                Task { [weak self] in
+                    do { try await socket.send(.data(data)) }
+                    catch {
+                        do {
+                            try (socket.delegate as? MCPRedirectGuard)?.check()
+                            await self?.failSocketWaiter(serverID: serverID, id: id,
+                                                         connectionID: connectionID, error: error)
+                        } catch let refused {
+                            await self?.failSocketWaiter(serverID: serverID, id: id,
+                                                         connectionID: connectionID, error: refused)
+                        }
                     }
                 }
             }
-        }
+        }, onCancel: {
+            Task { await self.failSocketWaiter(serverID: serverID, id: id,
+                                               connectionID: connectionID,
+                                               error: CancellationError()) }
+        })
     }
 
     /// A single reader owns the socket and routes each reply by id.
@@ -404,14 +440,15 @@ actor ToshMCPService {
     /// Reading inside the call meant whichever call happened to receive a
     /// response consumed it: a reply addressed to another id was dropped, and
     /// its caller waited forever.
-    private func startSocketReader(serverID: UUID, socket: URLSessionWebSocketTask) {
+    private func startSocketReader(serverID: UUID, socket: URLSessionWebSocketTask, connectionID: UUID) {
         guard sessions[serverID]?.socketReader == nil else { return }
         sessions[serverID]?.socketReader = Task { [weak self] in
             while !Task.isCancelled {
                 let message: URLSessionWebSocketTask.Message
                 do { message = try await socket.receive() }
                 catch {
-                    await self?.failSocketWaiters(serverID: serverID, error: error)
+                    await self?.closeSocket(serverID: serverID, connectionID: connectionID,
+                                            error: error)
                     return
                 }
                 let value: Data
@@ -422,37 +459,87 @@ actor ToshMCPService {
                 }
                 guard let object = try? JSONSerialization.jsonObject(with: value) as? [String: Any],
                       let id = (object["id"] as? NSNumber)?.intValue else { continue }
-                await self?.resumeSocketWaiter(serverID: serverID, id: id, object: object)
+                await self?.resumeSocketWaiter(serverID: serverID, id: id,
+                                               connectionID: connectionID, object: object)
             }
         }
     }
 
-    private func resumeSocketWaiter(serverID: UUID, id: Int, object: [String: Any]) {
+    private func resumeSocketWaiter(serverID: UUID, id: Int, connectionID: UUID,
+                                    object: [String: Any]) {
+        guard sessions[serverID]?.connectionID == connectionID else { return }
         sessions[serverID]?.socketWaiters
             .removeValue(forKey: id)?
             .resume(returning: WireResponse(object: object))
     }
 
-    private func failSocketWaiter(serverID: UUID, id: Int, error: Error) {
+    private func failSocketWaiter(serverID: UUID, id: Int, connectionID: UUID, error: Error) {
+        guard sessions[serverID]?.connectionID == connectionID else { return }
         sessions[serverID]?.socketWaiters.removeValue(forKey: id)?.resume(throwing: error)
     }
 
-    private func failSocketWaiters(serverID: UUID, error: Error) {
+    private func failSocketWaiters(serverID: UUID, connectionID: UUID, error: Error) {
+        guard sessions[serverID]?.connectionID == connectionID else { return }
         let waiters = sessions[serverID]?.socketWaiters ?? [:]
         sessions[serverID]?.socketWaiters = [:]
         for waiter in waiters.values { waiter.resume(throwing: error) }
     }
 
-    private func startLegacySSE(_ server: MCPServer) async throws {
-        _ = try await withCheckedThrowingContinuation { continuation in
-            legacyReady[server.id] = continuation
-            legacyListeners[server.id] = Task { [weak self] in
-                await self?.listenLegacySSE(server)
-            }
-        }
+    /// The socket reader ended: release its callers and drop the session so the
+    /// next request reconnects instead of sending into a dead socket.
+    private func closeSocket(serverID: UUID, connectionID: UUID, error: Error) {
+        guard let session = sessions[serverID], session.connectionID == connectionID else { return }
+        session.webSocket?.cancel(with: .goingAway, reason: nil)
+        for waiter in session.socketWaiters.values { waiter.resume(throwing: error) }
+        sessions.removeValue(forKey: serverID)
     }
 
-    private func listenLegacySSE(_ server: MCPServer) async {
+    private func startLegacySSE(_ server: MCPServer) async throws {
+        guard let connectionID = sessions[server.id]?.connectionID else {
+            throw MCPError.invalidResponse
+        }
+        let timeout = TimeInterval(max(5, server.timeoutSeconds))
+        let timeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(timeout))
+            guard !Task.isCancelled else { return }
+            await self?.failLegacyReady(
+                serverID: server.id, connectionID: connectionID,
+                error: MCPError.remote("MCP SSE endpoint was not announced within \(Int(timeout))s"))
+        }
+        defer { timeoutTask.cancel() }
+        _ = try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+                guard sessions[server.id]?.connectionID == connectionID else {
+                    continuation.resume(throwing: MCPError.invalidResponse)
+                    return
+                }
+                legacyReady[server.id] = continuation
+                if Task.isCancelled {
+                    legacyReady.removeValue(forKey: server.id)?
+                        .resume(throwing: CancellationError())
+                    return
+                }
+                legacyListeners[server.id] = Task { [weak self] in
+                    await self?.listenLegacySSE(server, connectionID: connectionID)
+                }
+            }
+        }, onCancel: {
+            Task { await self.failLegacyReady(serverID: server.id, connectionID: connectionID,
+                                              error: CancellationError()) }
+        })
+    }
+
+    private func failLegacyReady(serverID: UUID, connectionID: UUID, error: Error) {
+        guard sessions[serverID]?.connectionID == connectionID,
+              let continuation = legacyReady.removeValue(forKey: serverID) else { return }
+        continuation.resume(throwing: error)
+        // Only stop the listener when the endpoint had not been announced yet;
+        // a timeout that loses the race with a healthy connection must not
+        // cancel a working stream.
+        legacyListeners.removeValue(forKey: serverID)?.cancel()
+    }
+
+    private func listenLegacySSE(_ server: MCPServer, connectionID: UUID) async {
         do {
             guard let url = URL(string: server.url) else { throw MCPError.invalidURL }
             var request = URLRequest(url: url)
@@ -482,6 +569,11 @@ actor ToshMCPService {
                 } else if line.isEmpty, !dataLines.isEmpty {
                     let data = dataLines.joined(separator: "\n")
                     dataLines.removeAll(keepingCapacity: true)
+                    // A reconnect replaces the session; a stream that outlived
+                    // its connection must not answer for the new one.
+                    guard sessions[server.id]?.connectionID == connectionID else {
+                        throw CancellationError()
+                    }
                     if event == "endpoint" {
                         guard let endpoint = MCPOrigin.endpoint(data, of: url) else {
                             throw MCPError.remote("The MCP server announced an endpoint on another origin; nothing was sent there.")
@@ -499,21 +591,58 @@ actor ToshMCPService {
             }
             throw MCPError.remote("Legacy MCP SSE stream closed")
         } catch {
+            // The listener can outlive its connection (timeout, disconnect, a
+            // reconnect). Only the current connection may fail its waiters.
+            guard sessions[server.id]?.connectionID == connectionID else { return }
             legacyReady.removeValue(forKey: server.id)?.resume(throwing: error)
             for continuation in legacyResponses.removeValue(forKey: server.id)?.values ?? [:].values {
                 continuation.resume(throwing: error)
             }
+            // The stream is gone, so posting to the announced endpoint would
+            // wait forever. Dropping the session lets the next call reconnect.
+            sessions.removeValue(forKey: server.id)
+            legacyListeners.removeValue(forKey: server.id)
         }
     }
 
     private func sendLegacy(serverID: UUID, payload: [String: Any], id: Int) async throws -> WireResponse {
-        try await withCheckedThrowingContinuation { continuation in
-            legacyResponses[serverID, default: [:]][id] = continuation
-            Task { [weak self] in
-                do { try await self?.postLegacy(serverID: serverID, payload: payload) }
-                catch { await self?.failLegacyResponse(serverID: serverID, id: id, error: error) }
-            }
+        guard let connectionID = sessions[serverID]?.connectionID else {
+            throw MCPError.invalidResponse
         }
+        let timeout = TimeInterval(max(5, sessions[serverID]?.server.timeoutSeconds ?? 60))
+        let timeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(timeout))
+            guard !Task.isCancelled else { return }
+            await self?.failLegacyResponse(
+                serverID: serverID, id: id, connectionID: connectionID,
+                error: MCPError.remote("MCP SSE request timed out after \(Int(timeout))s"))
+        }
+        defer { timeoutTask.cancel() }
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                guard sessions[serverID]?.connectionID == connectionID else {
+                    continuation.resume(throwing: MCPError.invalidResponse)
+                    return
+                }
+                legacyResponses[serverID, default: [:]][id] = continuation
+                if Task.isCancelled {
+                    legacyResponses[serverID]?.removeValue(forKey: id)?
+                        .resume(throwing: CancellationError())
+                    return
+                }
+                Task { [weak self] in
+                    do { try await self?.postLegacy(serverID: serverID, payload: payload) }
+                    catch {
+                        await self?.failLegacyResponse(serverID: serverID, id: id,
+                                                       connectionID: connectionID, error: error)
+                    }
+                }
+            }
+        }, onCancel: {
+            Task { await self.failLegacyResponse(serverID: serverID, id: id,
+                                                 connectionID: connectionID,
+                                                 error: CancellationError()) }
+        })
     }
 
     private func postLegacy(serverID: UUID, payload: [String: Any]) async throws {
@@ -532,7 +661,8 @@ actor ToshMCPService {
         guard (200..<300).contains(status) else { throw MCPError.remote("HTTP \(status)") }
     }
 
-    private func failLegacyResponse(serverID: UUID, id: Int, error: Error) {
+    private func failLegacyResponse(serverID: UUID, id: Int, connectionID: UUID, error: Error) {
+        guard sessions[serverID]?.connectionID == connectionID else { return }
         legacyResponses[serverID]?.removeValue(forKey: id)?.resume(throwing: error)
     }
 

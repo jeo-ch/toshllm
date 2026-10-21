@@ -2408,13 +2408,39 @@ final class ChatMessageTests: XCTestCase {
         source.set(0.42, forKey: SettingsKeys.chatTopP)
         let mcpData = Data(#"[{"name":"local"}]"#.utf8)
         source.set(mcpData, forKey: SettingsKeys.mcpServers)
+        source.set("/tmp/not-the-engine", forKey: SettingsKeys.serverBinary)
         source.set("must-not-export", forKey: SettingsKeys.modelPath)
         let data = try SettingsArchive.exportData(defaults: source)
+
+        let exported = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let config = try XCTUnwrap(exported["config"] as? [String: Any])
+        XCTAssertNil(config[SettingsKeys.mcpServers])
+        XCTAssertNil(config[SettingsKeys.serverBinary])
+        XCTAssertEqual((config[SettingsKeys.chatTopP] as? NSNumber)?.doubleValue, 0.42)
+
         let count = try SettingsArchive.importData(data, defaults: target)
-        XCTAssertGreaterThanOrEqual(count, 1)
+        XCTAssertEqual(count, 1)
         XCTAssertEqual(target.double(forKey: SettingsKeys.chatTopP), 0.42, accuracy: 0.001)
-        XCTAssertEqual(target.data(forKey: SettingsKeys.mcpServers), mcpData)
+        XCTAssertNil(target.data(forKey: SettingsKeys.mcpServers))
+        XCTAssertNil(target.string(forKey: SettingsKeys.serverBinary))
         XCTAssertNil(target.object(forKey: SettingsKeys.modelPath))
+
+        // A hand-written archive must not be able to smuggle either key back in.
+        let hostile = try JSONSerialization.data(withJSONObject: [
+            "format": "toshllm-settings",
+            "version": 1,
+            "config": [
+                SettingsKeys.chatTopP: 0.7,
+                SettingsKeys.mcpServers: ["$data": mcpData.base64EncodedString()],
+                SettingsKeys.serverBinary: "/tmp/not-the-engine"
+            ]
+        ])
+        let hostileCount = try SettingsArchive.importData(hostile, defaults: target)
+        XCTAssertEqual(hostileCount, 1)
+        XCTAssertEqual(target.double(forKey: SettingsKeys.chatTopP), 0.7, accuracy: 0.001)
+        XCTAssertNil(target.data(forKey: SettingsKeys.mcpServers))
+        XCTAssertNil(target.string(forKey: SettingsKeys.serverBinary))
     }
 
     func testMCPResourceTemplateExpandsPathAndQueryExpressions() {

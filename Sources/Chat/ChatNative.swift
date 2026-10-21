@@ -193,6 +193,47 @@ private struct AgentRunContext {
     var mathRequired = false
 }
 
+/// One debounced write of the chat history.
+///
+/// A `DispatchWorkItem` cannot be flushed once cancelled: `perform()` is a no-op
+/// on a cancelled item, and the quit path used to cancel before performing, so
+/// the last exchange was silently dropped. `run()` here is idempotent instead:
+/// the queued copy and the quit-path flush can both call it, and a write
+/// superseded by a newer `save()` is cancelled without disarming the newer one.
+private final class ChatSaveJob: @unchecked Sendable {
+    private enum State { case pending, running, done, cancelled }
+
+    private let lock = NSLock()
+    private var state: State = .pending
+    private let body: () -> Void
+
+    init(body: @escaping () -> Void) {
+        self.body = body
+    }
+
+    func cancel() {
+        lock.lock()
+        if case .pending = state { state = .cancelled }
+        lock.unlock()
+    }
+
+    func run() {
+        lock.lock()
+        guard case .pending = state else {
+            lock.unlock()
+            return
+        }
+        state = .running
+        lock.unlock()
+
+        body()
+
+        lock.lock()
+        state = .done
+        lock.unlock()
+    }
+}
+
 @MainActor
 final class ChatStore: ObservableObject {
     nonisolated static func reasoningBudget(for effort: String) -> Int? {
@@ -2529,7 +2570,7 @@ final class ChatStore: ObservableObject {
     // `nonisolated(unsafe)`: the quit path reads `saveWork` from a nonisolated
     // context, and every access is already serialised by `saveLock`.
     private nonisolated static let saveQueue = DispatchQueue(label: "dev.engel.toshllm.chat-save", qos: .utility)
-    nonisolated(unsafe) private static var saveWork: DispatchWorkItem?
+    nonisolated(unsafe) private static var saveWork: ChatSaveJob?
     /// When the write that is still pending was first asked for, and the lock that
     /// guards it: the debounce must not postpone a save for ever while calls keep
     /// arriving (the last exchange would then never reach disk).
@@ -2545,8 +2586,9 @@ final class ChatStore: ObservableObject {
         savePendingSince = nil
         saveLock.unlock()
         guard let work else { return }
-        work.cancel()
-        saveQueue.sync { work.perform() }
+        // Do not cancel first: a cancelled job refuses to run, which is exactly
+        // the final save this flush exists to keep.
+        saveQueue.sync { work.run() }
     }
 
     func save() {
@@ -2598,7 +2640,7 @@ final class ChatStore: ObservableObject {
         let pURL = projectsURL
         let bkURL = backupURL
         let bkPURL = backupProjectsURL
-        let work = DispatchWorkItem {
+        let work = ChatSaveJob {
             ChatStore.saveLock.lock()
             ChatStore.savePendingSince = nil
             ChatStore.saveLock.unlock()
@@ -2652,7 +2694,7 @@ final class ChatStore: ObservableObject {
         }
         Self.saveWork = work
         Self.saveLock.unlock()
-        Self.saveQueue.asyncAfter(deadline: .now() + delay, execute: work)
+        Self.saveQueue.asyncAfter(deadline: .now() + delay) { work.run() }
     }
 
     func exportText(_ c: Conversation, _ loc: Localizer) -> String {

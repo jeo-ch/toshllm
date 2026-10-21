@@ -115,6 +115,18 @@ final class MCPRemoteOriginTests: XCTestCase {
         XCTAssertEqual(sink.requests.map(\.method), [])
     }
 
+    func testALegacyStreamThatNeverAnnouncesAnEndpointTimesOut() async throws {
+        let (_, origin) = try await serve { _ in .stream(first: Data()) }
+        var server = MCPServer(name: "silent", url: "http://\(origin)/sse",
+                               transport: .serverSentEvents)
+        server.timeoutSeconds = 5
+        let started = Date()
+        let names = await discover(server)
+        XCTAssertEqual(names, [])
+        XCTAssertLessThan(Date().timeIntervalSince(started), 9,
+                          "a silent SSE endpoint must not hold the connect open")
+    }
+
     func testAnOriginIsTheSchemeHostAndEffectivePort() throws {
         let base = try XCTUnwrap(URL(string: "https://Example.com/sse"))
         XCTAssertEqual(MCPOrigin(base), MCPOrigin(try XCTUnwrap(URL(string: "https://example.COM:443/x"))))

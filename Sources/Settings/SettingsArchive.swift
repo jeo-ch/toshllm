@@ -13,9 +13,9 @@ enum SettingsArchiveError: LocalizedError {
 enum SettingsArchive {
     static func exportData(defaults: UserDefaults = .standard) throws -> Data {
         let all = defaults.dictionaryRepresentation()
-        let config = Dictionary(uniqueKeysWithValues: SettingsKeys.resettableOptionKeys.compactMap { key in
+        let config = Dictionary(SettingsKeys.archiveOptionKeys.compactMap { key in
             all[key].map { (key, archiveValue($0)) }
-        })
+        }, uniquingKeysWith: { first, _ in first })
         return try JSONSerialization.data(withJSONObject: [
             "format": "toshllm-settings",
             "version": 1,
@@ -30,7 +30,14 @@ enum SettingsArchive {
               let config = root["config"] as? [String: Any] else {
             throw SettingsArchiveError.invalidFormat
         }
-        let allowed = Set(SettingsKeys.resettableOptionKeys)
+        let allowed = Set(SettingsKeys.archiveOptionKeys)
+        // Say why a file that carries an executable path or MCP definitions
+        // imports fewer settings than it appears to, instead of dropping them
+        // without a trace.
+        let excluded = SettingsKeys.archiveExcludedKeys.filter { config[$0] != nil }
+        if !excluded.isEmpty {
+            AppLog.app.notice("settings archive ignored executable/MCP keys: \(excluded.sorted().joined(separator: ", "), privacy: .public)")
+        }
         var count = 0
         for (key, value) in config where allowed.contains(key) {
             if value is NSNull { defaults.removeObject(forKey: key) }

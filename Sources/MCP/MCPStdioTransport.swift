@@ -232,4 +232,16 @@ actor MCPStdioTransport {
         let handle = stdin.fileHandleForWriting
         writer.async { try? handle.close() }
     }
+
+    /// A transport that is dropped without an explicit `stop()` — a failed
+    /// `connect` before it was stored in the session, for example — must not
+    /// leave its child process and pipe handlers behind.
+    deinit {
+        readerTask?.cancel()
+        stdout.fileHandleForReading.readabilityHandler = nil
+        stderr.fileHandleForReading.readabilityHandler = nil
+        if process.isRunning { process.terminate() }
+        let handle = stdin.fileHandleForWriting
+        writer.async { try? handle.close() }
+    }
 }

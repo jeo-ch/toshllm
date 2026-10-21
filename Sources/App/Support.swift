@@ -337,6 +337,20 @@ enum SettingsKeys {
         proxyEnabled, proxyHost, proxyPort,
     ]
 
+    /// Settings that exist on disk but must never travel in a settings archive.
+    /// `serverBinary` is a path the app launches, and `mcpServers` carries the
+    /// command, arguments and environment of processes the app starts: importing
+    /// either from a shared file would let that file run code. Exporting
+    /// `mcpServers` would also copy the tokens in those environment variables.
+    static let archiveExcludedKeys = [serverBinary, mcpServers]
+
+    /// The keys a settings archive may carry. Kept separate from
+    /// `resettableOptionKeys` so "reset options" keeps its old meaning while a
+    /// shared archive stays free of executable paths and server definitions.
+    static let archiveOptionKeys = resettableOptionKeys.filter {
+        !archiveExcludedKeys.contains($0)
+    }
+
     /// The folder extensions are read from; empty means Application Support/<data folder>/Extensions.
     static let extensionsFolder = "extensionsFolder"
     /// A setting an extension declares, kept per extension.

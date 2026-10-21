@@ -29,6 +29,24 @@ final class AgentClientTests: XCTestCase {
                   "state": state, "result": result]]
     }
 
+    func testFlushPendingSaveWritesTheLastExchange() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tosh-flush-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        // The pending job is process-wide; start from a clean slate.
+        ChatStore.flushPendingSave()
+        let store = ChatStore(storageDirectory: directory)
+        store.newConversation()
+        let index = try XCTUnwrap(store.currentIndex)
+        store.conversations[index].messages = [ChatMessage(role: "user", content: "last words")]
+        store.save()
+        ChatStore.flushPendingSave()
+
+        let url = directory.appendingPathComponent("conversations.json")
+        let saved = try JSONDecoder().decode([Conversation].self, from: Data(contentsOf: url))
+        XCTAssertEqual(saved.first?.messages.first?.content, "last words")
+    }
+
     func testCallsOfOnePassShareARoundAheadOfTheAnswer() throws {
         let (store, id) = store()
         store.agentEvent(["type": "intent", "intent": "computational", "asked_model": false], conversation: id)
