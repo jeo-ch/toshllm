@@ -91,6 +91,9 @@ final class ProfileStore: ObservableObject {
     private let storeKey = "profiles"
     private static let activeKey = "activeProfileName"
     private static let baselineKey = "baselineProfile"
+    /// Set when the saved blob exists but could not be read *and* could not be preserved.
+    /// Saves stay off so the blob on disk remains the only copy of those profiles.
+    private var saveBlocked = false
 
     init() { load() }
 
@@ -201,12 +204,36 @@ final class ProfileStore: ObservableObject {
            let base = try? JSONDecoder().decode(Profile.self, from: data) {
             baselineConfig = base
         }
-        guard let data = UserDefaults.standard.data(forKey: storeKey),
-              let list = try? JSONDecoder().decode([Profile].self, from: data) else { return }
-        profiles = list
+        guard let data = UserDefaults.standard.data(forKey: storeKey) else { return }
+        guard let list = try? JSONDecoder().decode([LenientDecodable<Profile>].self, from: data) else {
+            // One unreadable profile must not cost the rest, and the next save must not be the
+            // first thing that happens to the blob we could not read.
+            saveBlocked = !Self.preserveUnreadable(data)
+            AppLog.app.error("ProfileStore: could not read the saved profiles")
+            return
+        }
+        let items = list.compactMap(\.value)
+        profiles = items
+        if items.count != list.count {
+            _ = Self.preserveUnreadable(data)
+            AppLog.app.error("ProfileStore: skipped \(list.count - items.count) unreadable profile(s)")
+        }
+    }
+
+    /// Keeps the raw blob under its own defaults key so a later save cannot overwrite it.
+    /// Returns false when the copy could not be stored.
+    private static func preserveUnreadable(_ data: Data) -> Bool {
+        let stamp = Int(Date().timeIntervalSince1970 * 1000)
+        let key = "profiles.corrupt-\(stamp)"
+        UserDefaults.standard.set(data, forKey: key)
+        return UserDefaults.standard.data(forKey: key) == data
     }
 
     private func save() {
+        guard !saveBlocked else {
+            AppLog.app.error("ProfileStore: save skipped — the unreadable profiles could not be preserved")
+            return
+        }
         guard let data = try? JSONEncoder().encode(profiles) else { return }
         UserDefaults.standard.set(data, forKey: storeKey)
     }

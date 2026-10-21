@@ -878,3 +878,14 @@ enum ToolSupport {
         UserDefaults.standard.set(blocked, forKey: SettingsKeys.toolsUnsupportedModels)
     }
 }
+
+/// Decodes one element without letting that element fail the array. `JSONDecoder` throws for the
+/// whole `[T]` when a single record no longer matches the current shape, so a history with one
+/// unreadable entry used to be dropped entirely; this keeps the entries that still decode.
+struct LenientDecodable<Wrapped: Decodable>: Decodable {
+    let value: Wrapped?
+
+    init(from decoder: Decoder) throws {
+        value = try? Wrapped(from: decoder)
+    }
+}

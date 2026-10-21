@@ -1,0 +1,96 @@
+diff --git a/tools/server/server-tools.cpp b/tools/server/server-tools.cpp
+--- a/tools/server/server-tools.cpp
++++ b/tools/server/server-tools.cpp
+@@ -2081,6 +2081,28 @@
+         return !get_header(req.headers, "sec-fetch-site").empty() || !get_header(req.headers, "origin").empty();
+     };
+ 
++    // The page this server serves itself is the only browser allowed to run tools: it is part of
++    // this program. Any other origin is a page the user never gave this computer's shell to, so it
++    // is treated like another machine. Sec-Fetch-Site is set by the browser; Origin compared with
++    // Host is the fallback for browsers that do not send it. A request with neither is a program,
++    // not a page, and keeps the rules it had.
++    auto foreign_page = [](const server_http_req & req) {
++        const std::string site = get_header(req.headers, "sec-fetch-site");
++        if (!site.empty()) {
++            return site != "same-origin" && site != "none";
++        }
++        const std::string origin = get_header(req.headers, "origin");
++        if (origin.empty()) {
++            return false;
++        }
++        // an opaque origin (a sandboxed frame, a file:// page) belongs to no server
++        if (origin == "null") {
++            return true;
++        }
++        const auto scheme = origin.find("://");
++        return scheme == std::string::npos || origin.substr(scheme + 3) != get_header(req.headers, "host");
++    };
++
+     // Tools of an agent-only server are listed and run only for the agent, which proves itself with
+     // the key the engine handed it; any other client keeps the rest of the list.
+     auto hidden_from = [this](const server_http_req & req, const server_tool & tool) {
+@@ -2094,23 +2116,25 @@
+         return agent_key.empty() || !same_secret(get_header(req.headers, "x-tosh-agent-key"), agent_key);
+     };
+ 
+-    // The built-in tools reach this computer's shell and files: another computer gets them only with the
+-    // API key, which the server then checks on every request.
+-    auto local_only = [this](const server_http_req & req, const server_tool & tool) {
+-        if (tool.type() == "mcp" || keyed) {
++    // These tools reach this computer's shell, files and services: another computer gets them only
++    // with the API key, which the server then checks on every request. The loopback address is this
++    // Mac, where the app and its agent run; MCP tools are no exception.
++    auto local_only = [this](const server_http_req & req, const server_tool &) {
++        if (keyed) {
+             return false;
+         }
+         const std::string & a = req.remote_addr;
+         return !(a.empty() || a == "::1" || a.rfind("127.", 0) == 0 || a.rfind("::ffff:127.", 0) == 0);
+     };
+ 
+-    handle_get = [this, from_browser, hidden_from, local_only](const server_http_req & req) -> server_http_res_ptr {
++    handle_get = [this, from_browser, foreign_page, hidden_from, local_only](const server_http_req & req) -> server_http_res_ptr {
+         auto res = std::make_unique<server_http_res>();
+         try {
+             json result = json::array();
+             const bool browser = from_browser(req);
++            const bool foreign = foreign_page(req);
+             for (const auto & t : tools) {
+-                if ((browser && t->type() == "mcp") || hidden_from(req, *t) || local_only(req, *t)) {
++                if (foreign || (browser && t->type() == "mcp") || hidden_from(req, *t) || local_only(req, *t)) {
+                     continue;
+                 }
+                 result.push_back(t->to_json());
+@@ -2124,7 +2148,7 @@
+         return res;
+     };
+ 
+-    handle_post = [this, from_browser, hidden_from, local_only](const server_http_req & req) -> server_http_res_ptr {
++    handle_post = [this, from_browser, foreign_page, hidden_from, local_only](const server_http_req & req) -> server_http_res_ptr {
+         auto res = std::make_unique<server_tools_res>();
+         try {
+             json body = json::parse(req.body);
+@@ -2163,6 +2187,13 @@
+             }
+ 
+             server_tool & tool = find_tool(tools, tool_name, stream);
++            if (foreign_page(req)) {
++                // a page of another origin never gets this computer's tools, not even to ask for them
++                res->status = 403;
++                res->data   = safe_json_to_str(format_error_response(
++                    "tools are not run for pages of other origins", ERROR_TYPE_PERMISSION));
++                return res;
++            }
+             if (hidden_from(req, tool)) {
+                 // the same answer as a tool that does not exist
+                 throw std::invalid_argument(string_format("unknown tool \"%s\"", tool_name.c_str()));
+@@ -2170,7 +2201,7 @@
+             if (local_only(req, tool)) {
+                 res->status = 403;
+                 res->data   = safe_json_to_str(format_error_response(
+-                    "built-in tools run for this computer, or for others with the API key", ERROR_TYPE_PERMISSION));
++                    "tools run for this computer, or for others with the API key", ERROR_TYPE_PERMISSION));
+                 return res;
+             }
+             if (from_browser(req) && tool.type() == "mcp") {

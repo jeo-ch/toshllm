@@ -335,6 +335,9 @@ final class ChatStore: ObservableObject {
     /// user's conversations, nor their saved KV.
     private let storageDirectory: URL?
     nonisolated let headless: Bool
+    /// Set when a store file exists but could not be read *and* could not be preserved. Saves stay
+    /// off so the file on disk remains the only copy of that history.
+    private var saveBlocked = false
 
     private var fileURL: URL {
         let dir = storageDirectory ?? AppSupport.directory
@@ -2394,27 +2397,85 @@ final class ChatStore: ObservableObject {
 
     // MARK: persistence
 
-    private func load() {
-        if let data = try? Data(contentsOf: fileURL),
-           let list = try? JSONDecoder().decode([Conversation].self, from: data) {
-            conversations = list
-        } else if let data = try? Data(contentsOf: backupURL),
-                  let list = try? JSONDecoder().decode([Conversation].self, from: data) {
-            // Fallback to backup if primary is corrupted
-            conversations = list
-            AppLog.chat.error("ChatStore: loaded from backup after primary read failure")
-        } else {
-            AppLog.chat.error("ChatStore: failed to load conversations (primary + backup)")
+    /// What reading one store file found.
+    private enum StoreRead<T> {
+        /// No file: a fresh install, or a store that has not been written yet.
+        case absent
+        /// The file decoded; `skipped` entries could not be read and were left out.
+        case loaded([T], skipped: Int)
+        /// The file is there but this build cannot read it.
+        case unreadable
+    }
+
+    private static func readStore<T: Decodable>(_ type: T.Type, at url: URL) -> StoreRead<T> {
+        guard FileManager.default.fileExists(atPath: url.path) else { return .absent }
+        guard let data = try? Data(contentsOf: url),
+              let wrapped = try? JSONDecoder().decode([LenientDecodable<T>].self, from: data) else {
+            return .unreadable
         }
-        if let data = try? Data(contentsOf: projectsURL),
-           let list = try? JSONDecoder().decode([ChatProject].self, from: data) {
-            projects = list
-        } else if let data = try? Data(contentsOf: backupProjectsURL),
-                  let list = try? JSONDecoder().decode([ChatProject].self, from: data) {
-            projects = list
-            AppLog.chat.error("ChatStore: loaded projects from backup after primary read failure")
-        } else {
-            AppLog.chat.error("ChatStore: failed to load projects (primary + backup)")
+        let items = wrapped.compactMap(\.value)
+        return .loaded(items, skipped: wrapped.count - items.count)
+    }
+
+    /// Keeps a copy of a file the current build cannot read, so the next save cannot erase the
+    /// only version the user has. An unreadable primary is moved aside and the backup then gets
+    /// its turn; a file with some skipped entries stays in place and is copied.
+    private static func preserveUnreadable(_ url: URL, removeOriginal: Bool) -> Bool {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: url.path) else { return true }
+        let stamp = Int(Date().timeIntervalSince1970 * 1000)
+        let dest = url.deletingLastPathComponent()
+            .appendingPathComponent("\(url.lastPathComponent).corrupt-\(stamp)")
+        do {
+            if removeOriginal {
+                try fm.moveItem(at: url, to: dest)
+            } else {
+                try fm.copyItem(at: url, to: dest)
+            }
+            AppLog.chat.error("ChatStore: kept unreadable \(url.lastPathComponent, privacy: .public) as \(dest.lastPathComponent, privacy: .public)")
+            return true
+        } catch {
+            AppLog.chat.error("ChatStore: could not keep \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+    }
+
+    /// Applies one store file to `target`. False means the file could not be read.
+    private func apply<T>(_ read: StoreRead<T>, from url: URL, to target: inout [T]) -> Bool {
+        switch read {
+        case .absent:
+            return false
+        case .unreadable:
+            saveBlocked = !Self.preserveUnreadable(url, removeOriginal: true) || saveBlocked
+            return false
+        case .loaded(let items, let skipped):
+            target = items
+            if skipped > 0 {
+                _ = Self.preserveUnreadable(url, removeOriginal: false)
+                AppLog.chat.error("ChatStore: skipped \(skipped) unreadable record(s) in \(url.lastPathComponent, privacy: .public)")
+            }
+            return true
+        }
+    }
+
+    private func load() {
+        let hadPrimary = FileManager.default.fileExists(atPath: fileURL.path)
+        let hadBackup = FileManager.default.fileExists(atPath: backupURL.path)
+        if !apply(Self.readStore(Conversation.self, at: fileURL), from: fileURL, to: &conversations) {
+            if apply(Self.readStore(Conversation.self, at: backupURL), from: backupURL, to: &conversations) {
+                AppLog.chat.error("ChatStore: restored conversations from backup")
+            } else if hadPrimary || hadBackup {
+                AppLog.chat.error("ChatStore: failed to load conversations (primary + backup)")
+            }
+        }
+        let hadProjects = FileManager.default.fileExists(atPath: projectsURL.path)
+        let hadBackupProjects = FileManager.default.fileExists(atPath: backupProjectsURL.path)
+        if !apply(Self.readStore(ChatProject.self, at: projectsURL), from: projectsURL, to: &projects) {
+            if apply(Self.readStore(ChatProject.self, at: backupProjectsURL), from: backupProjectsURL, to: &projects) {
+                AppLog.chat.error("ChatStore: restored projects from backup")
+            } else if hadProjects || hadBackupProjects {
+                AppLog.chat.error("ChatStore: failed to load projects (primary + backup)")
+            }
         }
     }
 
@@ -2444,6 +2505,12 @@ final class ChatStore: ObservableObject {
     }
 
     func save() {
+        // A file this build could not read is only overwritten once a copy of it is on disk;
+        // otherwise the first save would be the last word on the user's history.
+        guard !saveBlocked else {
+            AppLog.chat.error("ChatStore: save skipped — an unreadable store file could not be preserved")
+            return
+        }
         // Debounce: cancel previous pending save and schedule a new one after 150ms,
         // so rapid successive calls (delete, rename, new conversation) collapse into
         // a single disk write. The delay has a 1s ceiling (see below) so a steady
