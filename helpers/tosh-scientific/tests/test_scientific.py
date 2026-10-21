@@ -370,6 +370,8 @@ def test_invalid_dimensions(h):
 
 def test_limits(h):
     assert code(h.call("linalg", "rank", matrix={"random": [3000, 3000]})) == "limit_exceeded"
+    # a one-element shape passes the element count and would still be a 100000 x 100000 matrix
+    assert code(h.call("linalg", "rank", matrix={"identity": 100000})) == "limit_exceeded"
     assert code(h.call("linalg", "rank", matrix={"random": [1001, 5]})) == "limit_exceeded"
     assert code(h.call("stats", "describe", values={"linspace": [0, 1, 5000000]})) == "limit_exceeded"
     assert code(h.call("signal", "fft", expression="sin(t)", sample_rate=1000000, duration=10)) == "limit_exceeded"

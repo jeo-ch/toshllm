@@ -307,6 +307,7 @@ def main():
     stdin = sys.stdin.buffer
     descriptor = stdin.fileno()
     pending = b""
+    skipping = False
     try:
         while True:
             readable, _, _ = select.select([descriptor], [], [], 5.0)
@@ -318,8 +319,18 @@ def main():
             if not chunk:
                 break
             pending += chunk
+            if skipping:
+                # the tail of a request already refused: drop it up to its newline, so the next
+                # request is not read from the middle of this one
+                _, newline, pending = pending.partition(b"\n")
+                if not newline:
+                    pending = b""
+                    continue
+                skipping = False
             if len(pending) > 2 * MAX_REQUEST_BYTES and b"\n" not in pending:
+                _respond(None, error={"code": -32600, "message": "request too large"})
                 pending = b""
+                skipping = True
                 continue
             while b"\n" in pending:
                 line, _, pending = pending.partition(b"\n")

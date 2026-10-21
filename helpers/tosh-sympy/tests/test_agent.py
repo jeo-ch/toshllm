@@ -558,6 +558,13 @@ def test_a_missing_input_for_an_approved_tool_gets_a_question():
     with_approved(["gis"], check)
 
 
+def test_a_number_past_the_float_range_does_not_kill_the_turn():
+    literals = policy.numbers("1e400, 9.3×10^500, 10^400")
+    assert [n[0] for n in literals] == ["1e400", "9.3×10^500", "10^400"], literals
+    assert not policy.grounded(literals[0], [1e308])
+    assert policy.ungrounded("1e400", [], []) == ["1e400"]
+
+
 def test_malformed_or_unknown_calls_never_run():
     def check():
         broken = {"id": "x1", "type": "function", "function": {"name": "gis_count", "arguments": "{\"layer\": \"par"}}

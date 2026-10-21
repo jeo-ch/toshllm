@@ -1,0 +1,39 @@
+diff --git a/tools/server/server-common.cpp b/tools/server/server-common.cpp
+--- a/tools/server/server-common.cpp
++++ b/tools/server/server-common.cpp
+@@ -109,12 +109,15 @@
+ //
+ 
+ bool same_secret(const std::string & a, const std::string & b) {
+-    if (a.size() != b.size()) {
+-        return false;
+-    }
+-    volatile unsigned char diff = 0;
+-    for (size_t i = 0; i < a.size(); ++i) {
+-        diff |= (unsigned char) (a[i] ^ b[i]);
++    // A different length is folded into the result instead of returning early, and the loop runs to
++    // the longer of the two: the time does not say where they differ, nor end at a wrong guess's
++    // first byte.
++    const size_t n = a.size() > b.size() ? a.size() : b.size();
++    volatile unsigned char diff = a.size() == b.size() ? 0 : 1;
++    for (size_t i = 0; i < n; ++i) {
++        const unsigned char ca = i < a.size() ? (unsigned char) a[i] : 0;
++        const unsigned char cb = i < b.size() ? (unsigned char) b[i] : 0;
++        diff |= (unsigned char) (ca ^ cb);
+     }
+     return diff == 0;
+ }
+diff --git a/tools/server/server-http.cpp b/tools/server/server-http.cpp
+--- a/tools/server/server-http.cpp
++++ b/tools/server/server-http.cpp
+@@ -227,9 +227,7 @@
+     });
+ 
+     if (params.api_keys.size() == 1) {
+-        const auto key = params.api_keys[0];
+-        const std::string substr = key.substr(std::max(static_cast<int>(key.length() - 4), 0));
+-        SRV_TRC("api_keys: ****%s\n", substr.c_str());
++        SRV_TRC("%s", "api_keys: 1 key loaded\n");
+     } else if (params.api_keys.size() > 1) {
+         SRV_TRC("api_keys: %zu keys loaded\n", params.api_keys.size());
+     }

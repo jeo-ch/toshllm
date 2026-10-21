@@ -1,0 +1,16 @@
+diff --git a/tools/server/server.cpp b/tools/server/server.cpp
+--- a/tools/server/server.cpp
++++ b/tools/server/server.cpp
+@@ -290,6 +290,12 @@
+                 [state]() { return state->cancelled.load(); },
+                 [state](const json & progress) {
+                     std::lock_guard<std::mutex> lock(state->mutex);
++                    // a client that reads slower than the agent writes must not grow this queue without
++                    // bound; the answer itself is kept in `out`, not here, so the oldest progress can go
++                    constexpr size_t max_queued = 1024;
++                    while (state->events.size() >= max_queued) {
++                        state->events.pop_front();
++                    }
+                     state->events.push_back(progress);
+                     state->cv.notify_all();
+                 });

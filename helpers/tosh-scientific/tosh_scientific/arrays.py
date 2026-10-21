@@ -62,7 +62,14 @@ def _generated(spec, name):
         if key in spec:
             return make(_size(spec[key], name))
     if "identity" in spec:
-        return np.eye(_size(spec["identity"], name)[0])
+        side = _size(spec["identity"], name)[0]
+        # The size check above counts the shape, not the matrix it becomes: a one-element shape of
+        # 1000000 passes it and np.eye would then ask for a million million values.
+        if side > MAX_MATRIX_SIDE:
+            raise SciError("limit_exceeded", f"'{name}': an identity matrix of {side} x {side} is "
+                           f"{side * side} values; the limit is {MAX_MATRIX_SIDE} per side",
+                           limit=MAX_MATRIX_SIDE)
+        return np.eye(side)
     raise SciError("invalid_arguments", f"'{name}': expected numbers, or one of linspace, arange, random, zeros, ones, identity")
 
 

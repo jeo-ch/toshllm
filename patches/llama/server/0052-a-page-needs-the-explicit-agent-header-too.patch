@@ -1,0 +1,16 @@
+diff --git a/tools/server/server.cpp b/tools/server/server.cpp
+--- a/tools/server/server.cpp
++++ b/tools/server/server.cpp
+@@ -255,9 +255,9 @@
+             return asked ? tosh_agent_refuse("a request for the Tosh agent cannot bring tools, functions, a grammar or a response format")
+                          : raw(req);
+         }
+-        // browsers mark every request with one of these; a page never gets the MCP tools for its own loop
+-        const bool browser = !tosh_header(req, "sec-fetch-site").empty() || !tosh_header(req, "origin").empty();
+-        if (!asked && params.mcp_agent_explicit && !browser) {
++        // the web chat sends X-Tosh-Agent (on or off) with every request it makes, so a page needs no
++        // exemption: without the header the request stays raw inference
++        if (!asked && params.mcp_agent_explicit) {
+             return raw(req);
+         }
+         std::string host = params.hostnames.empty() ? "127.0.0.1" : params.hostnames.front();

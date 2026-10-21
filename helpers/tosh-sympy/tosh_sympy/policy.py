@@ -333,6 +333,15 @@ def _decimal(text):
         return None
 
 
+def _scaled(mantissa, exponent):
+    """mantissa * 10**exponent, or ±inf when the result is past what a float holds. A number
+    written that way is still one the answer states, and no tool result grounds it."""
+    try:
+        return mantissa * 10 ** float(exponent)
+    except OverflowError:
+        return math.copysign(math.inf, mantissa) if mantissa else 0.0
+
+
 def numbers(text):
     """(text, value, significant digits, is a bare power of ten) for every number in the text."""
     found = []
@@ -341,11 +350,11 @@ def numbers(text):
         if m.group(1) is not None and m.group(2) is not None:
             mantissa = _decimal(m.group(1))
             if mantissa is not None:
-                found.append((whole, mantissa * 10 ** float(m.group(2)), _significant(m.group(1)), False))
+                found.append((whole, _scaled(mantissa, m.group(2)), _significant(m.group(1)), False))
         elif m.group(3) is not None:
-            found.append((whole, 10 ** float(m.group(3)), 1, True))
+            found.append((whole, _scaled(1, m.group(3)), 1, True))
         elif m.group(4) is not None:
-            found.append((whole, float(m.group(4)) * 10 ** float(m.group(5)), _significant(m.group(4)), False))
+            found.append((whole, _scaled(float(m.group(4)), m.group(5)), _significant(m.group(4)), False))
         else:
             value = _decimal(whole)
             if value is not None:
@@ -358,6 +367,9 @@ def grounded(literal, values):
     as the 6 of 6ζ(4) is not taken for a rounding: it has to be stated as it is."""
     text, x, digits, power = literal
     x = abs(x)
+    if not math.isfinite(x):
+        # a number past the float range: no finite result can state it
+        return False
     rounds = digits >= 3 or any(c in text for c in ".,eE^×*")
     for value in values:
         value = abs(value)
@@ -374,6 +386,9 @@ def grounded(literal, values):
                 return True
             continue
         unit = 10 ** (exponent - digits + 1)
+        if unit == 0:
+            # a rounding unit below the smallest float: nothing to compare against
+            continue
         for candidate in (round(value / unit) * unit, math.trunc(value / unit) * unit):
             if abs(x - candidate) <= unit * 1e-3:
                 return True

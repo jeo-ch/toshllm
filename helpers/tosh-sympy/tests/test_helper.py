@@ -671,6 +671,20 @@ def test_protocol(h):
     assert h.rpc("ping")["result"] == {}
 
 
+def test_an_oversized_request_is_refused_and_the_stream_resyncs(helper):
+    # The cap used to drop the buffer silently: the caller waited forever and the rest of the line
+    # was read as a new request. It now answers, and skips to the next newline. No newline yet:
+    # the cap has to answer on its own, before the line is complete.
+    helper.process.stdin.write("{" + " " * (2 * 64 * 1024 + 1024))
+    helper.process.stdin.flush()
+    reply = json.loads(helper.process.stdout.readline())
+    assert reply["id"] is None and reply["error"]["code"] == -32600, reply
+    # The rest of the refused line must be skipped up to its newline, not read as a request.
+    helper.process.stdin.write("\n")
+    helper.process.stdin.flush()
+    assert helper.rpc("tools/list")["result"]["tools"], "the next request still gets its answer"
+
+
 def measure():
     started = time.monotonic()
     helper = Helper()
