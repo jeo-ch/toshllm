@@ -25,6 +25,7 @@ enum ChatMapTool {
             "type": "function",
             "function": [
                 "name": toolName,
+                // swiftlint:disable:next line_length
                 "description": "Draws a map under your answer from latitude and longitude. Use it when the user asks where places are, wants to see places, a route or an area, or gives coordinates. Each place, well, site or address is its own feature of kind point; use a line only for a route or path the user asks for, and an area only for a region, lot or boundary. A line is straight between its points: for a route by road use show_road_route when you have it, and otherwise draw the stops joined by a straight line, never a made-up road, and say it is a straight line, not the road. Positions you estimate yourself are shown as approximate.",
                 "parameters": [
                     "type": "object",

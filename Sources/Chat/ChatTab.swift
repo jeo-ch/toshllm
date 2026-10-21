@@ -11,7 +11,7 @@ import Charts
 /// shortcut buttons can land on a specific section before opening it.
 @MainActor
 final class ControlPanelState: ObservableObject {
-    @Published var section: Section_ = .dashboard
+    @Published var section: AppSection = .dashboard
     @Published var settingsAnchor: SettingsAnchor?
     @Published var serverAnchor: UUID?
     @Published var serverNavigationID = UUID()
@@ -276,7 +276,7 @@ struct ChatMainView: View {
         }
     }
 
-    private func openControl(_ section: Section_? = nil) {
+    private func openControl(_ section: AppSection? = nil) {
         if let section { control.section = section }
         openWindow(id: "control")
     }

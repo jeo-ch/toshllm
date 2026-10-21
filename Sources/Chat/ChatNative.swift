@@ -338,6 +338,9 @@ final class ChatStore: ObservableObject {
     /// Set when a store file exists but could not be read *and* could not be preserved. Saves stay
     /// off so the file on disk remains the only copy of that history.
     private var saveBlocked = false
+    /// True while the history is being read off the main thread. A save would write an empty
+    /// list over the file that is still being decoded, so it waits for the read to land.
+    private var loading = false
 
     private var fileURL: URL {
         let dir = storageDirectory ?? AppSupport.directory
@@ -365,16 +368,22 @@ final class ChatStore: ObservableObject {
     init(storageDirectory: URL? = nil) {
         self.storageDirectory = storageDirectory
         headless = storageDirectory != nil
-        load()
-        if !headless { Self.live = self }
-        // Open ready to type a new message: reuse the most recent empty
-        // conversation or start a fresh one. Earlier chats stay one click away.
-        if let empty = conversations.first(where: { $0.messages.isEmpty }) {
-            currentID = empty.id
+        if headless {
+            load()
         } else {
-            newConversation()
+            Self.live = self
+            // Reading and decoding the whole history is the slow part of a launch. It runs off
+            // the main thread; saves stay off until it lands, so an empty list cannot overwrite
+            // the file it has not read yet.
+            loading = true
+            let primary = fileURL, backup = backupURL
+            let projects = projectsURL, projectsBackup = backupProjectsURL
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let read = Self.readAll(primary: primary, backup: backup,
+                                        projects: projects, projectsBackup: projectsBackup)
+                await self?.applyAll(read)
+            }
         }
-        if storageDirectory == nil { pruneOrphanSlots() }
         // A fresh engine has empty KV slots: forget which conversation slot 0
         // held, so the next turn restores the active one's persisted cache.
         engineObserver = NotificationCenter.default.addObserver(
@@ -2407,7 +2416,7 @@ final class ChatStore: ObservableObject {
         case unreadable
     }
 
-    private static func readStore<T: Decodable>(_ type: T.Type, at url: URL) -> StoreRead<T> {
+    private nonisolated static func readStore<T: Decodable>(_ type: T.Type, at url: URL) -> StoreRead<T> {
         guard FileManager.default.fileExists(atPath: url.path) else { return .absent }
         guard let data = try? Data(contentsOf: url),
               let wrapped = try? JSONDecoder().decode([LenientDecodable<T>].self, from: data) else {
@@ -2420,7 +2429,7 @@ final class ChatStore: ObservableObject {
     /// Keeps a copy of a file the current build cannot read, so the next save cannot erase the
     /// only version the user has. An unreadable primary is moved aside and the backup then gets
     /// its turn; a file with some skipped entries stays in place and is copied.
-    private static func preserveUnreadable(_ url: URL, removeOriginal: Bool) -> Bool {
+    private nonisolated static func preserveUnreadable(_ url: URL, removeOriginal: Bool) -> Bool {
         let fm = FileManager.default
         guard fm.fileExists(atPath: url.path) else { return true }
         let stamp = Int(Date().timeIntervalSince1970 * 1000)
@@ -2458,11 +2467,27 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    private func load() {
+    /// The four files a launch reads, decoded together off the main thread.
+    private struct StoreReads {
+        let conversations: StoreRead<Conversation>
+        let conversationsBackup: StoreRead<Conversation>
+        let projects: StoreRead<ChatProject>
+        let projectsBackup: StoreRead<ChatProject>
+    }
+
+    private nonisolated static func readAll(primary: URL, backup: URL,
+                                            projects: URL, projectsBackup: URL) -> StoreReads {
+        StoreReads(conversations: readStore(Conversation.self, at: primary),
+                   conversationsBackup: readStore(Conversation.self, at: backup),
+                   projects: readStore(ChatProject.self, at: projects),
+                   projectsBackup: readStore(ChatProject.self, at: projectsBackup))
+    }
+
+    private func applyAll(_ read: StoreReads) {
         let hadPrimary = FileManager.default.fileExists(atPath: fileURL.path)
         let hadBackup = FileManager.default.fileExists(atPath: backupURL.path)
-        if !apply(Self.readStore(Conversation.self, at: fileURL), from: fileURL, to: &conversations) {
-            if apply(Self.readStore(Conversation.self, at: backupURL), from: backupURL, to: &conversations) {
+        if !apply(read.conversations, from: fileURL, to: &conversations) {
+            if apply(read.conversationsBackup, from: backupURL, to: &conversations) {
                 AppLog.chat.error("ChatStore: restored conversations from backup")
             } else if hadPrimary || hadBackup {
                 AppLog.chat.error("ChatStore: failed to load conversations (primary + backup)")
@@ -2470,13 +2495,33 @@ final class ChatStore: ObservableObject {
         }
         let hadProjects = FileManager.default.fileExists(atPath: projectsURL.path)
         let hadBackupProjects = FileManager.default.fileExists(atPath: backupProjectsURL.path)
-        if !apply(Self.readStore(ChatProject.self, at: projectsURL), from: projectsURL, to: &projects) {
-            if apply(Self.readStore(ChatProject.self, at: backupProjectsURL), from: backupProjectsURL, to: &projects) {
+        if !apply(read.projects, from: projectsURL, to: &projects) {
+            if apply(read.projectsBackup, from: backupProjectsURL, to: &projects) {
                 AppLog.chat.error("ChatStore: restored projects from backup")
             } else if hadProjects || hadBackupProjects {
                 AppLog.chat.error("ChatStore: failed to load projects (primary + backup)")
             }
         }
+        finishLoading()
+    }
+
+    /// Runs once the history is in memory: headless stores read synchronously, the app's store
+    /// after its detached read lands.
+    private func finishLoading() {
+        loading = false
+        // Open ready to type a new message: reuse the most recent empty
+        // conversation or start a fresh one. Earlier chats stay one click away.
+        if let empty = conversations.first(where: { $0.messages.isEmpty }) {
+            currentID = empty.id
+        } else {
+            newConversation()
+        }
+        if storageDirectory == nil { pruneOrphanSlots() }
+    }
+
+    private func load() {
+        applyAll(Self.readAll(primary: fileURL, backup: backupURL,
+                              projects: projectsURL, projectsBackup: backupProjectsURL))
     }
 
     // Serial queue: keeps writes ordered while encoding off the main thread,
@@ -2505,6 +2550,9 @@ final class ChatStore: ObservableObject {
     }
 
     func save() {
+        // Until the history has been read, `conversations` is empty: a save now would write that
+        // empty list over the file still being decoded.
+        guard !loading else { return }
         // A file this build could not read is only overwritten once a copy of it is on disk;
         // otherwise the first save would be the last word on the user's history.
         guard !saveBlocked else {

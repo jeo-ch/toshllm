@@ -130,7 +130,7 @@ final class AsyncPipeline: ObservableObject {
             let fraction = min(1.0, Double(writtenBytes) / Double(totalBytes))
             if fraction - lastReported >= 0.01 {
                 lastReported = fraction
-                await progress(fraction)
+                progress(fraction)
             }
         }
 
@@ -146,7 +146,7 @@ final class AsyncPipeline: ObservableObject {
         }
         try fileManager.moveItem(at: partialURL, to: destination)
         
-        await progress(1.0)
+        progress(1.0)
         return destination
     }
     
@@ -209,7 +209,7 @@ final class AsyncPipeline: ObservableObject {
         
         // Parse streaming response
         if let text = String(data: data, encoding: .utf8) {
-            await stream(text)
+            stream(text)
             return text
         }
         
@@ -378,9 +378,9 @@ extension AsyncPipeline {
                     contextLength: 16384
                 ) { _ in }
                 
-                await completion(.success(result))
+                completion(.success(result))
             } catch {
-                await completion(.failure(error))
+                completion(.failure(error))
             }
         }
     }

@@ -351,8 +351,8 @@ actor ToshMCPService {
             throw MCPError.remote("HTTP \(status)")
         }
         var data = Data()
-        for try await byte in bytes {
-            if data.count < 2_000_000 { data.append(byte) }
+        for try await byte in bytes where data.count < 2_000_000 {
+            data.append(byte)
         }
         guard (200..<300).contains(status) else {
             throw MCPError.remote("HTTP \(status): \(String(decoding: data.prefix(1_000), as: UTF8.self))")

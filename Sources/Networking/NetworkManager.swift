@@ -8,15 +8,34 @@ import Foundation
 /// Replace ad-hoc `URLSession.shared` usage with `NetworkManager.session` so
 /// proxy settings and timeouts apply consistently across the app.
 enum NetworkManager {
+    private static let lock = NSLock()
+    private static var cached: URLSession?
+    private static var cachedProxy = ""
+
     /// Shared session with proxy and timeout settings applied.
-    static let session: URLSession = {
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 600
-        config.waitsForConnectivity = true
-        applyProxy(to: config)
-        return URLSession(configuration: config)
-    }()
+    ///
+    /// Rebuilt when the proxy settings change, so a change applies to the next request instead of
+    /// waiting for a relaunch. The session it replaces finishes its in-flight tasks and then goes.
+    static var session: URLSession {
+        lock.lock()
+        defer { lock.unlock() }
+        let proxy = proxySignature()
+        if let cached, proxy == cachedProxy { return cached }
+        let previous = cached
+        let fresh = URLSession(configuration: makeConfiguration())
+        cached = fresh
+        cachedProxy = proxy
+        previous?.finishTasksAndInvalidate()
+        return fresh
+    }
+
+    /// What the proxy settings say, cheap enough to read on every access.
+    private static func proxySignature() -> String {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: SettingsKeys.proxyEnabled) else { return "off" }
+        let host = defaults.string(forKey: SettingsKeys.proxyHost) ?? ""
+        return host + ":" + String(defaults.integer(forKey: SettingsKeys.proxyPort))
+    }
 
     /// Creates a new URLSession inheriting the global proxy settings.
     static func makeSession(timeout: TimeInterval = 600) -> URLSession {

@@ -17,7 +17,7 @@ final class SymPyEngineIntegrationTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent()
     }
 
-    override class func setUp() {
+    override static func setUp() {
         super.setUp()
         let environment = ProcessInfo.processInfo.environment
         guard let model = environment["TOSH_SYMPY_E2E_MODEL"] else {
@@ -54,7 +54,7 @@ final class SymPyEngineIntegrationTests: XCTestCase {
         skipReason = "The engine did not become ready"
     }
 
-    override class func tearDown() {
+    override static func tearDown() {
         server?.terminate()
         server?.waitUntilExit()
         server = nil

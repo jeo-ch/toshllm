@@ -49,7 +49,7 @@ final class MathGroundingTests: XCTestCase {
         XCTAssertTrue(note.contains("limits: [0, +oo)") && !note.contains("pi**4"), note)
         XCTAssertEqual(step(messages, "", closing: MathTranscriptionService.unresolvedMessage()), .finalize(note))
         // the last round can only state it; with nothing usable Tosh states it itself
-        guard case .replace(let safe) = step(messages, " ", finalizing: true) else { return XCTFail() }
+        guard case .replace(let safe) = step(messages, " ", finalizing: true) else { return XCTFail("expected .replace for a note with nothing usable") }
         XCTAssertTrue(safe.contains("6.49393940227") && safe.contains("9.32511651849e-11"), safe)
         XCTAssertTrue(safe.contains("Integral(x**3/(exp(x) - 1), (x, 0, oo))") && !safe.contains("pi"), safe)
         XCTAssertEqual(step(messages, "La forma exacta es $\\pi^4/15$.", finalizing: true), .replace(safe))
@@ -67,7 +67,7 @@ final class MathGroundingTests: XCTestCase {
     func testTwoValidResultsAreBothKept() throws {
         let messages = turn(round("c1", "scientific_compute", integral), round("c2", "sympy_expression", factored),
                             round("c3", "sympy_expression", memory))
-        guard case .finalize(let note) = MathGrounding.stopStep(messages: messages) else { return XCTFail() }
+        guard case .finalize(let note) = MathGrounding.stopStep(messages: messages) else { return XCTFail("expected .finalize for two validated results") }
         XCTAssertTrue(note.contains("6.49393940227") && note.contains("(x - 3)*(x - 2)"), note)
         let results = MathLedger.results(messages, from: MathLedger.turnStart(messages))
         XCTAssertEqual(results.map(\.operation), ["integrate", "factor"])
@@ -83,9 +83,9 @@ final class MathGroundingTests: XCTestCase {
     func testANewNumberInTheAnswerIsSentBack() throws {
         let messages = turn(round("c1", "scientific_compute", integral))
         let answer = "La integral vale 6.49393940227 y el error absoluto es $6\\times 10^{-12}$."
-        guard case .again(let note) = step(messages, answer) else { return XCTFail() }
+        guard case .again(let note) = step(messages, answer) else { return XCTFail("expected .again for a new number in the answer") }
         XCTAssertTrue(note.contains("6\\times 10^{-12}") && note.contains("value: 6.49393940227"), note)
-        guard case .replace(let safe) = step(messages, answer, regrounded: true) else { return XCTFail() }
+        guard case .replace(let safe) = step(messages, answer, regrounded: true) else { return XCTFail("expected .replace once the answer is regrounded") }
         XCTAssertFalse(safe.contains("10^{-12}"), safe)
     }
 
@@ -94,7 +94,7 @@ final class MathGroundingTests: XCTestCase {
         let missing = MathGrounding.ungrounded("El resultado exacto es $\\frac{\\pi^4}{15} \\approx 6.4939$, porque es $6\\zeta(4)$.",
                                                sources: [request], results: MathLedger.results(messages))
         XCTAssertEqual(Set(missing), ["15", "6", "π", "ζ"])
-        guard case .again = step(messages, "El resultado exacto es $\\pi^4/15$.") else { return XCTFail() }
+        guard case .again = step(messages, "El resultado exacto es $\\pi^4/15$.") else { return XCTFail("expected .again for an exact form from memory") }
     }
 
     func testADerivedValueNeedsAToolFirst() {
@@ -103,7 +103,7 @@ final class MathGroundingTests: XCTestCase {
         let times = #"{"success": true, "operation": "evaluate", "value": -14.0, "interpreted_input": ["expression: -2*7"], "result_kind": "approximate"}"#
         let answer = "The determinant is -2, and multiplied by 7 it is -14."
         var messages = [ChatMessage(role: "user", content: ask)] + round("c1", "sympy_matrix", determinant)
-        guard case .again(let note) = step(messages, answer) else { return XCTFail() }
+        guard case .again(let note) = step(messages, answer) else { return XCTFail("expected .again before the derived value has a tool result") }
         XCTAssertTrue(note.hasPrefix("Your answer states values that are not in the request or in a validated tool result: 14."), note)
         messages += round("c2", "scientific_compute", times)
         XCTAssertEqual(step(messages, answer), .keep)

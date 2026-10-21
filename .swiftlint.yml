@@ -30,8 +30,6 @@ disabled_rules:
   - switch_case_alignment        # Mixed style in existing code
   - closure_parameter_position   # Closure parameter formatting
   - void_function_in_ternary     # Used in SwiftUI conditionals
-  - prefer_for_where             # if-inside-for used intentionally
-  - comma_spacing                # Comma formatting
   - opening_brace                # Brace formatting
 
 opt_in_rules:
@@ -46,12 +44,13 @@ opt_in_rules:
   - prohibited_super_call
   - redundant_nil_coalescing
   - sorted_first_last
-  - unused_import                # Remove unused imports
   - yoda_condition               # Prefer constant on left side of comparison
 
 excluded:
   - .build
   - DerivedData
+  - vendor
+  - scripts
   - '*/.build/*'
   - "**/*.generated.swift"
 
@@ -65,38 +64,5 @@ type_name:
   min_length: 2
   max_length: 60
 
-identifier_name:
-  min_length:
-    warning: 1
-  max_length:
-    warning: 60
-  excluded:
-    - id
-    - x
-    - y
-    - z
-    - i
-    - j
-    - k
-    - n
-    - t
-    - db
-    - vm
-    - ok
-    - a
-    - b
-    - c
-    - d
-    - f
-    - g
-    - h
-    - l
-    - m
-    - p
-    - q
-    - r
-    - s
-    - v
-    - w
-    - e
-    - u
+analyzer_rules:
+  - unused_import

@@ -157,7 +157,7 @@ struct WrappingFilterLayout: Layout {
         var y = bounds.minY
         for row in rows {
             var x = bounds.minX
-            for _ in 0..<row.count {
+            for _ in 0..<row.columns {
                 let size = subviews[index].sizeThatFits(.unspecified)
                 subviews[index].place(at: CGPoint(x: x, y: y),
                                       anchor: .topLeading, proposal: ProposedViewSize(size))
@@ -173,22 +173,22 @@ struct WrappingFilterLayout: Layout {
         var row = Row()
         for subview in subviews {
             let size = subview.sizeThatFits(.unspecified)
-            let nextWidth = row.count == 0 ? size.width : row.width + spacing + size.width
-            if row.count > 0 && nextWidth > width {
+            let nextWidth = row.columns == 0 ? size.width : row.width + spacing + size.width
+            if row.columns > 0 && nextWidth > width {
                 rows.append(row)
                 row = Row()
             }
-            row.width = row.count == 0 ? size.width : row.width + spacing + size.width
+            row.width = row.columns == 0 ? size.width : row.width + spacing + size.width
             row.height = max(row.height, size.height)
-            row.count += 1
+            row.columns += 1
         }
-        if row.count > 0 { rows.append(row) }
+        if row.columns > 0 { rows.append(row) }
         return rows
     }
 
     private struct Row {
         var width: CGFloat = 0
         var height: CGFloat = 0
-        var count = 0
+        var columns = 0
     }
 }

@@ -182,6 +182,20 @@ final class GatewayServer: ObservableObject {
         guard let index = channels.firstIndex(where: { $0.type == config.type }) else { return }
         channels[index] = config
     }
+
+    /// Compares two keys without stopping at the first different byte, and folds a length
+    /// difference into the result instead of returning early.
+    nonisolated private static func sameSecret(_ a: String, _ b: String) -> Bool {
+        let x = Array(a.utf8), y = Array(b.utf8)
+        var diff = x.count == y.count ? 0 : 1
+        let n = max(x.count, y.count)
+        for i in 0..<n {
+            let cx = i < x.count ? x[i] : 0
+            let cy = i < y.count ? y[i] : 0
+            diff |= Int(cx ^ cy)
+        }
+        return diff == 0
+    }
     
     /// Process an incoming request.
     func processRequest(
@@ -194,7 +208,7 @@ final class GatewayServer: ObservableObject {
         // Validate API key
         if let channelConfig = channels.first(where: { $0.type == channel }),
            let expectedKey = channelConfig.apiKey {
-            guard let apiKey, apiKey == expectedKey else {
+            guard let apiKey, Self.sameSecret(apiKey, expectedKey) else {
                 throw GatewayError.authenticationFailed
             }
         }

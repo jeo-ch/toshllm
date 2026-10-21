@@ -14,7 +14,7 @@ import SwiftUI
     }
 }
 
-enum Section_: String, CaseIterable, Identifiable {
+enum AppSection: String, CaseIterable, Identifiable {
     case dashboard, chat, models, benchmarks, docs, logs, chatSettings, settings, about
     var id: String { rawValue }
     var icon: String {

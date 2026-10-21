@@ -827,7 +827,9 @@ struct SettingsView: View {
                                     + splitGroupOptions.map { .init(value: $0, title: "\($0)") }, width: 130)
                             }
                             .settingsGlyph("grid")
+                            // swiftlint:disable:next line_length
                             .infoTip(loc.t("Organiza las GPUs en una malla: dentro de cada fila el modelo se corta por tensores y entre filas por capas. Así cada tarjeta solo espera a las de su fila, no a todas, que es lo que hunde la generación al pasar de dos tarjetas a cuatro. Medido en cuatro Radeon Pro W6800X con un 8B: con filas de dos genera 57 contra 30 con las cuatro juntas. Lo que consigue es usar cuatro tarjetas a la velocidad de dos, no ir más rápido que dos: una fila de dos rinde igual que un reparto por tensores con solo dos tarjetas (1624 contra 1667 leyendo, 57 contra 58 generando). Sirve para ganar la VRAM de cuatro sin pagar su lentitud.",
+                                        // swiftlint:disable:next line_length
                                         "Arranges the GPUs as a mesh: inside a row the model is cut by tensors, between rows by layers. Each card then waits only for the others in its row instead of all of them, which is what sinks generation when going from two cards to four. Measured on four Radeon Pro W6800X with an 8B: rows of two generate 57 against 30 with all four together. What it buys is four cards at the speed of two, not more speed than two: a row of two matches a plain tensor split on two cards (1624 against 1667 reading, 57 against 58 generating). Use it to get the VRAM of four without their slowdown."))
                         }
                         Toggle(loc.t("Traspaso rápido entre GPUs",
@@ -839,7 +841,9 @@ struct SettingsView: View {
                                      "Infinity Fabric Link between GPUs"), isOn: $mgpuPeer)
                             .disabled(!hasPeerLink)
                             .settingsGlyph("link")
+                            // swiftlint:disable:next line_length
                             .infoTip(loc.t("Si dos GPUs del reparto comparten un puente Infinity Fabric (las dos mitades de una W6800X Duo o Vega II Duo, o dos tarjetas unidas por el puente externo), copia las activaciones directamente entre ellas en vez de pasar por la RAM del sistema. Repartiendo por tensores acelera la lectura del prompt un 16% sin costar generación, medido en cuatro Radeon Pro Vega II. Necesita el traspaso rápido encendido: por sí solo baja la generación a la mitad. Si el equipo no lo soporta, la copia vuelve sola al método seguro.",
+                                        // swiftlint:disable:next line_length
                                         "If two GPUs in the split share an Infinity Fabric bridge (the two halves of a W6800X Duo or Vega II Duo, or two cards joined by the external bridge), copies activations directly between them instead of through system RAM. When splitting by tensors it reads the prompt 16% faster at no cost to generation, measured on four Radeon Pro Vega II. It needs the fast hand-off on: on its own it halves generation. If the machine doesn't support it, the copy falls back to the safe path on its own."))
                         if !hasPeerLink {
                             Label(loc.t("No se detecta ningún puente entre estas GPUs, así que no hay nada que activar. Metal las pondría en un mismo grupo de pares si lo hubiera.",
@@ -1140,7 +1144,9 @@ struct SettingsView: View {
                                 .init(value: $0, title: ServerSettings.ubatchLabel($0, loc: loc))
                             })
                         }
+                        // swiftlint:disable:next line_length
                         .infoTip(loc.t("Cuántos tokens de prompt procesa la GPU de una vez. Solo aporta en modelos MoE, y cuánto depende de dónde estén los expertos. Con expertos en CPU cada micro-lote los sube por el bus, así que uno más grande paga ese viaje menos veces: medido en una Radeon RX 6700 XT, leer 2048 tokens pasa de 475 a 886 tokens por segundo en un 35B, y de 546 a 1133 en un 30B. Con el modelo entero en la tarjeta la mejora ronda el 10%, igual con una GPU que repartido entre varias. La generación no cambia en ningún caso. A cambio ocupa VRAM, cerca de 0.5 GB por cada 512 tokens de micro-lote, así que si vas justo tendrás que bajar los expertos en CPU para compensar.",
+                                    // swiftlint:disable:next line_length
                                     "How many prompt tokens the GPU processes at once. It only helps MoE models, and how much depends on where the experts live. With experts on the CPU every micro-batch uploads them over the bus, so a larger one pays that trip fewer times: measured on a Radeon RX 6700 XT, reading 2048 tokens goes from 475 to 886 tokens per second on a 35B, and from 546 to 1133 on a 30B. With the model whole on the card the gain is around 10%, the same on one GPU as split across several. Generation is unchanged in every case. In exchange it takes VRAM, around 0.5 GB per 512 tokens of micro-batch, so if you are tight you will have to lower the experts on CPU to make room."))
                     }
                 }

@@ -71,7 +71,9 @@ enum MathIntent: String, Equatable, CaseIterable {
     private static let precision = regex(#"\b\d+\s*(?:decimal|decimales|cifras|d[ií]gitos|digits|significant|significativas|places)\b|\b(?:tolerance|tolerancia|precisi[oó]n|precision|accuracy)\s*(?:of|de|=|:)?\s*\d|\bto\s+\d+\s+(?:dp|sf)\b"#)
 
     // the stems are short on purpose: they match the forms of a verb in both languages
+    // swiftlint:disable:next line_length
     private static let computeWords = regex(#"\b(?:calcul|comput|solv|resuelv|resolv|evalu|eval[uú]|integr|deriv|differentiat|diferenci|simplif|factori|expand|desarroll|halla|hallar|find|determin[ae]|obt[eé]n|obtain|verif|comprueb|check|aproxim|approximat|ajust|fit|regres|interpol|minimi|maximi|optimi|estim|cu[aá]nto|cu[aá]nta|how much|how many|what is the value|cu[aá]l es el valor|value of|valor de|result|resultado|give me|dame|dime|tell me|ra[ií]ces de|roots? of|zeros? of|ceros de|probabilidad de que|probability that)"#)
+    // swiftlint:disable:next line_length
     private static let objectWords = regex(#"\b(?:ecuaci[oó]n diferencial|differential equation|integral|derivad|derivative|diferencial|ecuaci[oó]n|equation|sistema de|system of|matri[zx]|matrices|determinant|autovalor|eigen|valor(?:es)? propio|inversa|inverse|l[ií]mite|limit|serie|series|sumatori|ra[ií]z|root|fft|fourier|laplace|se[nñ]al|signal|filtro|filter|regresi[oó]n|regression|media|mean|mediana|median|promedio|average|desviaci[oó]n|deviation|varianza|variance|percentil|percentile|probabilidad|probability|distribuci[oó]n|distribution|edo|ode|ecuaci[oó]n diferencial|differential equation|transformada|transform|polinomio|polynomial|vector|producto escalar|dot product|cross product|producto vectorial|svd|valores singulares|singular value|m[ií]nimos cuadrados|least squares|t-test|prueba t|chi|correlaci[oó]n|correlation|interpolaci[oó]n|interpolation|gradiente|gradient|hessian|jacobian|optimizaci[oó]n|optimization|m[ií]nimo|minimum|m[aá]ximo|maximum|logaritmo|logarithm|seno|coseno|tangente|sine|cosine|tangent|pi\b|π|infinit)"#)
     private static let conceptWords = regex(#"\b(?:qu[eé] es|qu[eé] son|what is an?\b|what are|what's an?\b|expl[ií]ca|explain|por qu[eé]|why|c[oó]mo funciona|how does|how do|qu[eé] significa|what does .{1,40}(?:mean|represent)|qu[eé] representa|represent|diferencia entre|difference between|intuici[oó]n|intuition|para qu[eé] sirve|what is .{1,30} used for|useful|[uú]til|defin|concept|concepto|meaning|significado|historia|history|ejemplo de|example of|describe|describ)"#)
 
@@ -101,6 +103,7 @@ enum MathIntent: String, Equatable, CaseIterable {
 
     // asking the model when the text alone cannot tell
 
+    // swiftlint:disable:next line_length
     static let instructions = "Classify the user's message for a math assistant. Answer with one word. computational: it asks for a specific mathematical or scientific result, such as a value, a solution, a simplification, a fit or a statistic, even inside prose or an explanation. conceptual: it asks to explain, define or compare ideas and needs no specific result. ambiguous: it asks for a calculation but leaves out what the calculation needs. no_math: anything else, including numbers that are not to be computed."
     static let grammar = #"root ::= "computational" | "conceptual" | "ambiguous" | "no_math""#
 

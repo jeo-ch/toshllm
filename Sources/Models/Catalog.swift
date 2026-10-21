@@ -216,13 +216,13 @@ enum Catalog {
 
         let candidates: [(Recommendation.Role, (CatalogModel, MemoryEstimate)?)] = [
             // Fastest tokens/s: smallest fully-GPU model.
-            (.fast,     fullGPU.min { $0.0.spec.paramsB < $1.0.spec.paramsB }),
+            (.fast, fullGPU.min { $0.0.spec.paramsB < $1.0.spec.paramsB }),
             // Balanced everyday driver: best 8–9B (or largest fully-GPU model).
             (.balanced, (daily.isEmpty ? fullGPU : daily).max { $0.0.spec.paramsB < $1.0.spec.paramsB }),
             // Most capable that still runs well: largest dense or hybrid MoE.
-            (.quality,  usable.max  { $0.0.spec.paramsB < $1.0.spec.paramsB }),
+            (.quality, usable.max { $0.0.spec.paramsB < $1.0.spec.paramsB }),
             // Best coding model that runs well.
-            (.coding,   usable.filter { $0.0.name.localizedCaseInsensitiveContains("coder") }
+            (.coding, usable.filter { $0.0.name.localizedCaseInsensitiveContains("coder") }
                               .max { $0.0.spec.paramsB < $1.0.spec.paramsB }),
         ]
 

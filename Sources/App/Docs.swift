@@ -126,7 +126,8 @@ La app incluye **dos motores** y admite externos (Ajustes → Avanzado):
 
 
 
-El interruptor **Kernel Flash Attention AMD** ejecuta la atención —tanto el procesamiento del prompt como la generación— en la GPU AMD mediante un kernel Metal propio (cabezas de 64, 72, 128, 256 y 512 —cubre Gemma 4 y los encoders de visión—; tipos de KV f16, q8_0, q4_0 en cualquier combinación claves/valores). Es clave con KV cuantizado: como esos tipos **obligan** a Flash Attention, sin el kernel la atención cae a CPU y se desploma con la profundidad; con el kernel todo se queda en GPU y la generación aguanta la profundidad (ej. ~33 t/s a 4k de contexto en un 8B).
+El interruptor **Kernel Flash Attention AMD** ejecuta la atención —tanto el procesamiento del prompt como la generación— en la GPU AMD mediante un kernel Metal propio (cabezas de 64, 72, 128, 256 y 512 —cubre Gemma 4 y los encoders de visión—; tipos de KV f16, q8_0, q4_0 en cualquier
+combinación claves/valores). Es clave con KV cuantizado: como esos tipos **obligan** a Flash Attention, sin el kernel la atención cae a CPU y se desploma con la profundidad; con el kernel todo se queda en GPU y la generación aguanta la profundidad (ej. ~33 t/s a 4k de contexto en un 8B).
 
 **Externo** — Cualquier binario `llama-server` tuyo, para probar builds propias.
 
@@ -205,7 +206,8 @@ Endpoints útiles:
 
 También hay un chat web minimalista en la raíz (`http://127.0.0.1:8080`) para usar desde el navegador.
 
-**Peticiones simultáneas:** el ajuste del mismo nombre (Ajustes → Inferencia y contexto) controla cuántas peticiones concurrentes acepta el servidor. En 1 (el valor por defecto), las peticiones se encolan una tras otra en vez de competir por la GPU, y una petición cortada por timeout retoma el procesamiento donde se quedó en el siguiente intento. Con 2 o más, "Contexto separado por petición" da a cada una su parte del contexto: genera más rápido con varias a la vez, pero ninguna conversación pasa de su parte.
+**Peticiones simultáneas:** el ajuste del mismo nombre (Ajustes → Inferencia y contexto) controla cuántas peticiones concurrentes acepta el servidor. En 1 (el valor por defecto), las peticiones se encolan una tras otra en vez de competir por la GPU, y una
+petición cortada por timeout retoma el procesamiento donde se quedó en el siguiente intento. Con 2 o más, "Contexto separado por petición" da a cada una su parte del contexto: genera más rápido con varias a la vez, pero ninguna conversación pasa de su parte.
 
 #### Conectar clientes externos
 
@@ -393,7 +395,8 @@ The app ships **two engines** and supports external ones (Settings → Advanced)
 
 
 
-The **AMD Flash Attention kernel** toggle runs attention — both prompt processing and generation — on the AMD GPU via a custom Metal kernel (head dims 64, 72, 128, 256 and 512 — covers Gemma 4 and the vision encoders; KV types f16, q8_0, q4_0 in any keys/values combination). It matters most with quantized KV: those types **require** Flash Attention, so without the kernel attention falls back to the CPU and collapses with depth; with it everything stays on the GPU and generation holds up with depth (e.g. ~33 t/s at 4k context on an 8B).
+The **AMD Flash Attention kernel** toggle runs attention — both prompt processing and generation — on the AMD GPU via a custom Metal kernel (head dims 64, 72, 128, 256 and 512 — covers Gemma 4 and the vision encoders; KV types f16, q8_0, q4_0 in any keys/values
+combination). It matters most with quantized KV: those types **require** Flash Attention, so without the kernel attention falls back to the CPU and collapses with depth; with it everything stays on the GPU and generation holds up with depth (e.g. ~33 t/s at 4k context on an 8B).
 
 **External** — Any `llama-server` binary of yours, for testing custom builds.
 

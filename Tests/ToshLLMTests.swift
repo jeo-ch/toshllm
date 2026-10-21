@@ -630,11 +630,11 @@ final class ResumableDownloadTests: XCTestCase {
         static let lock = NSLock()
         nonisolated(unsafe) static var observedRanges: [String?] = []
 
-        override class func canInit(with request: URLRequest) -> Bool {
+        override static func canInit(with request: URLRequest) -> Bool {
             request.url?.host == "resume.test"
         }
 
-        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override static func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
         override func startLoading() {
             let range = request.value(forHTTPHeaderField: "Range")
@@ -773,10 +773,10 @@ final class ResumableDownloadTests: XCTestCase {
         /// certainly handled the bytes before the error arrives.
         static let failDelay: TimeInterval = 0.4
 
-        override class func canInit(with request: URLRequest) -> Bool {
+        override static func canInit(with request: URLRequest) -> Bool {
             request.url?.host == "trickle.test"
         }
-        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override static func canonicalRequest(for request: URLRequest) -> URLRequest { request }
         override func startLoading() {
             Self.lock.lock(); Self.attempts += 1; Self.lock.unlock()
             let response = HTTPURLResponse(url: request.url!, statusCode: 200,
@@ -827,10 +827,10 @@ final class ResumableDownloadTests: XCTestCase {
         static let payload = Data((0..<(32 * 1024)).map { UInt8($0 % 251) })
         nonisolated(unsafe) static var declaredTotal = 0
 
-        override class func canInit(with request: URLRequest) -> Bool {
+        override static func canInit(with request: URLRequest) -> Bool {
             request.url?.host == "lying.test"
         }
-        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override static func canonicalRequest(for request: URLRequest) -> URLRequest { request }
         override func startLoading() {
             var headers = ["Content-Length": String(Self.payload.count)]
             if Self.declaredTotal > 0 {
@@ -1345,6 +1345,7 @@ final class ServerSettingsTests: XCTestCase {
     }
 
     func testAutoMemoryPlanDecodesTheEnginePlan() throws {
+        // swiftlint:disable:next line_length
         let json = #"{"state": "DMOE_CONTEXT_OPTIMAL", "mode": "dmoe", "reason": "r", "fallback": "", "kv": "f16", "n_ctx": 32768, "ubatch": 2048, "ncmoe": 0, "reserve_mib": 975, "arena_mib": 7867, "min_arena_mib": 1210, "projected_private_mib": 11000, "projected_free_mib": 975, "vram_total_mib": 12266, "vram_free_mib": 11960, "host_required_mib": 11200, "host_ram_mib": 32768, "host_available_mib": 26000, "host_reserve_mib": 8192, "bank_mib": 9682, "mlock": "required", "dispersion": "high", "candidates": [{"name": "full_gpu+f16", "mode": "full_gpu", "kv": "f16", "valid": false, "reason": "x", "ubatch": 512, "ncmoe": 0, "private_mib": 12000, "free_mib": 260, "arena_mib": 0, "kv_mib": 786, "compute_mib": 196}]}"#
         let plan = try XCTUnwrap(AutoMemoryPlan.decode(Data(json.utf8)))
         XCTAssertTrue(plan.usesDynamicMoE)
@@ -1372,6 +1373,7 @@ final class ServerSettingsTests: XCTestCase {
         var s = makeSettings()
         s.modelPath = model.path
         s.dynamicMoeEnabled = true
+        // swiftlint:disable:next line_length
         let json = #"{"plan_schema_version": 1, "product": {"mode": "PLAN_BOUNDED_DMOE", "mode_label_key": "plan.mode.bounded_dmoe", "reason": "CURRENT_RAM_LIMIT", "warnings": [], "limits": [], "limiting_resource": "HOST_RAM", "memory": {"physical_bytes": 1, "reclaimable_bytes": 1, "projected_rss_bytes": 1, "projected_vram_bytes": 1}, "dmoe": {"expert_bank_bytes": 1, "hot_bytes": 1, "warm_bytes": 15032385536, "coverage": 1.3, "coverage_state": "GOOD"}, "runtime": {"context": 8192, "kv_type": "q8_0", "kv_bytes": 1, "ubatch": 1024, "ncmoe_layers": 0}}, "state": "DMOE_BOUNDED_HOST", "mode": "dmoe_bounded", "reason": "r", "fallback": "", "kv": "q8_0", "n_ctx": 8192, "ubatch": 1024, "ncmoe": 0, "reserve_mib": 975, "arena_mib": 7000, "min_arena_mib": 546, "projected_private_mib": 1, "projected_free_mib": 975, "vram_total_mib": 12266, "vram_free_mib": 11960, "host_required_mib": 1, "host_ram_mib": 32768, "host_available_mib": 1, "host_reserve_mib": 1, "bank_mib": 17000, "mlock": "required", "dispersion": "normal", "candidates": []}"#
         s.benchmarkPlan = try XCTUnwrap(AutoMemoryPlan.decode(Data(json.utf8)))
         let args = s.benchmarkArguments
@@ -1395,6 +1397,7 @@ final class ServerSettingsTests: XCTestCase {
 
     func testAutoMemoryPlanDecodesTheProductSchema() throws {
         func plan(_ mode: String, _ legacy: String, _ state: String, _ coverage: String, _ extra: String = "") throws -> AutoMemoryPlan {
+            // swiftlint:disable:next line_length
             let json = #"{"plan_schema_version": 1, "product": {"mode": "\#(mode)", "mode_label_key": "plan.mode.x", "reason": "CURRENT_RAM_LIMIT", "warnings": ["COVERAGE_CONSTRAINED"], "limits": [], "limiting_resource": "HOST_RAM", "fallback": {"selected": true, "type": "PLAN_BOUNDED_DMOE"}, "memory": {"physical_bytes": 34359738368, "reclaimable_bytes": 20000000000, "projected_rss_bytes": 15000000000, "projected_vram_bytes": 10000000000}, "dmoe": {"expert_bank_bytes": 18000000000, "hot_bytes": 7000000000, "warm_bytes": 14000000000, "coverage": 1.12, "coverage_state": "\#(coverage)"}, "runtime": {"context": 8192, "kv_type": "f16", "kv_bytes": 400000000, "ubatch": 1024, "ncmoe_layers": 0}\#(extra)}, "state": "\#(state)", "mode": "\#(legacy)", "reason": "r", "fallback": "", "kv": "f16", "n_ctx": 8192, "ubatch": 1024, "ncmoe": 0, "reserve_mib": 975, "arena_mib": 7000, "min_arena_mib": 546, "projected_private_mib": 10000, "projected_free_mib": 975, "vram_total_mib": 12266, "vram_free_mib": 11960, "host_required_mib": 15000, "host_ram_mib": 32768, "host_available_mib": 26000, "host_reserve_mib": 8192, "bank_mib": 17000, "mlock": "required", "dispersion": "high", "candidates": []}"#
             return try XCTUnwrap(AutoMemoryPlan.decode(Data(json.utf8)))
         }
@@ -1420,6 +1423,7 @@ final class ServerSettingsTests: XCTestCase {
     /// initialiser would have done.
     func testAnUnrecognisedModeIsNotSilentlyTreatedAsAValidOne() throws {
         func plan(mode: String, productMode: String, state: String) throws -> AutoMemoryPlan {
+            // swiftlint:disable:next line_length
             let json = #"{"plan_schema_version": 1, "product": {"mode": "\#(productMode)", "mode_label_key": "k", "reason": "CURRENT_RAM_LIMIT", "warnings": [], "limits": [], "limiting_resource": "HOST_RAM", "fallback": {"selected": true, "type": "X"}, "memory": {"physical_bytes": 1, "reclaimable_bytes": 1, "projected_rss_bytes": 1, "projected_vram_bytes": 1}, "dmoe": {"expert_bank_bytes": 1, "hot_bytes": 1, "warm_bytes": 1, "coverage": 1, "coverage_state": "GOOD"}, "runtime": {"context": 8192, "kv_type": "f16", "kv_bytes": 1, "ubatch": 1024, "ncmoe_layers": 0}}, "state": "\#(state)", "mode": "\#(mode)", "reason": "r", "fallback": "", "kv": "f16", "n_ctx": 8192, "ubatch": 1024, "ncmoe": 0, "reserve_mib": 1, "arena_mib": 1, "min_arena_mib": 1, "projected_private_mib": 1, "projected_free_mib": 1, "vram_total_mib": 1, "vram_free_mib": 1, "host_required_mib": 1, "host_ram_mib": 1, "host_available_mib": 1, "host_reserve_mib": 1, "bank_mib": 1, "mlock": "required", "dispersion": "high", "candidates": []}"#
             return try XCTUnwrap(AutoMemoryPlan.decode(Data(json.utf8)))
         }
@@ -3283,10 +3287,10 @@ final class ConversationDecodingTests: XCTestCase {
     // New Conversation fields must be `Type?`, not just `= default`: the
     // synthesized decoder still requires the key otherwise.
     func testDecodesConversationSavedBeforePinnedExisted() throws {
-        let json = """
+        let json = Data("""
         [{"id":"11111111-1111-1111-1111-111111111111","title":"Old chat",
           "messages":[],"created":700000000,"updated":700000000}]
-        """.data(using: .utf8)!
+        """.utf8)
         let list = try JSONDecoder().decode([Conversation].self, from: json)
         XCTAssertEqual(list.count, 1)
         XCTAssertEqual(list[0].pinned, nil)

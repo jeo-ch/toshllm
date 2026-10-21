@@ -252,7 +252,7 @@ struct RichWebView: NSViewRepresentable {
     /// string escape and decodes back to `<` in JavaScript.
     static func scriptJSON(_ source: String) -> String {
         guard let data = try? JSONEncoder().encode(source),
-              var text = String(data: data, encoding: .utf8) else { return "\"\"" }
+              let text = String(data: data, encoding: .utf8) else { return "\"\"" }
         return text.replacingOccurrences(of: "<", with: "\\u003C")
     }
 

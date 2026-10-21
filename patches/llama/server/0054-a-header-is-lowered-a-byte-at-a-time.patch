@@ -1,0 +1,35 @@
+diff --git a/tools/server/server.cpp b/tools/server/server.cpp
+--- a/tools/server/server.cpp
++++ b/tools/server/server.cpp
+@@ -85,15 +85,14 @@
+ //   X-Tosh-Agent: off (or raw)  raw model inference, always
+ //   X-Tosh-Agent: on            the agent; refused when the server runs none or the request brings tools
+ //                               (with --mcp-agent-client-tools, tools of the client's own go to the agent too)
+-//   no header                   the agent, unless the server takes it on request only (--mcp-agent-explicit)
+-//                               and the request does not come from a page in a browser (the bundled web chat),
++//   no header                   the agent, unless the server takes it on request only (--mcp-agent-explicit),
+ //                               or the request brings tools, functions, a grammar, json_schema or
+ //                               response_format: then raw, so clients that run their own tools are unaffected
+ static std::string tosh_header(const server_http_req & req, const char * name) {
+     for (const auto & [key, value] : req.headers) {
+         std::string k = key, v = value;
+-        std::transform(k.begin(), k.end(), k.begin(), ::tolower);
+-        std::transform(v.begin(), v.end(), v.begin(), ::tolower);
++        std::transform(k.begin(), k.end(), k.begin(), [](unsigned char c) { return std::tolower(c); });
++        std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return std::tolower(c); });
+         if (k == name) {
+             return v;
+         }
+diff --git a/tools/server/server-common.cpp b/tools/server/server-common.cpp
+--- a/tools/server/server-common.cpp
++++ b/tools/server/server-common.cpp
+@@ -1428,7 +1428,8 @@
+     if (body.contains("reasoning_effort")) {
+         auto reasoning_effort = json_value(body, "reasoning_effort", std::string(""));
+         // clients spell the levels many ways, and a template that does not know one raises on it
+-        std::transform(reasoning_effort.begin(), reasoning_effort.end(), reasoning_effort.begin(), ::tolower);
++        std::transform(reasoning_effort.begin(), reasoning_effort.end(), reasoning_effort.begin(),
++                       [](unsigned char c) { return std::tolower(c); });
+         if (reasoning_effort == "off" || reasoning_effort == "minimal" || reasoning_effort == "disabled" || reasoning_effort == "false") {
+             reasoning_effort = "none";
+         } else if (reasoning_effort == "max" || reasoning_effort == "maximum") {

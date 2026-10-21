@@ -66,7 +66,7 @@ struct WorkspaceSidebar: View {
             .foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 23).padding(.bottom, 7)
     }
 
-    private func navigationRow(_ section: Section_) -> some View {
+    private func navigationRow(_ section: AppSection) -> some View {
         let selected = control.section == section && (section != .dashboard || control.serverAnchor == nil)
         return Button {
             navigate(to: section)
@@ -91,7 +91,7 @@ struct WorkspaceSidebar: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    private func navigate(to section: Section_) {
+    private func navigate(to section: AppSection) {
         animate {
             control.serverAnchor = nil
             control.section = section

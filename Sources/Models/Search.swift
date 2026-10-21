@@ -250,6 +250,8 @@ final class SearchStore: ObservableObject {
         var total = GGUFWeightSplit()
         for url in urls {
             guard let part = await probeSplitPart(urlString: url) else { return nil }
+            // GGUFWeightSplit has `+` but no `+=`; spelling the assignment out keeps the type small.
+            // swiftlint:disable:next shorthand_operator
             total = total + part
         }
         return total

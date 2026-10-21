@@ -685,6 +685,22 @@ def test_an_oversized_request_is_refused_and_the_stream_resyncs(helper):
     assert helper.rpc("tools/list")["result"]["tools"], "the next request still gets its answer"
 
 
+def test_the_audit_hook_blocks_writes_through_os_open(helper):
+    # The hook read os.open()'s flags integer as if it were open()'s mode string, so every
+    # write through os.open() passed. Both spellings have to be refused, and reads still work.
+    sys.path.insert(0, RUNTIME)
+    from tosh_sympy import worker
+    for args in (("/tmp/x", None, os.O_WRONLY), ("/tmp/x", None, os.O_RDWR | os.O_CREAT),
+                 ("/tmp/x", None, os.O_APPEND), ("/tmp/x", "w", 0)):
+        try:
+            worker._audit("open", args)
+        except PermissionError:
+            continue
+        raise AssertionError(f"write not blocked: {args}")
+    worker._audit("open", ("/tmp/x", None, os.O_RDONLY))
+    worker._audit("open", ("/tmp/x", "r", 0))
+
+
 def measure():
     started = time.monotonic()
     helper = Helper()

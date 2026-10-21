@@ -225,6 +225,7 @@ final class UpdateChecker: ObservableObject {
             throw UpdateError(message: "El DMG no contiene una app / the DMG contains no app")
         }
         let source = mount + "/" + appName
+        try verifySignature(of: source)
 
         let bundle = Bundle.main.bundleURL
         let target = bundle.path.hasPrefix("/Applications/")
@@ -251,6 +252,29 @@ final class UpdateChecker: ObservableObject {
             try copy(source: source, target: target, verified: verified)
         }
         return target
+    }
+
+    /// Refuses an update signed by a different team than the copy running.
+    ///
+    /// The checksum travels in the same release as the image, so it says the download is the
+    /// file that was published, not who published it. When both bundles name a Team ID, the
+    /// update must name the same one. A build without a Team ID (ad-hoc, a local build) has
+    /// nothing to compare, and keeps the checksum-only rule the app documents.
+    nonisolated private static func verifySignature(of app: String) throws {
+        guard let running = teamIdentifier(of: Bundle.main.bundlePath) else { return }
+        guard let update = teamIdentifier(of: app), update == running else {
+            throw UpdateError(message: "La actualización no está firmada por el mismo equipo / the update is not signed by the same team")
+        }
+    }
+
+    /// The Team ID a bundle is signed with, or nil when it is ad-hoc or unsigned.
+    nonisolated private static func teamIdentifier(of bundle: String) -> String? {
+        guard let output = try? run("/usr/bin/codesign", ["-dv", "--verbose=4", bundle]) else { return nil }
+        for line in output.split(separator: "\n") where line.hasPrefix("TeamIdentifier=") {
+            let value = line.dropFirst("TeamIdentifier=".count).trimmingCharacters(in: .whitespaces)
+            return value.isEmpty || value == "not set" ? nil : value
+        }
+        return nil
     }
 
     /// What the updater leaves behind so a build that cannot start is recoverable.

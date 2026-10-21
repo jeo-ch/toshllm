@@ -115,7 +115,7 @@ final class MarkdownParserTests: XCTestCase {
     }
 
     func testStandaloneMath() {
-        guard case .math(let f) = parse(MarkdownMathFixture.inverse).first else { return XCTFail() }
+        guard case .math(let f) = parse(MarkdownMathFixture.inverse).first else { return XCTFail("the fixture did not parse as math") }
         XCTAssertTrue(f.hasSuffix(#"\end{pmatrix}"#))
         let multiline = "$M = \\begin{bmatrix}\n1 & 2 \\\\\n3 & 4\n\\end{bmatrix}$"
         XCTAssertEqual(parse(multiline), [.math("M = \\begin{bmatrix}\n1 & 2 \\\\\n3 & 4\n\\end{bmatrix}")])

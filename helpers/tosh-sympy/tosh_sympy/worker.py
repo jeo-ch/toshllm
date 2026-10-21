@@ -29,8 +29,18 @@ _BLOCKED_EVENTS = (
 def _audit(event, args):
     if event.startswith(_BLOCKED_EVENTS):
         raise PermissionError(f"blocked: {event}")
-    if event == "open" and len(args) > 1 and args[1] is not None and set(str(args[1])) & set("wax+"):
-        raise PermissionError("blocked: writing files")
+    if event == "open" and len(args) > 2:
+        # open() reports a mode string and os.open() reports None with the flags integer. The
+        # string test read every os.open() call as "not writing", so os.open(path, O_WRONLY)
+        # went through the hook untouched.
+        mode, flags = args[1], args[2]
+        if isinstance(mode, str):
+            writing = any(c in mode for c in "wax+")
+        else:
+            writing = isinstance(flags, int) and bool(
+                flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND))
+        if writing:
+            raise PermissionError("blocked: writing files")
 
 
 def _sandbox():

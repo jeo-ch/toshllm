@@ -31,4 +31,3 @@ struct BenchmarkConsentInfoRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
-

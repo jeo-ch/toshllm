@@ -698,6 +698,7 @@ final class AudioStudioController: ObservableObject {
                 ]
             ],
             "messages": [
+                // swiftlint:disable:next line_length
                 ["role": "system", "content": "Translate only the text inside the cues array into the requested target language. The source cue is authoritative: do not summarize, omit, invent, reorder, merge, split or expand its content. The glossary and neighboring_context are reference-only; never translate, copy, paraphrase or include their text in the answer. Keep terminology, names, tone and grammatical references consistent. Preserve each exact id and return one concise, non-empty translation for every cue. Return only the required JSON."],
                 ["role": "user", "content": prompt]
             ]

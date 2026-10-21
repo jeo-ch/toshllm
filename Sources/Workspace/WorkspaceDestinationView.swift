@@ -7,7 +7,7 @@ import SwiftUI
 /// Gives navigation destinations a stable, small identity. Live server metrics
 /// can then update without recreating unrelated destination views.
 struct WorkspaceDestinationView: View {
-    let section: Section_
+    let section: AppSection
     let serverID: UUID?
 
     var body: some View {

@@ -79,7 +79,7 @@ final class GPUPeerGroupTests: XCTestCase {
             "AMD Radeon PRO W6800X Duo",
         ])
         XCTAssertEqual(groups.map(\.cards), [1, 1, 1, 1, 2])
-        XCTAssertEqual(groups.map(\.gpus),  [1, 2, 1, 1, 4])
+        XCTAssertEqual(groups.map(\.gpus), [1, 2, 1, 1, 4])
     }
 
     /// A Duo with one die disabled is still a card, not half of one.

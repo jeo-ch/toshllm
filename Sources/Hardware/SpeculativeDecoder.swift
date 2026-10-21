@@ -143,7 +143,7 @@ struct SpeculativeDecoderManager {
     
     /// Check if any speculative decoding is enabled for a model.
     static func anyEnabled(forModel path: String) -> Bool {
-        enabledDecoders(forModel: path).count > 0
+        !enabledDecoders(forModel: path).isEmpty
     }
     
     /// Get the first enabled draft path for a model (prioritizes DFlash for MoE, MTP otherwise).
