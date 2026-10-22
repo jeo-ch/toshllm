@@ -95,6 +95,53 @@ final class ServerPreflightTests: XCTestCase {
             spec: moeSpec(), hw: hardware(vramMB: 12_288), reserveMB: 1_024))
     }
 
+    /// When Dynamic MoE previews its classic fallback, the app launches the
+    /// measured profile instead of its 46/6-layer, Q8 KV fallback.
+    func testMeasuredFallbackTurnsDynamicMoEOffAndUsesMeasuredValues() throws {
+        let measured = try XCTUnwrap(HardwareTuningAdvisor.advise(HardwareTuningInput(
+            gpuName: "AMD Radeon Pro 575X", vramMB: 4_096, ramGB: 64,
+            physicalCores: 6, logicalCores: 12, reserveMB: 1_024,
+            modelFileGB: 17.3, modelLayers: 48, isMoE: true,
+            expertGB: 15.5, kvBytesPerToken: 98_304, trainedContext: nil,
+            requestedCtx: 262_144, requestedUbatch: 4_096,
+            currentNgl: 99, currentNcmoe: 48, currentCacheK: "q8_0",
+            currentCacheV: "q8_0", currentThreads: 12,
+            dynamicMoeActive: true, manualFullGPU: false, routerMode: false)))
+        XCTAssertTrue(measured.measuredProfile)
+
+        var base = ServerSettings.fromDefaults()
+        base.dynamicMoeEnabled = true
+        base.ngl = 99
+        base.ncmoe = 48
+        base.ctx = 262_144
+        base.ubatch = 4_096
+        base.cacheTypeK = "q8_0"
+        base.cacheTypeV = "q8_0"
+        base.threads = 12
+
+        let manual = try XCTUnwrap(base.applyingMeasuredProfile(measured))
+        XCTAssertFalse(manual.dynamicMoeEnabled)
+        XCTAssertEqual(manual.ngl, 10)
+        XCTAssertEqual(manual.ncmoe, 6)
+        XCTAssertEqual(manual.ctx, 16_384)
+        XCTAssertEqual(manual.ubatch, 1_024)
+        XCTAssertEqual(manual.cacheTypeK, "f16")
+        XCTAssertEqual(manual.cacheTypeV, "f16")
+        XCTAssertEqual(manual.threads, 6)
+
+        let wide = try XCTUnwrap(HardwareTuningAdvisor.advise(HardwareTuningInput(
+            gpuName: "AMD Radeon Pro 575X", vramMB: 12_288, ramGB: 64,
+            physicalCores: 6, logicalCores: 12, reserveMB: 1_024,
+            modelFileGB: 17.3, modelLayers: 48, isMoE: true,
+            expertGB: 15.5, kvBytesPerToken: 98_304, trainedContext: nil,
+            requestedCtx: 262_144, requestedUbatch: 4_096,
+            currentNgl: 99, currentNcmoe: 48, currentCacheK: "q8_0",
+            currentCacheV: "q8_0", currentThreads: 12,
+            dynamicMoeActive: true, manualFullGPU: false, routerMode: false)))
+        XCTAssertFalse(wide.measuredProfile)
+        XCTAssertNil(base.applyingMeasuredProfile(wide))
+    }
+
     func testEstimatorCapsSuggestedNcmoeToNgl() {
         let estimate = Estimator.estimate(
             spec: moeSpec(), hw: hardware(), ctx: 262_144, kvScale: 1, nglLimit: 10)

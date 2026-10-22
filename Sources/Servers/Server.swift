@@ -1180,6 +1180,41 @@ struct ServerSettings {
     }
     /// Full GPU chosen by hand: no expert offload, even where Auto would reject the headroom.
     var manualFullGPU: Bool { dynamicMoeEnabled && executionMode == "full" }
+
+    /// Dynamic MoE's classic fallback puts 46 expert layers on the host and
+    /// quantizes the KV cache on the measured 4 GB card, both worse than the
+    /// hand-measured 10/6/f16 profile. When the engine's preview says it is
+    /// about to take that path, launch the measured profile instead. The guard
+    /// is the advisor's exact measured flag, so 12 GB+ cards and every other
+    /// geometry keep the engine's own plan.
+    func measuredFallback() -> (settings: ServerSettings,
+                                advice: HardwareTuningAdvice)? {
+        guard usesAutoPlan,
+              let spec = HardwareTuningAdvisor.spec(forModelPath: modelPath, models: []),
+              let advice = HardwareTuningAdvisor.advise(hardware: HardwareInfo.detect(),
+                                                        spec: spec, settings: self),
+              let manual = applyingMeasuredProfile(advice) else { return nil }
+        return (manual, advice)
+    }
+
+    /// The settings half of `measuredFallback()`, separate so the transition can
+    /// be tested without a real GGUF or GPU.
+    func applyingMeasuredProfile(_ advice: HardwareTuningAdvice) -> ServerSettings? {
+        guard advice.measuredProfile else { return nil }
+        var manual = self
+        manual.dynamicMoeEnabled = false
+        manual.ngl = advice.ngl
+        manual.ncmoe = advice.ncmoe
+        manual.ctx = advice.ctx
+        manual.contextAutomatic = false
+        manual.ubatch = advice.ubatch
+        manual.cacheTypeK = advice.cacheTypeK
+        manual.cacheTypeV = advice.cacheTypeV
+        manual.threads = advice.threads
+        manual.plannedMode = nil
+        manual.planWithoutDMoE = false
+        return manual
+    }
     /// A separately downloaded DFlash draft may join the launch. Dynamic MoE plans
     /// memory without one, so it only fits a full-GPU plan; the plan already counts
     /// an MTP head, built in or in its own file, which is why only DFlash is gated.
@@ -2159,7 +2194,15 @@ final class ServerController: ObservableObject {
                     return
                 }
                 planned.plannedMode = plan.mode
-                self?.autoPlan = plan
+                if plan.productState == .classicFallback,
+                   let fallback = planned.measuredFallback() {
+                    planned = fallback.settings
+                    self?.autoPlan = nil
+                    self?.autoPlanNote = AutoMemoryText.measuredFallback(
+                        plan: plan, advice: fallback.advice)
+                } else {
+                    self?.autoPlan = plan
+                }
             }
             await self?.launch(planned)
         }

@@ -83,6 +83,12 @@ struct ServerOverviewView: View {
                         }
                     }
                 }
+            } else if let note = server.autoPlanNote {
+                // A measured-profile launch replaces the engine's fallback plan,
+                // so there is no plan card to attach the note to.
+                Label(note, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             }
             Divider()
             HStack(spacing: 22) {

@@ -312,6 +312,16 @@ enum AutoMemoryText {
         return s
     }
 
+    /// The engine's classic fallback is worse than the measured profile on the
+    /// 4 GB card. Say what it wanted and what was launched instead.
+    static func measuredFallback(plan: AutoMemoryPlan,
+                                 advice: HardwareTuningAdvice) -> String {
+        let oldNcmoe = plan.product?.runtime.ncmoeLayers ?? plan.ncmoe
+        let oldKV = plan.product?.runtime.kvType ?? plan.kv
+        return t("Dynamic MoE se degradó a ncmoe \(oldNcmoe)/KV \(kvLabel(oldKV)); se usó el perfil medido de esta tarjeta: ngl \(advice.ngl), ncmoe \(advice.ncmoe), KV \(advice.cacheTypeK), ctx \(advice.ctx).",
+                 "Dynamic MoE fell back to ncmoe \(oldNcmoe)/\(kvLabel(oldKV)) KV; the measured profile for this card was used instead: ngl \(advice.ngl), ncmoe \(advice.ncmoe), \(advice.cacheTypeK) KV, ctx \(advice.ctx).")
+    }
+
     /// A structured engine refusal, in words for the UI.
     static func runtimeProblem(_ runtime: AutoMemoryRuntime) -> String? {
         switch runtime.code {
