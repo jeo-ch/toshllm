@@ -289,13 +289,19 @@ enum Estimator {
     static func estimateCurrent(spec: ModelSpec, hw: HardwareInfo,
                                 ncmoeOverride: Int? = nil) -> MemoryEstimate {
         let d = UserDefaults.standard
-        let ctx = d.object(forKey: SettingsKeys.ctx) == nil ? 16384 : d.integer(forKey: SettingsKeys.ctx)
+        let requestedCtx = d.object(forKey: SettingsKeys.ctx) == nil ? 16384 : d.integer(forKey: SettingsKeys.ctx)
+        // A huge user context must not make the recommendation push every expert
+        // to the CPU: measured on the 4 GB card, ncmoe 48 cost generation against
+        // the measured optimum of 6. The estimator uses the same 16k ceiling as
+        // the advisor; the actual launch still honors the user's context.
+        let ctx = min(requestedCtx, 16384)
+        let ngl = d.object(forKey: SettingsKeys.ngl) == nil ? 99 : d.integer(forKey: SettingsKeys.ngl)
         let scale = (kvTypeScale(d.string(forKey: SettingsKeys.cacheTypeK) ?? "f16")
                    + kvTypeScale(d.string(forKey: SettingsKeys.cacheTypeV) ?? "f16")) / 2
         return estimate(spec: spec, hw: hw, ctx: ctx, kvScale: scale,
                         multiGPU: d.bool(forKey: SettingsKeys.multiGPU),
                         tensorSplit: (d.string(forKey: SettingsKeys.splitMode) ?? "layer") == "tensor",
-                        ncmoeOverride: ncmoeOverride)
+                        ncmoeOverride: ncmoeOverride, nglLimit: ngl)
     }
 
     /// KV cache size of a quantization type relative to f16.
@@ -329,7 +335,7 @@ enum Estimator {
 
     static func estimate(spec: ModelSpec, hw: HardwareInfo, ctx: Int = 16384, kvScale: Double = 1.0,
                          multiGPU: Bool = false, tensorSplit: Bool = false,
-                         ncmoeOverride: Int? = nil) -> MemoryEstimate {
+                         ncmoeOverride: Int? = nil, nglLimit: Int? = nil) -> MemoryEstimate {
         // A layer split is sequential (pipeline): combined VRAM raises capacity,
         // not per-token speed. Use summed VRAM (driver reserve per device) when
         // the user enabled the split and there are 2+ GPUs; otherwise one card.
@@ -374,14 +380,17 @@ enum Estimator {
         let gpuExpertsGB = min(expertsGB, max(0, vramForExperts))
         let cpuExpertsGB = expertsGB - gpuExpertsGB
         let ramNeed = cpuExpertsGB + 1.0
+        let suggestedLimit = max(0, min(spec.layers, nglLimit ?? spec.layers))
 
         if ramNeed > hw.ramGB * 0.72 {
-            return MemoryEstimate(vramGB: vramBudget, ramGB: ramNeed, suggestedNcmoe: spec.layers,
+            return MemoryEstimate(vramGB: vramBudget, ramGB: ramNeed,
+                                  suggestedNcmoe: suggestedLimit,
                                   level: .no, expectedSpeed: "—")
         }
 
         let autoNcmoe = expertsGB > 0
-            ? min(spec.layers, Int((Double(spec.layers) * (cpuExpertsGB / expertsGB)).rounded(.up)))
+            ? min(suggestedLimit,
+                  Int((Double(spec.layers) * (cpuExpertsGB / expertsGB)).rounded(.up)))
             : 0
         // A user-set offload wins over the recommendation; experts split by that fraction.
         let ncmoe = ncmoeOverride.map { max(0, min(spec.layers, $0)) } ?? autoNcmoe

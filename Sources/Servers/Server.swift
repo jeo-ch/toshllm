@@ -374,7 +374,7 @@ struct ServerSettings {
         // under the plan the engine picks offload and batch; by hand, Full GPU offloads nothing
         let planOwnsMemory = usesAutoPlan || manualFullGPU
         if ncmoe > 0 && !planOwnsMemory { args += ["--n-cpu-moe", String(ncmoe)] }
-        if !usesAutoPlan, let ub = effectiveUbatch { args += ["--ubatch-size", String(ub), "--batch-size", String(ub)] }
+        if !usesAutoPlan, let ub = launchUbatch, ub.value > 0 { args += ["--ubatch-size", String(ub.value), "--batch-size", String(ub.value)] }
         if usesAutoPlan { args += ["--dynamic-moe", "on"] }
         let mode = Self.loadMode(noMmap: noMmap, mlock: mlock)
         if let mode { args += ["--load-mode", mode] }
@@ -457,22 +457,69 @@ struct ServerSettings {
         setting > 0 ? setting : Int(min(max(0.08 * Double(vramMB), 768), 1536))
     }
 
-    nonisolated static func routerCtx(forModel path: String, requested: Int, ncmoe: Int,
-                                      kvScale: Double, reserveMB: Int) -> Int {
-        let kvPerToken = ModelSpec.kvBytesPerToken(atPath: path) * kvScale
-        guard kvPerToken > 0, requested > 2048 else { return requested }
-        let vramMB = ServerController.availableGPUs().map(\.vramMB).max() ?? 0
-        guard vramMB > 0 else { return requested }
-        let budget = Double(vramMB - effectiveVramReserveMB(reserveMB, vramMB: vramMB)) / 1024
-        let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int64) ?? 0
-        let weightsGB = Double(size) / 1_073_741_824 * (ncmoe > 0 ? 0.45 : 1.0)
-        let computeGB = 0.9
+    /// Inputs for the router-context estimate. Kept free of hardware and
+    /// UserDefaults access so the measured low-VRAM case can be tested offline.
+    struct RouterContextInput {
+        var requested: Int
+        var vramMB: Int
+        var reserveMB: Int
+        var modelBytes: Int64
+        var layers: Int
+        var isMoE: Bool
+        var expertGB: Double
+        var ngl: Int
+        var ncmoe: Int
+        var kvBytesPerToken: Double
+        var kvScale: Double
+    }
+
+    /// Estimate the context that fits the layers actually offloaded. The old
+    /// router estimate charged 45% of a 17 GB model to VRAM regardless of ngl,
+    /// so a 4 GB card always fell to the 2048 floor even though the measured
+    /// 10/48 + 6 expert layers configuration serves 16k.
+    nonisolated static func routerCtx(_ input: RouterContextInput) -> Int {
+        let requested = max(0, input.requested)
+        guard requested > 2048, input.vramMB > 0 else { return requested }
+        let layers = max(1, input.layers)
+        let ngl = max(0, min(input.ngl, layers))
+        let ncmoe = max(0, min(input.ncmoe, ngl))
+        let budget = Double(input.vramMB - effectiveVramReserveMB(input.reserveMB, vramMB: input.vramMB)) / 1024
+        let sizeGB = Double(max(0, input.modelBytes)) / 1_073_741_824
+        let expertGB = input.isMoE
+            ? max(0, min(sizeGB, input.expertGB > 0 ? input.expertGB : max(0, sizeGB - 1.3)))
+            : 0
+        let otherGB = max(0, sizeGB - expertGB)
+        // The KV cache of CPU layers stays in system RAM in llama.cpp's layer
+        // split, so only the GPU share of both weights and KV competes here.
+        let residentGB = otherGB * Double(ngl) / Double(layers)
+            + expertGB * Double(max(0, ngl - ncmoe)) / Double(layers)
+        let kvPerLayer = max(0, input.kvBytesPerToken) * max(0, input.kvScale) / Double(layers)
+
+        // Measured on the 4 GB iMac: the 10/48 + 6 expert layers and f16 KV
+        // configuration serves 16k; halving below 4096 would recreate the old
+        // 2048 symptom, so 4096 is the floor while the UI explains any clamp.
+        let floor = 4_096
         var value = requested
-        while value > 2048,
-              weightsGB + computeGB + kvPerToken * Double(value) / 1_073_741_824 > budget {
+        while value > floor,
+              residentGB + 0.9 + kvPerLayer * Double(ngl) * Double(value) / 1_073_741_824 > budget {
             value /= 2
         }
         return value
+    }
+
+    nonisolated static func routerCtx(forModel path: String, requested: Int, ngl: Int, ncmoe: Int,
+                                      kvScale: Double, reserveMB: Int) -> Int {
+        let vramMB = ServerController.availableGPUs().map(\.vramMB).max() ?? 0
+        let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int64) ?? 0
+        let isMoE = ncmoe > 0 || modelIsMoE(at: path)
+        let spec = ModelSpec.estimated(fileBytes: size, isMoE: isMoE, path: path)
+        let metadataLayers = Int(
+            GGUFMetadataCache.metadata(at: path)?.uint32(forSuffix: "block_count") ?? 0)
+        return routerCtx(RouterContextInput(
+            requested: requested, vramMB: vramMB, reserveMB: reserveMB,
+            modelBytes: size, layers: metadataLayers > 0 ? metadataLayers : spec.layers,
+            isMoE: spec.isMoE, expertGB: spec.expertGB, ngl: ngl, ncmoe: ncmoe,
+            kvBytesPerToken: spec.kvBytesPerToken, kvScale: kvScale))
     }
 
     /// Router-mode CLI args: no `-m`, the preset file lists every model. Per-model
@@ -548,11 +595,20 @@ struct ServerSettings {
             }
             seenAliases.insert(alias)
 
-            let modelCtx = Self.routerCtx(forModel: path, requested: ctx, ncmoe: ncmoeByPath[path] ?? 0,
-                                          kvScale: Estimator.kvTypeScale(cacheTypeK),
+            let modelCtx = Self.routerCtx(forModel: path, requested: ctx, ngl: ngl,
+                                          ncmoe: ncmoeByPath[path] ?? 0,
+                                          kvScale: (Estimator.kvTypeScale(cacheTypeK)
+                                                    + Estimator.kvTypeScale(cacheTypeV)) / 2,
                                           reserveMB: vramReserveMB)
+            if modelCtx < ctx {
+                AppLog.server.warning("router context for \(alias): requested \(ctx), using \(modelCtx) to fit the GPU budget")
+            }
             var lines = ["[\(alias)]", "model = \(path)", "n-gpu-layers = \(ngl)",
                          "ctx-size = \(modelCtx)", "threads = \(threads)", "flash-attn = \(faValue)"]
+            if let ub = launchUbatch, ub.value > 0 {
+                lines.append("ubatch-size = \(ub.value)")
+                lines.append("batch-size = \(ub.value)")
+            }
             if let ncmoe = ncmoeByPath[path], ncmoe > 0 { lines.append("n-cpu-moe = \(ncmoe)") }
             if let mode = Self.loadMode(noMmap: noMmap, mlock: mlock) { lines.append("load-mode = \(mode)") }
             let mmproj = loadVision ? Self.mmprojPath(forModel: path) : nil
@@ -646,7 +702,7 @@ struct ServerSettings {
         if let mode { args += ["--load-mode", mode] }
         if benchDepthClamped > 0 { args += ["-d", String(benchDepthClamped)] }
         if ncmoe > 0 { args += ["-ncmoe", String(ncmoe)] }
-        if let ub = effectiveUbatch { args += ["-ub", String(ub), "-b", String(ub)] }
+        if let ub = launchUbatch, ub.value > 0 { args += ["-ub", String(ub.value), "-b", String(ub.value)] }
         if cacheTypeK != "f16" { args += ["-ctk", cacheTypeK] }
         if cacheTypeV != "f16" { args += ["-ctv", cacheTypeV] }
         if kvNeedsFlashAttention || flashAttn == "on" {
@@ -1075,6 +1131,40 @@ struct ServerSettings {
         guard routerMode || Self.modelIsMoE(at: modelPath) else { return nil }
         return ubatch
     }
+
+    /// Measured on the 4 GB gfx803 + 17 GB MoE: the prefill compute buffer grows
+    /// about 2.26 MiB per micro-batch token. 4096 allocated 9.03 GiB and failed;
+    /// 1024 and 512 loaded. 2048 is the ceiling calibrated for 12 GB cards, so
+    /// larger cards keep the same behavior instead of being regressed.
+    nonisolated static func clampedUbatch(_ requested: Int, vramMB: Int,
+                                          reserveMB: Int) -> (value: Int, clamped: Bool) {
+        guard requested > 0, vramMB > 0 else { return (requested, false) }
+        let reserve = reserveMB > 0
+            ? reserveMB : effectiveVramReserveMB(0, vramMB: vramMB)
+        let usableMiB = Double(max(0, vramMB - reserve))
+        // 512 tokens need about 1.13 GiB of compute buffer at the measured rate.
+        // Below that no safe launch value exists; 0 tells the caller to fail with
+        // a readable message instead of passing 512 and letting ggml abort.
+        guard usableMiB >= HardwareTuningAdvisor.ubatchMiBPerToken
+                * Double(HardwareTuningAdvisor.ubatchStep) else {
+            return (0, true)
+        }
+        let cap = HardwareTuningAdvisor.safeUbatch(vramMB: vramMB, reserveMB: reserve)
+        return requested > cap ? (cap, true) : (requested, false)
+    }
+
+    /// The micro-batch launch actually uses, clamped to the smallest selected
+    /// card. The user's setting stays untouched so the UI can explain the
+    /// difference and the next start on a larger card is not narrowed.
+    var launchUbatch: (value: Int, clamped: Bool)? {
+        guard let requested = effectiveUbatch else { return nil }
+        let gpus = ServerController.availableGPUs()
+        let selected = gpus.filter { selectedGPUIndices.contains($0.index) }
+        let pool = selected.isEmpty ? gpus : selected
+        let vramMB = pool.map(\.vramMB).min() ?? 0
+        let reserve = Self.effectiveVramReserveMB(vramReserveMB, vramMB: vramMB)
+        return Self.clampedUbatch(requested, vramMB: vramMB, reserveMB: reserve)
+    }
     /// Template defaults for requests that set none; the request's own kwargs override them key by key.
     var defaultTemplateKwargs: String? {
         switch defaultReasoning {
@@ -1462,6 +1552,16 @@ struct ServerSettings {
         return proj != embd
     }
 
+    /// A manual projector override is usable only when the file exists and no
+    /// shape mismatch or earlier load failure has been recorded. The failure
+    /// list matters because matching dimensions are not sufficient: a
+    /// qwen3vl_merger projector can match projection_dim and still abort mtmd.
+    nonisolated static func mmprojOverrideIsUsable(_ override: String, model: String) -> Bool {
+        guard !override.isEmpty, FileManager.default.fileExists(atPath: override) else { return false }
+        return !mmprojIncompatible(model: model, projector: override)
+            && !isIncompatibleMmproj(model: model, projector: override)
+    }
+
     /// Whether to offer the projector control for a model: it has a paired or
     /// pinned projector, an explicit choice (incl. off), a projector beside it that
     /// matches its dimension, or is a catalog vision model.
@@ -1556,11 +1656,12 @@ struct ServerSettings {
         let name = url.deletingPathExtension().lastPathComponent
         if name.lowercased().contains("mmproj") { return nil }  // the model itself is not a projector
 
-        // A manual override wins: a path pins that projector, "" disables vision;
-        // a stale path (file moved) falls through to auto-pairing.
+        // A manual override wins only when it is known compatible; a stale path
+        // (file moved) or a recorded/dimensionally impossible projector falls
+        // through to auto-pairing instead of aborting the engine on every start.
         if let override = mmprojOverride(forModel: modelPath) {
             if override.isEmpty { return nil }
-            if FileManager.default.fileExists(atPath: override) { return override }
+            if Self.mmprojOverrideIsUsable(override, model: modelPath) { return override }
         }
 
         let dir = url.deletingLastPathComponent()
@@ -2228,6 +2329,17 @@ final class ServerController: ObservableObject {
 
     private func launch(_ settings: ServerSettings) async {
         guard state == .starting else { return }   // user hit Stop meanwhile
+        if let ub = settings.launchUbatch, ub.value == 0 {
+            let lang = UserDefaults.standard.string(forKey: SettingsKeys.language) ?? "en"
+            state = .failed(lang == "es"
+                ? "No hay VRAM suficiente para un micro-lote seguro de 512 tokens. Baja el contexto o los expertos en CPU, o pon el micro-lote en 0."
+                : "Not enough VRAM for a safe 512-token micro-batch. Lower the context or the experts on CPU, or set the micro-batch to 0.")
+            return
+        }
+        // A failed projector retry drops --mmproj once, then clears the flag so a
+        // second failure cannot loop. `start` clears it for a fresh launch.
+        let dropMmprojForRetry = retryWithoutMmproj
+        retryWithoutMmproj = false
         ChatStore.serverAgentMissing = false
 
         if settings.routerMode {
@@ -2253,7 +2365,7 @@ final class ServerController: ObservableObject {
         let rawArgs = settings.arguments
         let env = settings.environment
         var args = rawArgs
-        if retryWithoutMmproj, let i = args.firstIndex(of: "--mmproj") {
+        if dropMmprojForRetry, let i = args.firstIndex(of: "--mmproj") {
             args.removeSubrange(i ..< min(i + 2, args.count))   // drop "--mmproj <path>"
         }
         p.arguments = args

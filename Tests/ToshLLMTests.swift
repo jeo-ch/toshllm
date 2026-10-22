@@ -2164,10 +2164,18 @@ final class ServerSettingsTests: XCTestCase {
         s.modelPath = model.path
         s.ncmoe = 0
         XCTAssertEqual(s.effectiveUbatch, 2048, "a MoE whole on the card gains too")
-        XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--ubatch-size")! + 1], "2048")
-        XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--batch-size")! + 1], "2048")
-        XCTAssertEqual(s.benchmarkArguments[s.benchmarkArguments.firstIndex(of: "-ub")! + 1], "2048")
-        XCTAssertEqual(s.benchmarkArguments[s.benchmarkArguments.firstIndex(of: "-b")! + 1], "2048")
+        let launch = try XCTUnwrap(s.launchUbatch,
+                                   "the launch value is nil only when the setting is 0")
+        // A 4 GB card clamps the measured-unsafe 2048 to 1024; a larger card keeps it.
+        XCTAssertLessThanOrEqual(launch.value, 2048)
+        XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--ubatch-size")! + 1],
+                       String(launch.value))
+        XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "--batch-size")! + 1],
+                       String(launch.value))
+        XCTAssertEqual(s.benchmarkArguments[s.benchmarkArguments.firstIndex(of: "-ub")! + 1],
+                       String(launch.value))
+        XCTAssertEqual(s.benchmarkArguments[s.benchmarkArguments.firstIndex(of: "-b")! + 1],
+                       String(launch.value))
 
         s.ubatch = 0
         XCTAssertNil(s.effectiveUbatch, "0 leaves the engine's own default")

@@ -145,6 +145,11 @@ struct SettingsView: View {
         threads = advice.threads
         if dynamicMoeEnabled { dynamicMoeEnabled = false }
     }
+    /// The launch clamps the micro-batch to the selected card; show that here
+    /// instead of letting the engine fail on an oversized compute buffer.
+    private var ubatchClamp: (value: Int, clamped: Bool)? {
+        ServerSettings.fromDefaults().launchUbatch
+    }
     private var serverIsStopped: Bool {
         if case .stopped = server.state { return true }
         if case .failed = server.state { return true }
@@ -1205,6 +1210,20 @@ struct SettingsView: View {
                         .infoTip(loc.t("Cuántos tokens de prompt procesa la GPU de una vez. Solo aporta en modelos MoE, y cuánto depende de dónde estén los expertos. Con expertos en CPU cada micro-lote los sube por el bus, así que uno más grande paga ese viaje menos veces: medido en una Radeon RX 6700 XT, leer 2048 tokens pasa de 475 a 886 tokens por segundo en un 35B, y de 546 a 1133 en un 30B. Con el modelo entero en la tarjeta la mejora ronda el 10%, igual con una GPU que repartido entre varias. La generación no cambia en ningún caso. A cambio ocupa VRAM, cerca de 0.5 GB por cada 512 tokens de micro-lote, así que si vas justo tendrás que bajar los expertos en CPU para compensar.",
                                     // swiftlint:disable:next line_length
                                     "How many prompt tokens the GPU processes at once. It only helps MoE models, and how much depends on where the experts live. With experts on the CPU every micro-batch uploads them over the bus, so a larger one pays that trip fewer times: measured on a Radeon RX 6700 XT, reading 2048 tokens goes from 475 to 886 tokens per second on a 35B, and from 546 to 1133 on a 30B. With the model whole on the card the gain is around 10%, the same on one GPU as split across several. Generation is unchanged in every case. In exchange it takes VRAM, around 0.5 GB per 512 tokens of micro-batch, so if you are tight you will have to lower the experts on CPU to make room."))
+                        if let clamp = ubatchClamp, clamp.value == 0 {
+                            Label(loc.t("No hay VRAM suficiente para un micro-lote seguro de 512 tokens; bájalo a 0 o reduce el contexto o los expertos en CPU.",
+                                        "Not enough VRAM for a safe 512-token micro-batch; set it to 0 or lower the context or experts on CPU."),
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        } else if let clamp = ubatchClamp, clamp.clamped {
+                            Label(loc.t("Se lanzará con %@ tokens de micro-lote para que quepa en la VRAM.",
+                                        "Will launch with a %@-token micro-batch to fit VRAM.",
+                                        "\(clamp.value)"),
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
                     }
                 }
                 LabeledContent(loc.t("Peticiones simultáneas", "Concurrent requests")) {

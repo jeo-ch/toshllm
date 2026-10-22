@@ -478,6 +478,12 @@ private struct ServerConfigurationWorkspace: View {
                 ServerSettingRow(icon: "square.stack.3d.up", title: loc.t("Modelos simultáneos", "Models loaded at once")) {
                     Stepper("\(routerMax(settings).wrappedValue)", value: routerMax(settings), in: 1...4).fixedSize()
                 }
+                Label(loc.t("El router baja el contexto de cada modelo si no cabe en la VRAM; el valor pedido es el máximo y el registro de arranque muestra el aplicado.",
+                            "The router lowers each model's context if it doesn't fit VRAM; the requested value is the ceiling and the launch log shows the applied value."),
+                      systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if showAdvanced {
                 Divider().padding(.vertical, 3)
