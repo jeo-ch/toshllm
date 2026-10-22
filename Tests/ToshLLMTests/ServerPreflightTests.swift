@@ -86,6 +86,15 @@ final class ServerPreflightTests: XCTestCase {
         XCTAssertFalse(off.clamped)
     }
 
+    /// Model selection and router presets must use the report's measured 6
+    /// expert layers on the exact 4 GB profile, not the estimator's 10.
+    func testMeasuredGCNProfileRecommendsSixExperts() {
+        XCTAssertEqual(Estimator.measuredNcmoe(
+            spec: moeSpec(), hw: hardware(), reserveMB: 1_024), 6)
+        XCTAssertNil(Estimator.measuredNcmoe(
+            spec: moeSpec(), hw: hardware(vramMB: 12_288), reserveMB: 1_024))
+    }
+
     func testEstimatorCapsSuggestedNcmoeToNgl() {
         let estimate = Estimator.estimate(
             spec: moeSpec(), hw: hardware(), ctx: 262_144, kvScale: 1, nglLimit: 10)
@@ -110,7 +119,8 @@ final class ServerPreflightTests: XCTestCase {
     func testEstimateCurrentIgnoresHugeGlobalContextForNcmoe() {
         let defaults = UserDefaults.standard
         let keys = [SettingsKeys.ctx, SettingsKeys.ngl, SettingsKeys.cacheTypeK,
-                    SettingsKeys.cacheTypeV, SettingsKeys.multiGPU]
+                    SettingsKeys.cacheTypeV, SettingsKeys.multiGPU,
+                    SettingsKeys.vramReserve]
         let old = keys.map { defaults.object(forKey: $0) }
         defer {
             for (key, value) in zip(keys, old) {
@@ -127,12 +137,17 @@ final class ServerPreflightTests: XCTestCase {
         defaults.set("f16", forKey: SettingsKeys.cacheTypeK)
         defaults.set("f16", forKey: SettingsKeys.cacheTypeV)
         defaults.set(false, forKey: SettingsKeys.multiGPU)
+        defaults.set(1_024, forKey: SettingsKeys.vramReserve)
 
         let current = Estimator.estimateCurrent(spec: moeSpec(), hw: hardware())
-        let capped = Estimator.estimate(
-            spec: moeSpec(), hw: hardware(), ctx: 16_384, kvScale: 1, nglLimit: 10)
-        XCTAssertEqual(current.suggestedNcmoe, capped.suggestedNcmoe)
+        // The measured 4 GB profile keeps 6 experts off the GPU; the huge
+        // global context must neither push that to 10 nor back to block_count.
+        XCTAssertEqual(current.suggestedNcmoe, 6)
         XCTAssertLessThanOrEqual(current.suggestedNcmoe, 10)
+
+        defaults.set(5, forKey: SettingsKeys.ngl)
+        XCTAssertLessThanOrEqual(
+            Estimator.estimateCurrent(spec: moeSpec(), hw: hardware()).suggestedNcmoe, 5)
     }
 
     func testMmprojOverrideRejectsRecordedIncompatibility() throws {

@@ -283,6 +283,32 @@ enum Estimator {
         return estimateCurrent(spec: Catalog.spec(forLocal: lm), hw: hardware).suggestedNcmoe
     }
 
+    /// The report measured 10/48 layers + 6 expert layers on the 4 GB wave64
+    /// card. The estimator still puts every expert of those 10 layers on the
+    /// CPU (ncmoe 10) because it charges full-model KV, so use the calibrated
+    /// profile when the model and card match it. Every other configuration
+    /// keeps the estimator; 12 GB+ cards therefore do not change.
+    static func measuredNcmoe(spec: ModelSpec, hw: HardwareInfo,
+                              reserveMB: Int) -> Int? {
+        guard let gpu = hw.bestGPU, gpu.vramMB <= 5 * 1024,
+              spec.isMoE, spec.fileGB >= 12, spec.layers >= 32,
+              GPUArchitectureClassifier.architecture(for: gpu.name) == "GCN / Vega" else {
+            return nil
+        }
+        let advice = HardwareTuningAdvisor.advise(HardwareTuningInput(
+            gpuName: gpu.name, vramMB: gpu.vramMB, ramGB: hw.ramGB,
+            physicalCores: hw.physicalCores, logicalCores: hw.logicalCores,
+            reserveMB: reserveMB, modelFileGB: spec.fileGB,
+            modelLayers: spec.layers, isMoE: spec.isMoE,
+            expertGB: spec.expertGB, kvBytesPerToken: spec.kvBytesPerToken,
+            trainedContext: nil, requestedCtx: 16_384, requestedUbatch: 0,
+            currentNgl: 10, currentNcmoe: 6, currentCacheK: "f16",
+            currentCacheV: "f16", currentThreads: hw.physicalCores,
+            dynamicMoeActive: false, manualFullGPU: false, routerMode: false))
+        guard let advice, advice.measuredProfile else { return nil }
+        return advice.ncmoe
+    }
+
     /// Estimate using the user's current context size and KV quantization.
     /// `ncmoeOverride` reflects a user-set expert-offload for a MoE model, so the
     /// shown speed/fit match what will actually run instead of the recommendation.
@@ -298,10 +324,16 @@ enum Estimator {
         let ngl = d.object(forKey: SettingsKeys.ngl) == nil ? 99 : d.integer(forKey: SettingsKeys.ngl)
         let scale = (kvTypeScale(d.string(forKey: SettingsKeys.cacheTypeK) ?? "f16")
                    + kvTypeScale(d.string(forKey: SettingsKeys.cacheTypeV) ?? "f16")) / 2
+        let reserve = d.object(forKey: SettingsKeys.vramReserve) == nil
+            ? 0 : d.integer(forKey: SettingsKeys.vramReserve)
+        // Use the calibrated measured profile for the exact low-VRAM GCN case
+        // unless the user already chose an ncmoe for this file.
+        let measured = measuredNcmoe(spec: spec, hw: hw, reserveMB: reserve)
+            .map { min($0, max(0, ngl)) }
         return estimate(spec: spec, hw: hw, ctx: ctx, kvScale: scale,
                         multiGPU: d.bool(forKey: SettingsKeys.multiGPU),
                         tensorSplit: (d.string(forKey: SettingsKeys.splitMode) ?? "layer") == "tensor",
-                        ncmoeOverride: ncmoeOverride, nglLimit: ngl)
+                        ncmoeOverride: ncmoeOverride ?? measured, nglLimit: ngl)
     }
 
     /// KV cache size of a quantization type relative to f16.
