@@ -290,6 +290,15 @@ enum Estimator {
     /// keeps the estimator; 12 GB+ cards therefore do not change.
     static func measuredNcmoe(spec: ModelSpec, hw: HardwareInfo,
                               reserveMB: Int) -> Int? {
+        measuredTuning(spec: spec, hw: hw, reserveMB: reserveMB)?.ncmoe
+    }
+
+    /// The whole measured profile (ngl 10, ncmoe 6, 16k, 1024 micro-batch)
+    /// when the card and model are the exact geometry the report measured.
+    /// Router presets use the offload pair from here; the estimator and every
+    /// other card keep their existing values.
+    static func measuredTuning(spec: ModelSpec, hw: HardwareInfo,
+                               reserveMB: Int) -> HardwareTuningAdvice? {
         guard let gpu = hw.bestGPU, gpu.vramMB <= 5 * 1024,
               spec.isMoE, spec.fileGB >= 12, spec.layers >= 32,
               GPUArchitectureClassifier.architecture(for: gpu.name) == "GCN / Vega" else {
@@ -306,7 +315,7 @@ enum Estimator {
             currentCacheV: "f16", currentThreads: hw.physicalCores,
             dynamicMoeActive: false, manualFullGPU: false, routerMode: false))
         guard let advice, advice.measuredProfile else { return nil }
-        return advice.ncmoe
+        return advice
     }
 
     /// Estimate using the user's current context size and KV quantization.

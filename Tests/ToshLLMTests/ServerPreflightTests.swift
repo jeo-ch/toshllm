@@ -91,6 +91,8 @@ final class ServerPreflightTests: XCTestCase {
     func testMeasuredGCNProfileRecommendsSixExperts() {
         XCTAssertEqual(Estimator.measuredNcmoe(
             spec: moeSpec(), hw: hardware(), reserveMB: 1_024), 6)
+        XCTAssertEqual(Estimator.measuredTuning(
+            spec: moeSpec(), hw: hardware(), reserveMB: 1_024)?.ngl, 10)
         XCTAssertNil(Estimator.measuredNcmoe(
             spec: moeSpec(), hw: hardware(vramMB: 12_288), reserveMB: 1_024))
     }

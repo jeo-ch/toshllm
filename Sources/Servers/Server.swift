@@ -581,7 +581,8 @@ struct ServerSettings {
     /// Builds the router's `--models-preset` INI: one `[alias]` section per model,
     /// shared engine config plus per-path ncmoe/mmproj/MTP. `extraArgs` (free-form
     /// CLI tokens) isn't representable generically here, so it's skipped.
-    func routerPresetINI(modelPaths: [String], ncmoeByPath: [String: Int]) -> String {
+    func routerPresetINI(modelPaths: [String], ncmoeByPath: [String: Int],
+                         nglByPath: [String: Int] = [:]) -> String {
         // Same FA policy as `arguments`: force only for quantized KV.
         let faValue = kvNeedsFlashAttention ? "on" : (effectiveFaAmd ? "auto" : flashAttn)
         var seenAliases = Set<String>()
@@ -595,7 +596,8 @@ struct ServerSettings {
             }
             seenAliases.insert(alias)
 
-            let modelCtx = Self.routerCtx(forModel: path, requested: ctx, ngl: ngl,
+            let modelNgl = nglByPath[path] ?? ngl
+            let modelCtx = Self.routerCtx(forModel: path, requested: ctx, ngl: modelNgl,
                                           ncmoe: ncmoeByPath[path] ?? 0,
                                           kvScale: (Estimator.kvTypeScale(cacheTypeK)
                                                     + Estimator.kvTypeScale(cacheTypeV)) / 2,
@@ -603,13 +605,15 @@ struct ServerSettings {
             if modelCtx < ctx {
                 AppLog.server.warning("router context for \(alias): requested \(ctx), using \(modelCtx) to fit the GPU budget")
             }
-            var lines = ["[\(alias)]", "model = \(path)", "n-gpu-layers = \(ngl)",
+            var lines = ["[\(alias)]", "model = \(path)", "n-gpu-layers = \(modelNgl)",
                          "ctx-size = \(modelCtx)", "threads = \(threads)", "flash-attn = \(faValue)"]
             if let ub = launchUbatch, ub.value > 0 {
                 lines.append("ubatch-size = \(ub.value)")
                 lines.append("batch-size = \(ub.value)")
             }
-            if let ncmoe = ncmoeByPath[path], ncmoe > 0 { lines.append("n-cpu-moe = \(ncmoe)") }
+            if let ncmoe = ncmoeByPath[path], ncmoe > 0 {
+                lines.append("n-cpu-moe = \(min(ncmoe, modelNgl))")
+            }
             if let mode = Self.loadMode(noMmap: noMmap, mlock: mlock) { lines.append("load-mode = \(mode)") }
             let mmproj = loadVision ? Self.mmprojPath(forModel: path) : nil
             if let mmproj {
@@ -2363,10 +2367,23 @@ final class ServerController: ObservableObject {
     nonisolated static func writeRouterPreset(settings: ServerSettings) {
         let models = LocalModel.scan(in: ServerSettings.modelsDirectory)
         let paths = models.map(\.url.path)
-        let ncmoeByPath = Dictionary(uniqueKeysWithValues: paths.map {
-            ($0, Estimator.ncmoeForSelection(path: $0, models: models))
-        })
-        let ini = settings.routerPresetINI(modelPaths: paths, ncmoeByPath: ncmoeByPath)
+        let hardware = HardwareInfo.detect()
+        var ncmoeByPath: [String: Int] = [:]
+        var nglByPath: [String: Int] = [:]
+        for path in paths {
+            let saved = ServerSettings.recalledNcmoe(forModel: path)
+            let measured: HardwareTuningAdvice? = saved == nil && settings.ngl >= 99
+                ? HardwareTuningAdvisor.spec(forModelPath: path, models: models).flatMap {
+                    Estimator.measuredTuning(spec: $0, hw: hardware,
+                                             reserveMB: settings.vramReserveMB)
+                }
+                : nil
+            nglByPath[path] = measured?.ngl ?? settings.ngl
+            ncmoeByPath[path] = saved ?? measured?.ncmoe
+                ?? Estimator.ncmoeForSelection(path: path, models: models)
+        }
+        let ini = settings.routerPresetINI(modelPaths: paths, ncmoeByPath: ncmoeByPath,
+                                           nglByPath: nglByPath)
         try? ini.write(to: ServerSettings.routerPresetPath(port: settings.port), atomically: true, encoding: .utf8)
     }
 

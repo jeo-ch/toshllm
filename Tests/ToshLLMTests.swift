@@ -3315,6 +3315,21 @@ final class RouterModeTests: XCTestCase {
         let sections = ini.components(separatedBy: "\n\n").filter { $0.contains("model = ") }
         XCTAssertEqual(sections.count, 2, "dos archivos con el mismo nombre deben quedar en secciones separadas")
     }
+
+    /// The measured profile writes ngl 10 even when the global default is 99,
+    /// and never lets ncmoe exceed ngl in a router section.
+    func testRouterPresetUsesPerModelNglAndCapsNcmoe() {
+        let path = "/models/measured.gguf"
+        let ini = makeSettings().routerPresetINI(
+            modelPaths: [path], ncmoeByPath: [path: 6], nglByPath: [path: 10])
+        XCTAssertTrue(ini.contains("n-gpu-layers = 10"))
+        XCTAssertTrue(ini.contains("n-cpu-moe = 6"))
+
+        let capped = makeSettings().routerPresetINI(
+            modelPaths: [path], ncmoeByPath: [path: 6], nglByPath: [path: 5])
+        XCTAssertTrue(capped.contains("n-gpu-layers = 5"))
+        XCTAssertTrue(capped.contains("n-cpu-moe = 5"))
+    }
 }
 
 final class ConversationDecodingTests: XCTestCase {
