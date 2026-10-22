@@ -30,8 +30,12 @@ OUT = ROOT / "Assets" / "lang" / "_template.json"
 # t( "<swift string>" , "<swift string>" [, args...] )  — the two literals may be
 # followed by placeholder values, so the call can close after them or continue.
 # A Swift string body is any run of non-quote / non-backslash chars or escapes.
+# The gap after the comma may hold a `swiftlint:disable:next line_length`
+# comment, which is how the long settings tooltips keep their two literals on
+# separate lines.
 STR = r'"((?:[^"\\]|\\.)*)"'
-CALL = re.compile(r'\bt\(\s*' + STR + r'\s*,\s*' + STR + r'\s*[,)]', re.DOTALL)
+GAP = r'(?:\s|//[^\n]*\n)*'
+CALL = re.compile(r'\bt\(\s*' + STR + r'\s*,\s*' + GAP + STR + r'\s*[,)]', re.DOTALL)
 
 # Strings used by the standalone web console (Assets/test-ui/index.html). They
 # don't live in Swift, so they're listed here to appear in the template; the

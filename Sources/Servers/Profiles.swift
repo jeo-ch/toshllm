@@ -64,6 +64,8 @@ struct Profile: Codable, Identifiable {
     enum Pin {
         static let model      = "model"
         static let moe        = "moe"
+        static let layers     = "layers"
+        static let threads    = "threads"
         static let ctx        = "ctx"
         static let flashAttention = "flashAttention"
         static let gpu        = "gpu"
@@ -313,6 +315,8 @@ extension ServerSettings {
     /// everything else keeps the global value. The port can never be shared.
     mutating func applyPinned(_ p: Profile, _ pinned: Set<String>) {
         port = p.port
+        if pinned.contains(Profile.Pin.layers) { ngl = p.ngl }
+        if pinned.contains(Profile.Pin.threads) { threads = p.threads }
         if pinned.contains(Profile.Pin.model) { modelPath = p.modelPath; ncmoe = p.ncmoe }
 if pinned.contains(Profile.Pin.moe) {
             ncmoe = p.ncmoe

@@ -377,6 +377,9 @@ private struct ServerConfigurationWorkspace: View {
     @AppStorage(SettingsKeys.cacheTypeV) private var globalCacheTypeV = "f16"
     @AppStorage(SettingsKeys.autoKVMode) private var globalAutoKVMode = "auto"
     @AppStorage(SettingsKeys.ncmoe) private var globalNcmoe = 0
+    @AppStorage(SettingsKeys.ngl) private var globalNgl = 99
+    @AppStorage(SettingsKeys.threads) private var globalThreads = 6
+    @AppStorage(SettingsKeys.dynamicMoeEnabled) private var globalDynamicMoe = false
     @AppStorage(SettingsKeys.loadVision) private var globalVision = true
     @AppStorage(SettingsKeys.flashAttn) private var globalFlashAttention = "auto"
     @AppStorage(SettingsKeys.faAmd) private var globalAMDFlashAttention = ServerSettings.defaultFaAmd
@@ -390,6 +393,7 @@ private struct ServerConfigurationWorkspace: View {
         [globalModelPath, globalPort, globalContext, globalContextAutomatic, globalGPU, globalGPUList,
          globalDiscovery, globalParallel, globalEmbeddings, globalMCP, globalRouter, globalRouterMax,
          globalExtraArgs, globalUbatch, globalCacheTypeK, globalCacheTypeV, globalAutoKVMode, globalNcmoe,
+         globalNgl, globalThreads, globalDynamicMoe,
          globalVision, globalFlashAttention, globalAMDFlashAttention]
     }
 
@@ -502,6 +506,12 @@ private struct ServerConfigurationWorkspace: View {
     private func modelConfigurationCard(_ settings: ServerSettings, _ facts: ServerModelFacts) -> some View {
         DetailPanel(title: loc.t("Configuración del modelo", "Model configuration"),
                     subtitle: loc.t("Parámetros específicos del modelo seleccionado.", "Model-specific parameters for the selected model."), icon: "cube") {
+            if let advice = tuningAdvice(settings) {
+                HardwareTuningCard(advice: advice, isApplied: advice.isApplied(to: settings)) {
+                    applyTuningAdvice(advice)
+                }
+                Divider().padding(.vertical, 2)
+            }
             if showAdvanced || facts.isMoE {
                 AdaptiveTwoUp(threshold: 820, spacing: 12) {
                     modelRuntimeGroup(settings, facts)
@@ -709,6 +719,54 @@ private struct ServerConfigurationWorkspace: View {
         ServerSettings.ubatchOptions.map { .init(value: $0, title: ServerSettings.ubatchLabel($0, loc: loc)) }
     }
 
+
+    /// The card is advisory: the allocator reads the selected model's geometry
+    /// and the server's effective settings, then offers values that are safe to
+    /// launch. It never silently changes the running configuration.
+    private func tuningAdvice(_ settings: ServerSettings) -> HardwareTuningAdvice? {
+        guard let spec = HardwareTuningAdvisor.spec(forModelPath: settings.modelPath,
+                                                    models: models.models) else { return nil }
+        return HardwareTuningAdvisor.advise(hardware: hardware, spec: spec, settings: settings)
+    }
+
+    private func applyTuningAdvice(_ advice: HardwareTuningAdvice) {
+        let settings = server.effectiveSettings()
+        ServerSettings.rememberNcmoe(advice.ncmoe, forModel: settings.modelPath)
+        let disableAutomatic = settings.usesAutoPlan || settings.manualFullGPU
+        if server.profile == nil {
+            globalNgl = advice.ngl
+            globalNcmoe = advice.ncmoe
+            globalContext = advice.ctx
+            globalContextAutomatic = false
+            globalUbatch = advice.ubatch
+            globalCacheTypeK = advice.cacheTypeK
+            globalCacheTypeV = advice.cacheTypeV
+            globalThreads = advice.threads
+            if disableAutomatic { globalDynamicMoe = false }
+            return
+        }
+        guard var profile = server.profile else { return }
+        profile.ngl = advice.ngl
+        profile.ncmoe = advice.ncmoe
+        profile.ctx = advice.ctx
+        profile.contextAutomatic = false
+        profile.ubatch = advice.ubatch
+        profile.cacheTypeK = advice.cacheTypeK
+        profile.cacheTypeV = advice.cacheTypeV
+        profile.threads = advice.threads
+        if disableAutomatic { profile.dynamicMoeEnabled = false }
+        if profile.pinned != nil {
+            var pins = profile.pinned ?? []
+            for key in [Profile.Pin.layers, Profile.Pin.moe, Profile.Pin.ctx,
+                        Profile.Pin.ubatch, Profile.Pin.kv, Profile.Pin.threads]
+            where !pins.contains(key) {
+                pins.append(key)
+            }
+            profile.pinned = pins
+        }
+        server.profile = profile
+        manager.schedulePersist()
+    }
 
     private func applyProfile(_ profile: Profile) {
         if server.profile == nil {

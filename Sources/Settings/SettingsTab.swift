@@ -30,6 +30,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.ngl) private var ngl = 99
     @AppStorage(SettingsKeys.ncmoe) private var ncmoe = 0
     @AppStorage(SettingsKeys.ctx) private var ctx = 16384
+    @AppStorage(SettingsKeys.contextAutomatic) private var contextAutomatic = false
     @AppStorage(SettingsKeys.threads) private var threads = 6
     @AppStorage(SettingsKeys.flashAttn) private var flashAttn = "auto"
     @AppStorage(SettingsKeys.noMmap) private var noMmap = true
@@ -111,11 +112,38 @@ struct SettingsView: View {
     }
     /// Quantizing the keys is what costs quality; values tolerate 4 bits. Measured
     /// within 0.5% of f16 on 4B, 8B and 35B, at 25% less cache than q8_0/q8_0.
+    /// GCN/Vega is excluded: on those wave64 cards quantized KV measured 27.7 t/s
+    /// of prompt against 47.9 with f16, so the generic Turbo hint would be wrong.
     private var kvSuggestion: (k: String, v: String)? {
         guard !ServerSettings.isAppleSilicon, !modelPath.isEmpty,
               ServerSettings.modelSupportsTurboKV(at: modelPath),
-              !ServerSettings.modelUsesMLA(at: modelPath) else { return nil }
+              !ServerSettings.modelUsesMLA(at: modelPath),
+              !isWave64GCN else { return nil }
         return ("q8_0", "turbo4")
+    }
+    /// The report's baseline card is `gfx803`; the classifier maps it, like the
+    /// other GCN/Vega chips, to this architecture string.
+    private var isWave64GCN: Bool {
+        guard let gpu = hardware.bestGPU else { return false }
+        return GPUArchitectureClassifier.architecture(for: gpu.name) == "GCN / Vega"
+    }
+    private var tuningAdvice: HardwareTuningAdvice? {
+        guard let spec = HardwareTuningAdvisor.spec(forModelPath: modelPath,
+                                                    models: models.models) else { return nil }
+        return HardwareTuningAdvisor.advise(hardware: hardware, spec: spec,
+                                            settings: ServerSettings.fromDefaults())
+    }
+    private func applyTuningAdvice(_ advice: HardwareTuningAdvice) {
+        ServerSettings.rememberNcmoe(advice.ncmoe, forModel: modelPath)
+        ngl = advice.ngl
+        ncmoe = advice.ncmoe
+        ctx = advice.ctx
+        contextAutomatic = false
+        ubatch = advice.ubatch
+        cacheTypeK = advice.cacheTypeK
+        cacheTypeV = advice.cacheTypeV
+        threads = advice.threads
+        if dynamicMoeEnabled { dynamicMoeEnabled = false }
     }
     private var serverIsStopped: Bool {
         if case .stopped = server.state { return true }
@@ -723,6 +751,15 @@ struct SettingsView: View {
             }
 
             Section(loc.t("Rendimiento y memoria", "Performance & Memory")) {
+                if let advice = tuningAdvice {
+                    HardwareTuningCard(
+                        advice: advice,
+                        isApplied: advice.isApplied(to: ServerSettings.fromDefaults())) {
+                            applyTuningAdvice(advice)
+                        }
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                        .listRowBackground(Color.clear)
+                }
                 Toggle(loc.t("Dynamic MoE (experimental)", "Dynamic MoE (experimental)"), isOn: $dynamicMoeEnabled)
                     .settingsGlyph("wand.and.stars")
                     .infoTip(loc.t("Apagado: los modelos MoE usan la descarga de expertos estándar con tus ajustes de abajo. Encendido: el motor usa GPU, RAM y el propio archivo del modelo para que quepa; guarda en VRAM los expertos más usados y en RAM lo que la máquina puede dar ahora, elige KV y lote, y si nada cabe con seguridad no carga el modelo y dice por qué.",
@@ -1025,6 +1062,26 @@ struct SettingsView: View {
                             "Quantization for KV cache values. With the AMD Flash Attention kernel any standard value type (f16/q8_0/q4_0) runs on the GPU at full speed, including the fast long-prompt route. Quantizing values saves more memory; keeping them at f16 (with quantized keys) preserves more quality... both run equally fast.")
                     : loc.t("Cuantización de los valores del KV cache. ⚠️ En GPU AMD (sin el kernel Flash Attention AMD) esto fuerza Flash Attention en CPU: la generación baja ~3× (de ~50 a ~15-19 t/s en un 8B). Úsalo solo cuando necesites contexto enorme; si no, déjalo en f16 y cuantiza solo las claves.",
                             "Quantization for KV cache values. ⚠️ On AMD GPUs (without the AMD Flash Attention kernel) this forces Flash Attention onto the CPU: generation drops ~3× (from ~50 to ~15-19 t/s on an 8B). Use only when you need huge context; otherwise keep f16 and quantize keys only."))
+                if isWave64GCN, cacheTypeK != "f16" || cacheTypeV != "f16" {
+                    HStack(alignment: .center, spacing: 12) {
+                        Label(loc.t("En esta tarjeta GCN (wave64) el KV cuantizado baja la lectura del prompt de 47.9 a 27.7 t/s. Usa f16 en claves y valores.",
+                                    "On this GCN card (wave64) quantized KV drops prompt reading from 47.9 to 27.7 t/s. Use f16 for keys and values."),
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Button(loc.t("Usar f16 / f16", "Use f16 / f16")) {
+                            cacheTypeK = "f16"
+                            cacheTypeV = "f16"
+                        }
+                        .glassButton()
+                        .controlSize(.small)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .glassSurface(in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
                 if !turboKVIncompatible, let s = kvSuggestion, cacheTypeK != s.k || cacheTypeV != s.v {
                     HStack(alignment: .center, spacing: 12) {
                         Image(systemName: "sparkles")
