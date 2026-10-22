@@ -26,11 +26,14 @@ struct ChatSketch: Codable, Equatable {
     var notice: String?
     /// The coordinate system of `origin` as a shapefile's .prj holds it.
     var prj: String?
+    /// What the agent says the figure is, such as whether it closes or is only a draft: every export carries it.
+    var standing: String?
 
     static let maximumPoints = 5000
 
     init(title: String?, unit: String, points: [[Double]], corners: [[Double]]? = nil, closed: Bool,
-         origin: [Double]? = nil, plane: String? = nil, notice: String? = nil, prj: String? = nil) {
+         origin: [Double]? = nil, plane: String? = nil, notice: String? = nil, prj: String? = nil,
+         standing: String? = nil) {
         self.title = title
         self.unit = unit
         self.points = points
@@ -40,6 +43,7 @@ struct ChatSketch: Codable, Equatable {
         self.plane = plane
         self.notice = notice
         self.prj = prj
+        self.standing = standing
     }
 
     /// One of an agent's `tosh.sketches`, or nil when it is not a figure that can be drawn.
@@ -66,7 +70,8 @@ struct ChatSketch: Codable, Equatable {
                   closed: object["closed"] as? Bool ?? false, origin: origin,
                   plane: origin == nil ? nil : (object["plane"] as? String).map { String($0.prefix(120)) },
                   notice: (object["notice"] as? String).map { String($0.prefix(200)) }.flatMap { $0.isEmpty ? nil : $0 },
-                  prj: origin == nil ? nil : (object["prj"] as? String).map { String($0.prefix(4000)) })
+                  prj: origin == nil ? nil : (object["prj"] as? String).map { String($0.prefix(4000)) },
+                  standing: (object["standing"] as? String).map { String($0.prefix(24)) }.flatMap { $0.isEmpty ? nil : $0 })
     }
 
     /// How far the last point ends from the first, in the sketch's unit.
@@ -125,11 +130,15 @@ extension ChatSketch {
                     "0", "TEXT", "8", "LABELS", "10", Self.number(corner[0] + height / 2), "20", Self.number(corner[1] + height / 2),
                     "30", "0.0", "40", Self.number(height), "1", "\(index + 1)"]
         }
+        let placedPoints = (points + cornerPoints).map(placed)
+        let left = placedPoints.map { $0[0] }.min() ?? 0, bottom = placedPoints.map { $0[1] }.min() ?? 0
         if let notice {
-            let placedPoints = (points + cornerPoints).map(placed)
-            let left = placedPoints.map { $0[0] }.min() ?? 0, bottom = placedPoints.map { $0[1] }.min() ?? 0
             out += ["0", "TEXT", "8", "NOTICE", "10", Self.number(left), "20", Self.number(bottom - 3 * height), "30", "0.0",
                     "40", Self.number(height), "1", notice.replacingOccurrences(of: "\n", with: " ")]
+        }
+        if let standing {
+            out += ["0", "TEXT", "8", "STATUS", "10", Self.number(left), "20", Self.number(bottom - 5 * height), "30", "0.0",
+                    "40", Self.number(height), "1", "STATUS: " + standing]
         }
         out += ["0", "ENDSEC", "0", "EOF"]
         return out.joined(separator: "\n") + "\n"
@@ -140,9 +149,11 @@ extension ChatSketch {
         let suffix = unit.isEmpty ? "" : "_" + unit
         let header = origin == nil ? "point,east\(suffix),north\(suffix)" : "point,x\(suffix),y\(suffix)"
         // a column rather than a comment line, which some table imports reject
-        let note = notice.map { ",\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"" } ?? ""
-        return ([header + (notice == nil ? "" : ",note")] + cornerPoints.map(placed).enumerated().map { index, corner in
-            "\(index + 1),\(Self.number(corner[0])),\(Self.number(corner[1]))" + note
+        let quoted = { (text: String) in ",\"" + text.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
+        let extra = (standing.map(quoted) ?? "") + (notice.map(quoted) ?? "")
+        let columns = (standing == nil ? "" : ",status") + (notice == nil ? "" : ",note")
+        return ([header + columns] + cornerPoints.map(placed).enumerated().map { index, corner in
+            "\(index + 1),\(Self.number(corner[0])),\(Self.number(corner[1]))" + extra
         }).joined(separator: "\n") + "\n"
     }
 }

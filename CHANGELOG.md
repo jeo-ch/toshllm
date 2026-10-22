@@ -3,6 +3,23 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Chat: an answer is no longer cut where its text holds a line or paragraph separator (U+2028, U+2029) or U+0085.** The app split the server's events at those characters as well as at line ends, so the piece of the answer they were in was lost; it now splits only at line ends, in the chat, its tools and MCP servers.
+- **Agent and chat: an operation a service only accepted is never said to be done.** A tool's result whose own status says the work was accepted, queued or is still running is shown as "accepted, not confirmed", and the model is told to say it is pending; it used to count as finished.
+- **Chat: a figure's status travels with every export.** What the agent says a figure is, such as a draft that does not close, goes into the shapefile's table, a column of the CSV and a text of the DXF, and a shapefile's table says how much of a gap its polygon closes; the polygon closed it silently.
+- **Web chat: an answer whose connection ends with nothing to resume from stops as an error,** marked incomplete, instead of loading forever with the send button blocked.
+- **Web chat: the context meter follows an agent's turns,** from the agent's own count, and an answer cut by a full context says so instead of blaming the limit of tokens per answer.
+- **Web chat: a message with an image gets an answer when the server's agent is on.** The agent handed the turn back, as it does to the app, and the web chat showed an empty answer; clients other than the app now get the model's answer to it.
+- **Chat: the context meter no longer reads "0k" for a full conversation.** It shows the server's count while it is current, tenths under ten thousand tokens, and an estimate marked "≈" after a turn the server did not count, such as an agent's answer by rules; the conversation is summarized on the server's count while it is current and on the estimate otherwise, so such turns no longer keep a full conversation from being summarized. Images count in the estimate, and after a summary the meter shows the summarized conversation instead of the figure from before it.
+- **Chat: a conversation that did not fit the context can go on.** The meter shows what the request needed, the app summarizes the older messages, and the message says it can be sent again; a summary of a conversation too long to summarize in one request is made from each message cut to its share. Near the end of the context, older turns go without their images and with shorter tool results.
+- **Chat: an answer cut because the conversation filled the context says so,** instead of pointing to the limit of tokens per answer and Continue, which would not fit. A turn the server ended with no answer says so instead of leaving nothing, a draft of an agent turn that failed is not kept as its answer, and a stop is no longer reported as a cut connection.
+- **Chat: what an agent marks to keep of an answer survives the summary,** as written after it, so an agent still finds what that answer named, such as a document it traced.
+- **Agent: a conversation that no longer fits the model's context goes on.** The server's agent leaves out its oldest exchanges for that turn, as the engine's tokenizer counts them and with room kept for the answer, and the answer says how many; every message after the context filled used to fail. A message that alone does not fit still says so, with the tokens it needs.
+- **Agent: an answer cut when the conversation filled the context says so,** instead of blaming the limit of tokens per answer, and an answer streamed until its tokens ran out is marked as incomplete; only answers written in one piece were. The answer's `tosh.context` says how full the context is after the turn.
+
 ## [0.87.28] - 2026-10-20
 
 ### Improved

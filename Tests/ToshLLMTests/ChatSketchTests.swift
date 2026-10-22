@@ -122,6 +122,26 @@ final class ChatSketchTests: XCTestCase {
         XCTAssertNil(try XCTUnwrap(ChatSketch(["points": [[0, 0], [1, 1]], "notice": ""])).notice)
     }
 
+    func testTheStatusAndAGapThePolygonClosesTravelWithEveryExport() throws {
+        let draft = try XCTUnwrap(ChatSketch(["points": [[0, 0], [0, 100], [100, 100], [100, 0], [2, 1]], "unit": "ft",
+                                              "closed": true, "standing": "review", "notice": "Draft"]))
+        XCTAssertEqual(draft.csv().split(separator: "\n").first, "point,east_ft,north_ft,status,note")
+        XCTAssertTrue(draft.csv().split(separator: "\n")[1].hasSuffix(",\"review\",\"Draft\""))
+        XCTAssertTrue(draft.dxf().contains("8\nSTATUS\n"), "the drawing says what the figure is")
+        XCTAssertTrue(draft.dxf().contains("STATUS: review"))
+        let table = String(decoding: draft.shapefile(named: "T"), as: UTF8.self)
+        XCTAssertTrue(table.contains("STATUS") && table.contains("review"))
+        // the polygon closes what the points leave open, and its table says how much
+        XCTAssertTrue(table.contains("GAP") && table.contains("2.236 ft closed by the polygon"), table)
+        // a figure that ends where it began closes nothing, and one without a status carries none
+        let exact = try XCTUnwrap(ChatSketch(["points": [[0, 0], [0, 100], [100, 100], [0, 0]], "unit": "ft",
+                                              "closed": true]))
+        XCTAssertNil(exact.closedGap)
+        XCTAssertNil(exact.standing)
+        XCTAssertFalse(exact.dxf().contains("STATUS"))
+        XCTAssertFalse(String(decoding: exact.shapefile(named: "T"), as: UTF8.self).contains("STATUS"))
+    }
+
     func testTheFigureStaysWithTheAnswerItCameWith() throws {
         var message = ChatMessage(role: "assistant", content: "It closes.")
         message.sketches = [ChatSketch(title: "Tract 1", unit: "ft", points: [[0, 0], [10, 0], [10, 10], [0, 0]], closed: true),

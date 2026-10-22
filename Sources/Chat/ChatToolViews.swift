@@ -14,6 +14,7 @@ struct ToolCallCard: View {
     private var icon: String {
         switch call.state {
         case .running: return "gearshape.2.fill"
+        case .completed where call.accepted == true: return "clock.badge.checkmark"
         case .completed: return "checkmark.circle.fill"
         case .failed, .denied: return "xmark.octagon.fill"
         case .pending, .awaitingPermission: return "hand.raised.fill"
@@ -36,6 +37,13 @@ struct ToolCallCard: View {
                             .lineLimit(1)
                     }
                     if call.state == .running { ProgressView().controlSize(.mini) }
+                    if call.accepted == true {
+                        Text(loc.t("aceptada, sin confirmar", "accepted, not confirmed"))
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .help(loc.t("El servicio aceptó la operación pero no ha dicho que terminara.",
+                                        "The service accepted the operation but has not said it finished."))
+                    }
                 }
                 .font(.callout.weight(.medium))
                 if let summary = call.summary {

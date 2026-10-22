@@ -342,7 +342,7 @@ actor ToshMCPService {
         let status = http?.statusCode ?? 0
         let sessionHeader = http?.value(forHTTPHeaderField: "Mcp-Session-Id")
         if http?.mimeType == "text/event-stream" {
-            for try await line in bytes.lines {
+            for try await line in bytes.streamLines {
                 guard line.hasPrefix("data:"),
                       let eventData = line.dropFirst(5).trimmingCharacters(in: .whitespaces).data(using: .utf8),
                       let object = try? JSONSerialization.jsonObject(with: eventData) as? [String: Any]

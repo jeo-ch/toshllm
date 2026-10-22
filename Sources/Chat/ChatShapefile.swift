@@ -38,7 +38,8 @@ enum StoredZip {
 
 extension ChatSketch {
     /// The figure as a shapefile in a ZIP: a polygon when it should close, else a line, at its coordinates and with
-    /// its coordinate system as the .prj when it has them, and its title and notice as attributes.
+    /// its coordinate system as the .prj when it has them, and its title, status, notice and any gap the polygon closes
+    /// as attributes.
     func shapefile(named stem: String) -> Data {
         var path = points.map(placed)
         if closed {
@@ -72,12 +73,17 @@ extension ChatSketch {
 
         var files: [(name: String, data: Data)] = [
             ("\(stem).shp", shp), ("\(stem).shx", shx),
-            ("\(stem).dbf", Self.table([("NAME", title ?? ""), ("NOTE", notice)].compactMap { name, value in
-                value.map { (name, $0) }
-            })),
+            ("\(stem).dbf", Self.table([("NAME", title ?? ""), ("STATUS", standing), ("NOTE", notice),
+                                         ("GAP", closedGap)].compactMap { name, value in value.map { (name, $0) } })),
             ("\(stem).cpg", Data("UTF-8".utf8))]
         if let prj { files.append(("\(stem).prj", Data(prj.utf8))) }
         return StoredZip.archive(files)
+    }
+
+    /// What a polygon closes that its points leave open, which the drawing shows apart and a polygon cannot.
+    var closedGap: String? {
+        guard closed, gap > span * 1e-4 else { return nil }
+        return String(format: "%.3f", gap) + (unit.isEmpty ? "" : " " + unit) + " closed by the polygon"
     }
 
     /// A dBase table of one record with a text field per value, cut at a character boundary to fit.

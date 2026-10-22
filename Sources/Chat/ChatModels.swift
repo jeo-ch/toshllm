@@ -92,11 +92,19 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var map: ChatMap? = nil
     /// A figure the agent drew with the answer in a plane of its own, such as a tract from its deed's calls.
     var sketches: [ChatSketch]? = nil
+    /// Lines of the answer a later turn needs, as the agent marked them: kept as written when the answer is summarized.
+    var kept: String? = nil
+
+    /// Tokens an image costs a vision model at the chat's largest image size, on the high side (Qwen-VL: a token per
+    /// 28x28 pixels).
+    static let tokensPerImageMegapixel = 1300
 
     var estimatedTokens: Int {
         let text = role == "assistant" ? parts.body + (settledInterim ?? "") : wireContent
         let attached = (attachments ?? []).reduce(0) { $0 + $1.estimatedTokens }
-        return max(1, text.count / 4) + attached
+        let megapixels = min(4, max(1, UserDefaults.standard.double(forKey: SettingsKeys.chatMaxImageMegapixels)))
+        let images = (imageURIs ?? []).count * Int(megapixels * Double(Self.tokensPerImageMegapixel))
+        return max(1, text.count / 4) + attached + images
     }
 
     /// The interim text once it may be shown and sent back: every math call of the round succeeded.
@@ -174,6 +182,10 @@ struct Conversation: Identifiable, Codable {
     /// Last exchange's context tokens, per chat so the bar follows the open
     /// conversation and persists with the KV cache. Optional for old JSON.
     var contextUsed: Int? = nil
+    /// How many messages the conversation had when the server counted `contextUsed`: past that it is stale.
+    var contextUsedAt: Int? = nil
+    /// What the agent marked to keep of the answers summarized so far, oldest first.
+    var kept: [String]? = nil
 }
 
 struct ChatBranch: Identifiable, Codable, Equatable {
@@ -236,6 +248,8 @@ struct StreamError: LocalizedError {
     var gpu = false
     /// The stream was cut before the answer ended and could not be resumed.
     var cut = false
+    /// The request did not fit the context: the tokens the engine counted for it.
+    var contextTokens: Int? = nil
     var errorDescription: String? { message }
 }
 

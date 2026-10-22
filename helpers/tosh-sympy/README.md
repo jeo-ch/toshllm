@@ -207,13 +207,17 @@ below changes meaning or goes away; new fields may appear.
 |---|---|
 | `version` | `1` |
 | `intent` | `no_math`, `conceptual`, `computational`, `ambiguous` |
-| `outcome` | `answered`, `validated_results_only`, `clarification_required`, `unresolved`, `turn_limit` |
+| `outcome` | `answered`, `validated_results_only`, `clarification_required`, `unresolved`, `turn_limit`, `cut_at_limit` (the answer ran out of its tokens), `cut_at_context` (the conversation filled the context while it was written) |
 | `calls[]` | `tool`, `arguments`, `status` (`ok` or an error code such as `transcription_mismatch`, `needs_review`, `no_closed_form`, `timeout`), `interpreted_input`, `result_kind` |
 | `validated_results[]` | `tool`, `operation`, `result_kind`, `result` (the tool's own fields), `interpreted_input` |
 | `passes` | model passes the turn took |
 | `seconds` | wall time of the turn |
+| `context` | `used`: tokens the conversation takes with this answer, the whole of it even when the turn left out its oldest messages, which then is more than `n_ctx`; `n_ctx`: the model's context; `left_out`: oldest messages of the conversation left out of this turn |
 
-`usage` adds up every pass. Status codes and the fields above never change language; the texts
+`usage` adds up every pass, so a client measures how full the context is by `context.used`, not by it.
+A conversation that no longer fits the context, with room left for the answer, loses its oldest
+exchanges for that turn, as the engine's tokenizer counts them; the answer ends saying how many, and a
+message that alone does not fit gets `exceed_context_size_error`. Status codes and the fields above never change language; the texts
 the agent writes itself (a question back, the list of validated results) follow the language of
 the conversation, Spanish or English, and English when in doubt.
 
@@ -238,6 +242,13 @@ An agent may then hand back a turn that is outside its field: it answers with em
 runs nothing and sets `"tosh": {"version": 1, "outcome": "declined"}`, and the app answers that
 turn with its own tools, as it would without the extension. Other clients never send the field,
 so they always get an answer.
+A turn whose last message brings images, audio or video is handed back the same way to a client that sends
+`tosh` options, as the app does; any other client gets the model's own answer to it.
+
+An answer whose words a later turn needs, such as the reference and the figures of what it traced, puts them in
+`"keep"` in its `tosh`, as written in the answer. A client that summarizes older messages to save context keeps
+each one as it is, after a line `Kept from earlier answers, as written:` at the end of the summary, with a `---`
+line between them, so that the agent can still find what they name.
 
 An agent can offer a map of an answer without delaying it: it adds `"map_request": {"show": bool, ...}`
 to the answer's `tosh`, without any geometry. A client sends that object back as
@@ -254,7 +265,9 @@ each the path east and north of its first point, in order. The app draws them un
 and several to a row, each one enlarged on request; it numbers `corners` (the points themselves when absent) from 1
 and, when `closed`, shows in red the gap between the last point and the first. A figure that lies in a coordinate
 system of its own, such as a State Plane zone, adds `"origin": [x, y]` (its first point there) and `"plane"` (the
-system's name): its DXF and CSV are then written at those coordinates.
+system's name): its DXF and CSV are then written at those coordinates. An optional `standing` (a short label of what the
+figure is, such as whether it closes or is only a draft) goes into every export: the shapefile's table, a column of
+the CSV and a text of the DXF; a shapefile's table also says how much of a gap its polygon closes.
 
 ### Direct calls
 
