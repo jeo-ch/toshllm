@@ -22,10 +22,10 @@ index 0550ae2be..2e44f14df 100644
          LOG_DBG("Using specialized template: Kimi K2 Thinking\n");
 diff --git a/common/parsers/glm4.cpp b/common/parsers/glm4.cpp
 new file mode 100644
-index 000000000..0884ba206
+index 000000000..f4618a1ae
 --- /dev/null
 +++ b/common/parsers/glm4.cpp
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,140 @@
 +#include "parsers.h"
 +
 +#include <algorithm>
@@ -133,7 +133,9 @@ index 000000000..0884ba206
 +        if (inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED) {
 +            return generation_prompt + tools + p.end();
 +        }
-+        return generation_prompt + p.choice({ tools, content }) + p.end();
++        // text written before a call is its own assistant block, so the call opens another <|assistant|>
++        auto text_then_call = p.optional(p.literal("\n")) + p.content(p.until(GEN_PROMPT)) + p.literal(GEN_PROMPT) + tools;
++        return generation_prompt + p.choice({ tools, text_then_call, content }) + p.end();
 +    });
 +
 +    data.parser = parser.save();
@@ -153,9 +155,12 @@ index 000000000..0884ba206
 +        for (const auto & name : names) {
 +            alternatives += (alternatives.empty() ? "" : "|") + regex_escape(name);
 +        }
++        const std::string name_prefix = glm4_name_prefix(names, 0, 4);
 +        data.grammar_triggers = {
 +            { COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN_FULL,
-+              "(?:" + glm4_name_prefix(names, 0, 4) + "|(?:" + alternatives + ")\n[\\s\\S]*)" }
++              "(?:" + name_prefix + "|(?:" + alternatives + ")\n[\\s\\S]*)" },
++            // after text, from the first characters of the name that follows the call's <|assistant|>
++            { COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN, regex_escape(GEN_PROMPT) + "(" + name_prefix + ")" }
 +        };
 +    }
 +

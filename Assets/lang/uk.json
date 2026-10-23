@@ -1617,6 +1617,7 @@
   "Stop server": "Зупинити сервер",
   "Stop the server before benchmarking: they share VRAM.": "Зупиніть сервер перед бенчмаркінгом: вони ділять VRAM.",
   "Stop the server before checking: the test uses the whole GPU.": "Зупиніть сервер перед перевіркою: тест використовує весь GPU.",
+  "Stop the server to change these: they apply when it starts.": "",
   "Stopped": "Зупинено",
   "Stops the current runs.": "Зупиняє поточні запуски.",
   "Stops the test after the current request.": "Зупиняє тест після поточного запиту.",

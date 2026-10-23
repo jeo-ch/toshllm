@@ -1617,6 +1617,7 @@
   "Stop server": "Ferma il server",
   "Stop the server before benchmarking: they share VRAM.": "Ferma il server prima del benchmark: condividono la VRAM.",
   "Stop the server before checking: the test uses the whole GPU.": "Ferma il server prima del controllo: il test utilizza l'intera GPU.",
+  "Stop the server to change these: they apply when it starts.": "",
   "Stopped": "Arrestato",
   "Stops the current runs.": "Ferma le esecuzioni correnti.",
   "Stops the test after the current request.": "Interrompe la prova dopo la richiesta in corso.",

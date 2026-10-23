@@ -1617,6 +1617,7 @@
   "Stop server": "停止服务器",
   "Stop the server before benchmarking: they share VRAM.": "跑分前请先停止服务器：两者共用显存。",
   "Stop the server before checking: the test uses the whole GPU.": "检查前请先停止服务器：测试会占满整个 GPU。",
+  "Stop the server to change these: they apply when it starts.": "",
   "Stopped": "已停止",
   "Stops the current runs.": "停止当前的运行。",
   "Stops the test after the current request.": "在当前请求完成后停止测试。",

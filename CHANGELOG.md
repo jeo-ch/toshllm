@@ -3,10 +3,12 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.87.29] - 2026-10-22
 
 ### Fixed
 
+- **LLMs: GLM-4-0414 models run a tool they call after writing some text.** The model writes what it is about to do, then the call in a block of its own, and that call came out in the answer as text; it now runs, with the text before it kept as the answer. Reported by [andruwa13](https://github.com/andruwa13) in [#129](https://github.com/engeldlgado/toshllm/issues/129).
+- **Servers: a setting locked while the server runs says so.** The model's micro-batch, its experts on the CPU and the other launch settings cannot change while the server runs, but their stepper and dropdown still looked editable and did nothing; they now look locked, and each locked panel says to stop the server to change them. The stepper's minus and plus take a click anywhere on their square, not only on the sign.
 - **Chat: an answer is no longer cut where its text holds a line or paragraph separator (U+2028, U+2029) or U+0085.** The app split the server's events at those characters as well as at line ends, so the piece of the answer they were in was lost; it now splits only at line ends, in the chat, its tools and MCP servers.
 - **Agent and chat: an operation a service only accepted is never said to be done.** A tool's result whose own status says the work was accepted, queued or is still running is shown as "accepted, not confirmed", and the model is told to say it is pending; it used to count as finished.
 - **Chat: a figure's status travels with every export.** What the agent says a figure is, such as a draft that does not close, goes into the shapefile's table, a column of the CSV and a text of the DXF, and a shapefile's table says how much of a gap its polygon closes; the polygon closed it silently.
