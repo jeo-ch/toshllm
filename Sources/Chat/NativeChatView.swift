@@ -1828,7 +1828,7 @@ struct NativeChatView: View {
                         Text(a.name).lineLimit(1)
                         if a.mediaKind == nil {
                             Text("~\(a.estimatedTokens)t")
-                                .font(.system(size: 9, design: .monospaced))
+                                .font(.system(size: 10, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         } else {
                             Button(loc.t("Vista previa", "Preview"), systemImage: "play.circle") {

@@ -255,7 +255,7 @@ index 53130e868..187bff861 100644
 +}
 +
 +static bool rs_save_small(const ggml_tensor * t, bool compact) {
-+    return compact && rs_save_type() != GGML_TYPE_F32 && t->type == GGML_TYPE_F32;
++    return compact && rs_save_type() != GGML_TYPE_F32 && t->type == GGML_TYPE_F32 && ggml_nelements(t) > 0;
 +}
 +
 +static void rs_write_small(llama_io_write_i & io, ggml_tensor * t, size_t offset, size_t size, int64_t n_per_row) {

@@ -840,6 +840,7 @@ struct SettingsView: View {
                                 onSelect: { gpuListCSV = $0.sorted().map(String.init).joined(separator: ",") },
                                 onToggle: toggleSplitGPU)
                         }
+                        .settingsGlyph("rectangle.split.3x1")
                         .infoTip(loc.t("Qué GPUs concretas participan en el reparto (p. ej. la 0 y la 6, saltándose las demás). Con 'Todas' se usan las primeras N del selector de arriba, y cada atajo 'Fabric' elige de una vez las tarjetas unidas por un mismo puente.",
                                     "Which specific GPUs take part in the split (e.g. 0 and 6, skipping the rest). With 'All', the first N from the picker above are used, and each 'Fabric' shortcut picks every card behind one bridge at once."))
                         if splitSelection.count == 1 {
@@ -1170,11 +1171,13 @@ struct SettingsView: View {
                 LabeledContent(loc.t("Flash Attention estándar (CPU)", "Standard Flash Attention (CPU)")) {
                     ToshDropdown(selection: $flashAttn, options: ["auto", "on", "off"].map { .init(value: $0, title: $0) }, width: 120)
                 }
+                .settingsGlyph("bolt.horizontal.circle")
                 .disabled(amdFlashActive || kvNeedsFlashAttention)
                 .infoTip(loc.t("Ruta Flash Attention estándar de llama.cpp. En GPU AMD cae en CPU; se fuerza a 'on' cuando el KV está cuantizado. Para atención en GPU usa el kernel AMD de abajo.",
                             "Standard llama.cpp Flash Attention path. On AMD GPUs it falls back to CPU; it is forced to 'on' when KV is quantized. For GPU attention use the AMD kernel below."))
                 if engineSelection.wrappedValue != "custom" {
                     Toggle(loc.t("Kernel Flash Attention AMD (GPU)", "AMD Flash Attention kernel (GPU)"), isOn: $faAmd)
+                        .settingsGlyph("bolt.fill")
                         .infoTip(loc.t("Kernel Metal propio, activo por defecto, que ejecuta la atención (prompt y generación) en la GPU AMD: cabezas estándar 64/72/128/256/512 y TurboQuant con padding 128/256/384/512/640. Si lo apagas, el KV cuantizado sigue requiriendo Flash Attention pero usa la ruta estándar en CPU.",
                                     "Custom Metal kernel, on by default, that runs attention (prompt and generation) on the AMD GPU: standard heads 64/72/128/256/512 and TurboQuant padded heads 128/256/384/512/640. If you turn it off, quantized KV still requires Flash Attention but uses the standard CPU path."))
                     Label(amdFlashActive
@@ -1198,6 +1201,7 @@ struct SettingsView: View {
                 }
                 if engineSelection.wrappedValue != "custom" {
                     Toggle(loc.t("Prefetch de expertos MoE (prompt)", "MoE expert prefetch (prompt)"), isOn: $prefetchExperts)
+                        .settingsGlyph("square.stack.3d.down.forward")
                         .infoTip(loc.t("Para modelos MoE con expertos en RAM (ncmoe > 0): sube los pesos de expertos a la GPU por una cola Metal paralela, solapando la subida con el cómputo. De 1.8× a 4.4× de velocidad de prompt medida (35B, gemma-4-26B, gpt-oss) sin costo de generación; el primer prompt tras cargar el modelo es algo más lento mientras se preparan los buffers.",
                                     "For MoE models with experts in RAM (ncmoe > 0): uploads expert weights to the GPU through a parallel Metal queue, overlapping the upload with compute. Measured 1.8×-4.4× prompt speed (35B, gemma-4-26B, gpt-oss) at no generation cost; the first prompt after loading the model is slightly slower while buffers warm up."))
                     if routerMode || ServerSettings.modelIsMoE(at: modelPath) {
@@ -1206,6 +1210,7 @@ struct SettingsView: View {
                                 .init(value: $0, title: ServerSettings.ubatchLabel($0, loc: loc))
                             })
                         }
+                        .settingsGlyph("square.grid.3x3")
                         // swiftlint:disable:next line_length
                         .infoTip(loc.t("Cuántos tokens de prompt procesa la GPU de una vez. Solo aporta en modelos MoE, y cuánto depende de dónde estén los expertos. Con expertos en CPU cada micro-lote los sube por el bus, así que uno más grande paga ese viaje menos veces: medido en una Radeon RX 6700 XT, leer 2048 tokens pasa de 475 a 886 tokens por segundo en un 35B, y de 546 a 1133 en un 30B. Con el modelo entero en la tarjeta la mejora ronda el 10%, igual con una GPU que repartido entre varias. La generación no cambia en ningún caso. A cambio ocupa VRAM, cerca de 0.5 GB por cada 512 tokens de micro-lote, así que si vas justo tendrás que bajar los expertos en CPU para compensar.",
                                     // swiftlint:disable:next line_length
@@ -1233,10 +1238,12 @@ struct SettingsView: View {
                         .init(value: 0, title: "Auto")
                     ])
                 }
+                .settingsGlyph("person.2")
                 .infoTip(loc.t("Cuántas peticiones procesa el motor a la vez. Con 1, las peticiones hacen cola en vez de competir por la GPU, y un prompt enorme interrumpido por el timeout de un cliente (VS Code) se retoma donde iba al reintentar. Sube el valor solo si varios clientes usan el servidor a la vez.",
                             "How many requests the engine processes at once. With 1, requests queue instead of competing for the GPU, and a huge prompt interrupted by a client timeout (VS Code) resumes where it was on retry. Raise it only if several clients use the server at the same time."))
                 if parallelSlots > 1 {
                     Toggle(loc.t("Contexto separado por petición", "Separate context per request"), isOn: $separateKV)
+                        .settingsGlyph("rectangle.split.2x1")
                         .infoTip(loc.t("Cada petición simultánea tiene su propia parte del contexto (el contexto dividido entre las peticiones) en vez de compartirlo. Medido en una Radeon RX 6700 XT con varias peticiones a la vez: entre un 7 y un 11% más rápido al generar y entre un 11 y un 18% menos de espera con prompts largos. A cambio, ninguna conversación puede pasar de su parte; apagado, el chat conserva su ventana completa.",
                                     "Each simultaneous request gets its own share of the context (the context divided by the requests) instead of sharing it. Measured on a Radeon RX 6700 XT with several requests at once: 7 to 11% faster generation and 11 to 18% less wait with long prompts. In exchange, no conversation can grow past its share; off, the chat keeps its full window."))
                 }
@@ -1270,6 +1277,7 @@ struct SettingsView: View {
                 .infoTip(loc.t("Tokens de respuesta para las peticiones que no fijan max_tokens, como las del chat web o muchas apps. Evita que un cliente sin límite deje al modelo razonando o escribiendo sin fin. «Como el chat» usa el mismo máximo que el chat de la app.",
                             "Response tokens for requests that do not set max_tokens, such as the web chat's or many apps'. It keeps a client without a limit from leaving the model reasoning or writing without end. “Same as the chat” uses the in-app chat's maximum."))
                 Toggle(loc.t("Plantilla de chat (--jinja)", "Chat template (--jinja)"), isOn: $jinja)
+                    .settingsGlyph("curlybraces")
                     .infoTip(loc.t("Usa la plantilla de chat oficial del modelo (formato de mensajes, herramientas). Déjalo activado salvo problemas con un modelo concreto.",
                                 "Uses the model's official chat template (message format, tools). Keep it on unless a specific model misbehaves."))
             }
@@ -1277,6 +1285,7 @@ struct SettingsView: View {
 
         }
         .formStyle(.grouped)
+        .labeledContentStyle(SettingsLabeledContentStyle())
         .toggleStyle(SettingsCompactToggleStyle())
         .scrollContentBackground(.hidden)
         .frame(maxWidth: .infinity)

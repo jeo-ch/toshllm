@@ -3,6 +3,38 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.30] - 2026-10-28
+
+### Added
+
+- **The web chat has four more colour themes, Sepia, Ocean, Forest and Lavender,** next to System, Light and Dark; a theme shows as soon as it is picked and stays with Save settings. Contributed by [Basten7](https://github.com/Basten7) in [#142](https://github.com/engeldlgado/toshllm/issues/142).
+
+### Improved
+
+- **LLMs: Q4_0, Q4_K_M, Q5_K_M and Q8_0 models generate up to 4% more tokens per second on Radeon RX 6000 cards.** The gate and up projections and their activation run as one step while generating, with identical output. On an RX 6700 XT: Qwen3-4B Q5_K_M 87.6 to 91.1 t/s, Qwen3-4B Q8_0 69.5 to 71.3, Qwen3-8B Q4_K_M 63.7 to 65.0 and Llama 2 7B Q4_0 77.9 to 79.2.
+- **LLMs: small models generate up to 12% more tokens per second on Radeon RX 6000 cards.** The GPU no longer waits for the engine to finish preparing each step: Qwen3-0.6B goes from 321.7 to 359.0 t/s and Qwen3-4B from 112.0 to 114.1 on an RX 6700 XT, while 7B and larger models are unchanged.
+- **LLMs: Q5_1 models generate 10% more tokens per second on Radeon RX 6000 cards.** Qwen3-4B Q5_1 goes from 79.6 to 87.6 t/s on an RX 6700 XT.
+- **LLMs: IQ1, IQ2, IQ3, Q2_K and Q3_K models generate up to 36% more tokens per second on Radeon RX 6000 cards, and Q5_K models up to 2%.** Their weights are unpacked with fewer operations while generating, with identical output: on an RX 6700 XT Qwen3.5-9B IQ1_M goes from 45.3 to 61.5 t/s and IQ2_XXS from 60.8 to 69.3, and Qwen3-4B IQ3_M from 82.7 to 99.1, IQ2_XS from 91.5 to 108.5, Q2_K from 111.0 to 121.8 and Q5_K_M from 88.9 to 90.4.
+- **LLMs: MoE models whose experts are Q5_K, Q3_K, Q2_K or IQ generate up to 4% more tokens per second on Radeon RX 6000 cards when the experts run on the GPU.** The expert layers take the same lighter unpacking as the dense ones: on an RX 6700 XT OLMoE 1B-7B Q5_K_M goes from 243 to 253 t/s, with the same text.
+- **LLMs: MoE models that normalise their router, such as Qwen3, Qwen3.5 and Qwen3.6, take fewer GPU steps per token on Radeon RX 6000 cards, with identical output.** The router's weight normalisation and the shared expert's gate now run inside the steps around them: on an RX 6700 XT Qwen3.6-35B-A3B spends 1.6% less GPU time per token.
+- **Images: a model sized for more VRAM than the card has can be installed and run.** The tab says how much VRAM the model was sized for and lets it run when the chosen size fits the card; it used to refuse the model outright. Reported by [Mic238](https://github.com/Mic238) in [#138](https://github.com/engeldlgado/toshllm/issues/138).
+- **Settings: every row has its icon and keeps its label in line with its control,** and Speech & Audio uses the same rows as the other tabs; in Audio each choice has its label above it, as in Images and Video.
+- **No text in the app is smaller than 10 points.** Badges, table headers, file names and progress labels were 9, under the size macOS treats as its minimum; the chat text still grows with ⌘+. Reported by [TomDev234](https://github.com/TomDev234) in [#141](https://github.com/engeldlgado/toshllm/issues/141).
+- **Screens keep their layout in a narrow window.** Benchmarks, Logs and About set their cards two by two instead of cutting titles or splitting a word, the benchmark results stack each run's details under its model instead of hiding the speeds past the edge, the benchmark buttons that do not fit show only their icon, and the system card puts its figures on two rows with the processor's short name. The recommended model's figures sit in one row and a library's Use button keeps one column.
+
+### Fixed
+
+- **LLMs: the server no longer crashes on a deeply nested grammar sent through the API;** the request is refused with an error instead. Taken from upstream.
+- **LLMs: an edited or regenerated conversation no longer resumes from a checkpoint of the old text** on models with sliding-window or recurrent layers, such as Gemma and the hybrid Qwen models. Taken from upstream.
+- **LLMs: MoE models on the GPU can no longer write the sum of their experts over the memory it reads from,** which rarely gave a wrong result, and very large matrix outputs no longer overflow their offsets. Taken from upstream.
+- **LLMs: Gemma 2 runs its attention on the GPU with flash attention on, so it no longer slows down with a quantized KV cache on Radeon RX 6000 cards.** Its attention went to the CPU in every layer, which the app does whenever the KV cache is quantized: on an RX 6700 XT gemma-2 2B goes from 51 to 142 t/s and gemma-2 9B from 20 to 54.
+- **LLMs: LFM2 models no longer stop the engine with code 8.** Keeping a checkpoint or the prompt cache of an LFM2 model, which happens on almost every message, stopped the engine; they now answer and pick a conversation up from the cache. Reported by [mnerd](https://github.com/mnerd) in [#144](https://github.com/engeldlgado/toshllm/issues/144).
+- **Logs: an engine crash shows as errors.** Its abort, backtrace and restart notice counted as information, so the error count read 0 after a crash; the backtrace now reads compact, the restart notice gives its reason once, the cards of a narrow window keep one row, and a wrapped line no longer leaves a gap above it; a long name such as an IOKit error wraps at its parts instead of a hyphen the log does not have.
+- **Video: the resolution picker shows the size a run will use** instead of an empty box, and the side panel's controls line up on the right, as in Images.
+- **The web chat builds from source again with npm 10,** whose `npm ci` stopped on a package missing from the lock file. Reported by [Basten7](https://github.com/Basten7) in [#142](https://github.com/engeldlgado/toshllm/issues/142).
+- **Buttons and descriptions that were cut are whole again,** such as Attach file and Suggestions on an empty chat, the library's description and the About credits.
+- **The system card's cores and threads and a server's context in Logs are translated.**
+
 ## [0.87.29] - 2026-10-22
 
 ### Fixed

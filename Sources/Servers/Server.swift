@@ -2480,7 +2480,7 @@ final class ServerController: ObservableObject {
                         }
                         self.retryWithoutMmproj = true
                         EngineLock.remove(pid: proc.processIdentifier)
-                        self.consume("\n[ToshLLM] el proyector (mmproj) no se pudo cargar — reintentando solo-texto (visión desactivada) / projector failed to load — retrying text-only (vision disabled)\n")
+                        self.consume("\n[ToshLLM] the projector (mmproj) failed to load — retrying text-only, vision disabled\n")
                         self.state = .starting
                         await self.launch(settings)
                         return
@@ -2491,7 +2491,9 @@ final class ServerController: ObservableObject {
                     // a second one within ten minutes stays failed so a repeating cause is not hidden.
                     if wasServing, self.lastCrashRelaunch.map({ Date().timeIntervalSince($0) > 600 }) ?? true {
                         self.lastCrashRelaunch = Date()
-                        self.consume("\n[ToshLLM] el motor se detuvo (\(why)) — reiniciando / the engine stopped (\(why)) — restarting\n")
+                        // the log is the engine's, in English; the diagnosis carries both languages
+                        let reason = why.range(of: " / ").map { String(why[$0.upperBound...]) } ?? why
+                        self.consume("\n[ToshLLM] the engine stopped (\(reason)) — restarting\n")
                         self.state = .starting
                         await self.launch(settings)
                         return
