@@ -3,6 +3,25 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.31] - 2026-10-29
+
+### Improved
+
+- **LLMs: Q5_1, Q5_0, Q8_0, Q4_1, Q2_K and Q4_0 models read prompts up to 15% faster on Radeon RX 6000 cards, with identical output.** On an RX 6700 XT Qwen3-4B Q5_1 goes from 1426 to 1645 tokens a second, Q5_0 from 1452 to 1601, Q4_1 from 1640 to 1694 and Q8_0 from 1642 to 1663, Llama 2 7B Q8_0 from 945 to 990, and gemma-4-26B-A4B, whose experts are partly Q5_1, from 569 to 582; generation is unchanged.
+- **LLMs: MXFP4 models read prompts up to 15% faster on Radeon RX 6000 cards, with identical output.** On an RX 6700 XT Ornith 1.5 9B goes from 782 to 864 tokens a second, Mellum2 12B from 2073 to 2185 and gpt-oss 20b, fully on the GPU, from 1313 to 1514; generation is unchanged.
+- **LLMs: MXFP4 mixture-of-experts models read short prompts up to three times faster on Radeon RX 6000 cards.** On an RX 6700 XT gpt-oss 20b, fully on the GPU, reads a 128-token prompt at 964 tokens a second instead of 304, and gemma-4-26B-A4B MXFP4 at 177 instead of 148.
+- **LLMs: BF16 models read prompts up to 34% faster on Radeon RX 6000 cards.** On an RX 6700 XT Qwen3 0.6B BF16 goes from 6910 to 9263 tokens a second, within 3% of the same model in F16; generation is unchanged.
+- **LLMs: gpt-oss generates 3% faster, and dense MXFP4 models 1% faster, on Radeon RX 6000 cards.** On an RX 6700 XT gpt-oss 20b, fully on the GPU, goes from 106.4 to 109.6 tokens a second and Ornith 1.5 9B from 65.0 to 65.7.
+- **LLMs: Qwen3.6-35B-A3B generates 3% faster with Dynamic MoE on Radeon RX 6000 cards, with identical output.** On an RX 6700 XT it goes from 55.5 to 57.2 tokens a second.
+- **LLMs: mixture-of-experts models with small Q4_K experts, such as Qwen3.6-35B-A3B, generate 1% faster and read short prompts 6% faster on Radeon RX 6000 cards, with identical output.** On an RX 6700 XT Qwen3.6-35B-A3B with Dynamic MoE goes from 59.6 to 60.4 tokens a second, and from 150 to 159 on a short prompt.
+- **LLMs: Q8_0 mixture-of-experts models with small experts generate 4% faster on Radeon RX 6000 cards, with identical output.** On an RX 6700 XT Granite 3.1 3B-A800M Q8_0 goes from 175.1 to 182.6 tokens a second.
+- **LLMs: with Dynamic MoE on Radeon RX 6000 cards, a model whose MTP head would take too much of the VRAM left for experts starts without it, and generates faster.** On an RX 6700 XT Qwen3.6-35B-A3B goes from 58.2 to 60.9 tokens a second once its experts are cached.
+
+### Fixed
+
+- **LLMs: Qwen3.8-Flash-Next and other models with a gated shared expert load again with TensorMesh,** where 0.87.30 stopped the engine as soon as it generated its first token.
+- **LLMs: a model with an MTP head starts without it when there is no room for the head, instead of the engine stopping with "failed to create MTP context".**
+
 ## [0.87.30] - 2026-10-28
 
 ### Added

@@ -1,5 +1,45 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
+index 8a94acda9..09edfeea1 100644
+--- a/ggml/src/ggml-metal/ggml-metal-context.m
++++ b/ggml/src/ggml-metal/ggml-metal-context.m
+@@ -2643,10 +2643,18 @@ static struct ggml_metal_fb_residual_state * ggml_metal_fb_residual_get(ggml_met
+     }
+     os_unfair_lock_unlock(&g_fb_res_lock);
+     return res;
+ }
+ 
++bool ggml_metal_fb_residual_armed(ggml_metal_device_t dev, const struct ggml_tensor * t) {
++    if (!ggml_metal_fb_residual()) {
++        return false;
++    }
++    struct ggml_metal_fb_residual_state * st = ggml_metal_fb_residual_get(dev);
++    return st != NULL && st->state == 2 && t != NULL && (st->t == t || st->alias == t);
++}
++
+ bool ggml_metal_fb_residual_take(ggml_metal_device_t dev, const struct ggml_tensor * t, struct ggml_metal_buffer_id * peer) {
+     if (!ggml_metal_fb_residual()) {
+         return false;
+     }
+     struct ggml_metal_fb_residual_state * st = ggml_metal_fb_residual_get(dev);
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
+index 55a051425..14ca88ebb 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.h
++++ b/ggml/src/ggml-metal/ggml-metal-device.h
+@@ -90,10 +90,12 @@ void ggml_metal_encoder_set_pipeline(ggml_metal_encoder_t encoder, struct ggml_m
+ struct ggml_metal_pipeline_with_params ggml_metal_device_pipeline_add3(ggml_metal_device_t dev);
+ // the same sum followed by an RMS norm and its weight, one threadgroup per row
+ struct ggml_metal_pipeline_with_params ggml_metal_device_pipeline_add3_rms_mul(ggml_metal_device_t dev);
+ // true when t still lacks the peer partial of a TP2 boundary and the caller is its residual add
+ bool ggml_metal_fb_residual_take(ggml_metal_device_t dev, const struct ggml_tensor * t, struct ggml_metal_buffer_id * peer);
++// the add whose first source is t folds a TP2 partial, so no fusion may take it in
++bool ggml_metal_fb_residual_armed(ggml_metal_device_t dev, const struct ggml_tensor * t);
+ 
+ void ggml_metal_encoder_set_bytes (ggml_metal_encoder_t encoder, void * data, size_t size, int idx);
+ void ggml_metal_encoder_set_buffer(ggml_metal_encoder_t encoder, struct ggml_metal_buffer_id buffer, int idx);
+ 
+ void ggml_metal_encoder_set_threadgroup_memory_size(ggml_metal_encoder_t encoder, size_t size, int idx);
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 192624551..dfdd2d15b 100644
+index 192624551..130d8728f 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
 @@ -124,10 +124,14 @@ struct ggml_metal_op {
@@ -33,7 +73,7 @@ index 192624551..dfdd2d15b 100644
              {
                  n_fuse = ggml_metal_op_silu_back(ctx, idx);
              } break;
-@@ -988,10 +995,106 @@ int ggml_metal_op_acc(ggml_metal_op_t ctx, int idx) {
+@@ -988,10 +995,110 @@ int ggml_metal_op_acc(ggml_metal_op_t ctx, int idx) {
      ggml_metal_encoder_dispatch_threadgroups(enc, ne11, ne12, ne13, nth, 1, 1);
  
      return 1;
@@ -62,11 +102,15 @@ index 192624551..dfdd2d15b 100644
 +    if (!x || !y) {
 +        return 0;
 +    }
++    if (ggml_metal_fb_residual_armed(ctx->dev, add->src[0])) {
++        return 0;
++    }
 +
 +    int n_fuse = 3;
 +    ggml_tensor * dst = add;
 +    ggml_tensor * r   = nullptr;
-+    if (idx + 3 < ctx->n_nodes() && ctx->node(idx + 3)->op == GGML_OP_ADD && ctx->has_n_uses(idx + 2, 1)) {
++    if (idx + 3 < ctx->n_nodes() && ctx->node(idx + 3)->op == GGML_OP_ADD && ctx->has_n_uses(idx + 2, 1) &&
++        !ggml_metal_fb_residual_armed(ctx->dev, ctx->node(idx + 3)->src[0])) {
 +        ggml_tensor * add2 = ctx->node(idx + 3);
 +        ggml_tensor * res  = add2->src[0] == add ? add2->src[1] : add2->src[1] == add ? add2->src[0] : nullptr;
 +        if (res && res != add && ggml_are_same_shape(res, add2) && ggml_are_same_shape(add2, add) &&
@@ -140,7 +184,7 @@ index 192624551..dfdd2d15b 100644
  
      ggml_metal_library_t lib = ctx->lib;
      ggml_metal_encoder_t enc = ctx->enc;
-@@ -7505,45 +7608,61 @@ static bool ggml_metal_tosh_topk_moe_fusion(ggml_metal_op_t ctx, int idx, ggml_m
+@@ -7505,45 +7612,61 @@ static bool ggml_metal_tosh_topk_moe_fusion(ggml_metal_op_t ctx, int idx, ggml_m
      if (!ggml_is_contiguous(softmax->src[0]) || !ggml_is_contiguous(softmax) ||
          !ggml_is_contiguous(argsort) || !ggml_is_contiguous(getrows)) {
          return false;
@@ -227,7 +271,7 @@ index 192624551..dfdd2d15b 100644
      const int64_t n_expert = softmax->ne[0];
      if (n_expert > 512 || n_expert < 1) {
          return false;
-@@ -7627,12 +7746,13 @@ int ggml_metal_op_tosh_topk_moe(ggml_metal_op_t ctx, int idx) {
+@@ -7627,12 +7750,13 @@ int ggml_metal_op_tosh_topk_moe(ggml_metal_op_t ctx, int idx) {
      if (!pipeline.pipeline) {
          return 0;
      }
