@@ -59,7 +59,7 @@ enum LogPresentationParser {
                                         message: fields.joined(separator: " "), raw: raw)
             }
             let leading = raw.prefix { $0.isWhitespace }
-            let message = leading.count > 0 ? raw : raw.trimmingCharacters(in: .whitespaces)
+            let message = leading.isEmpty ? raw.trimmingCharacters(in: .whitespaces) : raw
             return PresentedLogLine(id: index, time: "—", level: inferredLevel(raw),
                                     source: inferredSource(raw, fallback: fallbackSource),
                                     message: message, raw: raw)
