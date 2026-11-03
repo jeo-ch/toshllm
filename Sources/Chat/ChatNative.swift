@@ -114,9 +114,8 @@ final class StreamBuffer: @unchecked Sendable {
     private var progress: Double?
     private var dirty = false
     private var done = false
-    /// Push notification: when data arrives, signal the pump immediately
-    /// instead of polling every 40ms.
-    private var continuation: CheckedContinuation<Void, Never>?
+    // Kept by the network side, so a main thread busy laying out the answer never reads as a hung engine.
+    private var liveness = StreamLiveness()
 
     func write(reasoning: String, visible: String, speed: Double?) {
         lock.lock()
@@ -124,26 +123,31 @@ final class StreamBuffer: @unchecked Sendable {
         self.visible = visible
         if let speed { self.speed = speed }
         dirty = true
-        let cont = continuation
-        continuation = nil
+        liveness.note(text: !reasoning.isEmpty || !visible.isEmpty)
         lock.unlock()
-        cont?.resume()
     }
 
     func writeProgress(_ p: Double?) {
-        lock.lock(); progress = p; dirty = true
-        let cont = continuation
-        continuation = nil
+        lock.lock()
+        progress = p
+        dirty = true
+        liveness.note(text: !reasoning.isEmpty || !visible.isEmpty)
         lock.unlock()
-        cont?.resume()
+    }
+
+    /// Something that shows the engine at work without changing the text, like the agent's keep-alives.
+    func note(now: Date = Date()) {
+        lock.lock(); liveness.note(text: false, now: now); lock.unlock()
     }
 
     func finish() {
-        lock.lock(); done = true; dirty = true
-        let cont = continuation
-        continuation = nil
-        lock.unlock()
-        cont?.resume()
+        lock.lock(); done = true; dirty = true; lock.unlock()
+    }
+
+    /// An ended stream never stalls, whatever is still pending on the main thread.
+    func stalled(now: Date = Date()) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return !done && liveness.stalled(now: now)
     }
 
     /// The latest snapshot if it changed since the last take (or the stream
@@ -153,21 +157,6 @@ final class StreamBuffer: @unchecked Sendable {
         guard dirty else { return nil }
         dirty = false
         return (reasoning, visible, speed, progress, done)
-    }
-
-    /// Await until data arrives or finish() is called. Returns immediately if
-    /// dirty data is already pending.
-    func waitForData() async {
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            lock.lock()
-            if dirty {
-                lock.unlock()
-                cont.resume()
-            } else {
-                continuation = cont
-                lock.unlock()
-            }
-        }
     }
 }
 
@@ -344,9 +333,13 @@ final class ChatStore: ObservableObject {
     /// The message holding the calls of the server agent's current pass, per conversation.
     private var agentPassMessage: [UUID: (pass: Int, messageID: UUID)] = [:]
 
+    /// The model an answer came from, shown beside it: the router's choice, or the file the engine loaded.
+    static func replyModel() -> String? {
+        ServerSettings.activeRouterModel() ?? ServerManager.shared.active.loadedModelName
+    }
+
     /// A progress event of the server agent: the calls it ran show as cards, ahead of the answer.
     func agentEvent(_ event: [String: Any], conversation id: UUID) {
-        liveness.note(text: false)
         switch event["type"] as? String {
         case "intent":
             lastMathIntent = (event["intent"] as? String).flatMap(MathIntent.init(rawValue:))
@@ -388,7 +381,7 @@ final class ChatStore: ObservableObject {
             } else {
                 var round = ChatMessage(role: "assistant", content: "")
                 round.toolCalls = [toolCall]
-                round.model = ServerSettings.activeRouterModel()
+                round.model = Self.replyModel()
                 agentPassMessage[id] = (pass, round.id)
                 conversations[i].messages.insert(contentsOf: [round, reply], at: placeholder)
             }
@@ -406,7 +399,6 @@ final class ChatStore: ObservableObject {
     private var watchdog: Task<Void, Never>?
     /// Where the running reply is streamed from, so Stop can cancel it on the engine too.
     private var activeStream: (port: Int, identity: String)?
-    private var liveness = StreamLiveness()
     /// Estimated tokens of the tool definitions the last request sent, which the context holds before any reply.
     @Published private(set) var toolTokens = 0
     private var slotConvID: UUID?
@@ -767,7 +759,6 @@ final class ChatStore: ObservableObject {
         runSeq += 1
         let myRun = runSeq
         live.reset()
-        startWatchdog(port: port)
         // The user can switch or delete conversations mid-stream; the result
         // must land in the one this request started from, found by id.
         let convID = conversations[i].id
@@ -823,20 +814,20 @@ final class ChatStore: ObservableObject {
         conversations[i].messages.append(ChatMessage(role: "assistant", content: ""))
 
         let buffer = StreamBuffer()
+        startWatchdog(buffer)
         let pump = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                // Push-based: wake immediately when data arrives or on finish.
-                await buffer.waitForData()
-                guard let snap = buffer.take() else { continue }
+                guard let snap = buffer.take() else {
+                    try? await Task.sleep(for: .milliseconds(40))
+                    continue
+                }
                 if snap.done { break }   // finish() publishes the final transcript
                 self?.live.update(reasoning: snap.reasoning, visible: snap.visible, speed: snap.speed)
                 let prefilling = snap.reasoning.isEmpty && snap.visible.isEmpty
                 self?.live.setPrefillProgress(prefilling ? snap.progress : nil)
-                self?.noteStreamActivity(text: !prefilling)
-                // The producer already spaced its publishes; the extra wait here
-                // is what the view can absorb, and it is the same curve.
-                try? await Task.sleep(for: .milliseconds(
-                    ChatStore.publishInterval(characters: snap.visible.count) * 1000))
+                let n = snap.visible.count
+                let ms = n > 12000 ? 600 : n > 6000 ? 350 : n > 2500 ? 180 : 80
+                try? await Task.sleep(for: .milliseconds(ms))
             }
         }
 
@@ -910,8 +901,7 @@ final class ChatStore: ObservableObject {
                         let text = line.text
                         // between the passes the agent sends keep-alives, which show it is working
                         if agentTurn, text.hasPrefix(":") {
-                            let owner = self
-                            await MainActor.run { owner?.liveness.note(text: false) }
+                            buffer.note()
                             continue
                         }
                         if agentTurn, text.hasPrefix("data: "), text.contains("\"tosh\""),
@@ -1432,7 +1422,7 @@ final class ChatStore: ObservableObject {
                     conversations[i].messages[j].mtpAccept = mtpAccept
                     conversations[i].messages[j].timings = timings
                     conversations[i].messages[j].toolCalls = toolCalls.isEmpty ? nil : toolCalls
-                    conversations[i].messages[j].model = ServerSettings.activeRouterModel()
+                    conversations[i].messages[j].model = Self.replyModel()
                     if toolCalls.isEmpty { Self.carryDrawnMap(&conversations[i], to: j) }
                 }
             }
@@ -1816,19 +1806,13 @@ final class ChatStore: ObservableObject {
 
     // MARK: stall watchdog
 
-    /// Called from the stream whenever something reaches the UI: prompt progress or text.
-    func noteStreamActivity(text: Bool) {
-        liveness.note(text: text)
-    }
-
-    private func startWatchdog(port: Int) {
+    private func startWatchdog(_ stream: StreamBuffer) {
         watchdog?.cancel()
-        liveness = StreamLiveness()
         watchdog = Task { [weak self] in
             while true {
                 try? await Task.sleep(for: .seconds(5))
                 guard let self, !Task.isCancelled, self.generating else { return }
-                if self.liveness.stalled() {
+                if stream.stalled() {
                     self.handleStreamStall()
                     return
                 }
