@@ -42,6 +42,9 @@ enum SettingsKeys {
     static let serverBinary = "serverBinary"
     static let modelPath = "modelPath"
     static let modelsDir = "modelsDir"
+    /// "huggingface", "hf-mirror" or "custom"; see `HubEndpoint`.
+    static let hubEndpoint = "hubEndpoint"
+    static let hubEndpointCustom = "hubEndpointCustom"
     static let whisperModel = "whisperModel"
     static let speechInputMethod = "speechInputMethod"
     static let whisperLoadPolicy = "whisperLoadPolicy"
@@ -923,5 +926,23 @@ struct LenientDecodable<Wrapped: Decodable>: Decodable {
 
     init(from decoder: Decoder) throws {
         value = try? Wrapped(from: decoder)
+    }
+}
+
+/// Keeps the Mac from idle-sleeping for as long as it is held, so a long generation is not
+/// suspended halfway. The display may still sleep.
+final class KeepAwake {
+    private let activity: NSObjectProtocol
+
+    init(_ reason: String) {
+        activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled],
+                                                         reason: reason)
+    }
+
+    deinit { ProcessInfo.processInfo.endActivity(activity) }
+
+    /// The held instance while `active`, nil otherwise, keeping one that is already held.
+    static func update(_ held: KeepAwake?, active: Bool, reason: @autoclosure () -> String) -> KeepAwake? {
+        active ? held ?? KeepAwake(reason()) : nil
     }
 }

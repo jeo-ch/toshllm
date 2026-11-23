@@ -32,7 +32,8 @@ enum HuggingFaceAPI {
 
         let apiString = source.treeAPI(repo: repo, branch: rev) + dir
         guard let api = URL(string: apiString),
-              let (data, _) = try? await NetworkManager.session.data(from: api),
+              // A huggingface.co call follows the chosen mirror; other sources keep their own host.
+              let (data, _) = try? await NetworkManager.session.data(from: HubEndpoint.resolve(api)),
               let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
 
         guard let entry = entries.first(where: { ($0["path"] as? String) == filePath }) else { return nil }

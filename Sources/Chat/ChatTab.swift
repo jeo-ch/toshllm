@@ -131,6 +131,7 @@ struct ChatMainView: View {
         }
         .navigationTitle("")
         .toolbar {
+            #if compiler(>=6.2)
             if #available(macOS 26.0, *) {
                 ToolbarItem(placement: .navigation) { toolbarIdentity }
                     .sharedBackgroundVisibility(.hidden)
@@ -143,6 +144,11 @@ struct ChatMainView: View {
                 ToolbarItem(placement: .principal) { modePicker }
                 toolbarActions
             }
+            #else
+            ToolbarItem(placement: .navigation) { toolbarIdentity }
+            ToolbarItem(placement: .principal) { modePicker }
+            toolbarActions
+            #endif
         }
         .hiddenChatToolbarBackground()
         .onAppear {
@@ -151,11 +157,6 @@ struct ChatMainView: View {
             models.refreshIfNeeded()
             if !onboardingDone && models.models.isEmpty {
                 showOnboarding = true
-            }
-            if UserDefaults.standard.bool(forKey: SettingsKeys.autoStart),
-               server.state == .stopped,
-               !(UserDefaults.standard.string(forKey: SettingsKeys.modelPath) ?? "").isEmpty {
-                server.start(.fromDefaults())
             }
         }
         .sheet(isPresented: $showOnboarding) {

@@ -69,6 +69,8 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.autoKVMode) private var autoKVMode = "auto"
     @AppStorage(SettingsKeys.dynamicMoeLeanRAM) private var dynamicMoeLeanRAM = false
     @AppStorage(SettingsKeys.modelsDir) private var modelsDir = ""
+    @AppStorage(SettingsKeys.hubEndpoint) private var hubEndpoint = HubEndpoint.huggingFace
+    @AppStorage(SettingsKeys.hubEndpointCustom) private var hubEndpointCustom = ""
     @AppStorage(SettingsKeys.menuBarIcon) private var menuBarIcon = true
     @AppStorage(SettingsKeys.updateAutoCheck) private var updateAutoCheck = true
     @AppStorage(SettingsKeys.appAccent) private var appAccentRaw = AppTheme.defaultKey
@@ -154,6 +156,13 @@ struct SettingsView: View {
         if case .stopped = server.state { return true }
         if case .failed = server.state { return true }
         return false
+    }
+    private var hubEndpointNote: String? {
+        if hubEndpoint == HubEndpoint.custom && HubEndpoint.validBase(hubEndpointCustom) == nil {
+            return loc.t("Sin una dirección válida se usa huggingface.co", "Without a valid address, huggingface.co is used")
+        }
+        if hubEndpoint != HubEndpoint.huggingFace { return nil }
+        return HubEndpoint.currentBase.map { "HF_ENDPOINT: " + $0.absoluteString }
     }
     // Networking is a launch flag, so restart the running server to apply it now.
     private func setDiscoverable(_ on: Bool) {
@@ -611,6 +620,7 @@ struct SettingsView: View {
                     }
                     SettingsRow(icon: "icloud.and.arrow.down",
                                 title: loc.t("Fuente de descarga", "Download source"),
+                                subtitle: hubEndpointNote,
                                 help: loc.t("Desde dónde se descargan los modelos GGUF. hf-mirror.com y魔塔社区 son más rápidos en China.",
                                             "Where GGUF models are downloaded from. hf-mirror.com and ModelScope are faster in China.")) {
                         ToshDropdown(selection: $downloadSource, options: [
@@ -790,8 +800,8 @@ struct SettingsView: View {
                         ], width: 200)
                     }
                     .settingsGlyph("key")
-                    .infoTip(loc.t("Auto usa F16 y pasa a Q8 solo cuando libera memoria que de verdad importa (Q8 no cambia la calidad de forma medible). Turbo4 ahorra más memoria a cambio de algo de velocidad y calidad; nunca se elige solo.",
-                                "Auto uses F16 and moves to Q8 only when that frees memory that really matters (Q8 has no measurable quality cost). Turbo4 saves more memory at some speed and quality cost; it is never chosen automatically."))
+                    .infoTip(loc.t("Auto usa F16 y pasa a Q8 solo cuando libera memoria que de verdad importa (Q8 no cambia la calidad de forma medible). Turbo4 ahorra más memoria a cambio de algo de calidad: Auto solo lo elige, si el modelo lo admite, cuando ni F16 ni Q8 dejan los expertos en la GPU, y en ese caso puede ir bastante más rápido. Elige F16 o Q8 para no usarlo nunca.",
+                                "Auto uses F16 and moves to Q8 only when that frees memory that really matters (Q8 has no measurable quality cost). Turbo4 saves more memory at some quality cost: Auto picks it, when the model supports it, only if neither F16 nor Q8 keeps the experts on the GPU, and then it can be much faster. Pick F16 or Q8 to never use it."))
                     Toggle(loc.t("Ahorrar RAM", "Save RAM"), isOn: $dynamicMoeLeanRAM)
                         .settingsGlyph("memorychip")
                         .infoTip(loc.t("Apagado: si caben, todos los expertos se quedan en RAM, también los que ya están en VRAM. Encendido: la RAM guarda solo los que no están en VRAM y deja libre el resto para otras apps; genera más lento (entre un 11 y un 17% en un modelo de 35B) y el primer prompt tras cargar tarda más.",
@@ -916,11 +926,12 @@ struct SettingsView: View {
                         .infoTip(loc.t("El motor Metal usa memoria compartida (del sistema) en GPUs externas, lo que transfiere los pesos por Thunderbolt en cada operación y desploma la velocidad (~0.8 t/s). Esto fuerza buffers privados en VRAM. Si fijas una eGPU en el selector de arriba ya se activa solo; usa esto cuando dejas 'Predeterminada' y macOS elige la eGPU.",
                                     "The Metal backend uses shared (system) memory on external GPUs, which streams weights over Thunderbolt every op and tanks speed (~0.8 t/s). This forces private VRAM buffers. If you pin an eGPU in the picker above it's automatic; use this when you leave 'Default' and macOS picks the eGPU."))
                 }
-                Stepper(loc.t("Capas en GPU (-ngl): %@", "GPU layers (-ngl): %@", "\(ngl)"),
-                        value: $ngl, in: 0...99)
+                Stepper(ngl < 0 ? loc.t("Capas en GPU (-ngl): Auto", "GPU layers (-ngl): Auto")
+                                : loc.t("Capas en GPU (-ngl): %@", "GPU layers (-ngl): %@", "\(ngl)"),
+                        value: $ngl, in: -1...99)
                     .settingsGlyph("square.3.layers.3d")
-                    .infoTip(loc.t("Cuántas capas del modelo van a la GPU. 99 = todas (recomendado si caben en VRAM); bájalo solo si la VRAM se desborda.",
-                                "How many model layers go to the GPU. 99 = all (recommended if they fit in VRAM); lower it only if VRAM overflows."))
+                    .infoTip(loc.t("Cuántas capas del modelo van a la GPU. 99 = todas (recomendado si caben en VRAM). Auto, por debajo de 0, sube las que caben en la VRAM libre sin tocar la reserva de VRAM; con Dynamic MoE o expertos en CPU sube todas.",
+                                "How many model layers go to the GPU. 99 = all (recommended if they fit in VRAM). Auto, below 0, loads as many as fit in free VRAM and keeps the VRAM reserve; with Dynamic MoE or experts on the CPU it loads them all."))
                 let modelIsMoE = modelPath.isEmpty || ServerSettings.modelIsMoE(at: modelPath)
                 Stepper(modelIsMoE
                             ? loc.t("Expertos MoE en CPU: %@", "MoE experts on CPU: %@", "\(ncmoe)")
@@ -938,8 +949,8 @@ struct SettingsView: View {
                             : loc.t("Reserva de VRAM: %@ MB", "VRAM reserve: %@ MB", "\(vramReserve)"),
                         value: $vramReserve, in: 0...4096, step: 256)
                     .settingsGlyph("gauge.with.needle")
-                    .infoTip(loc.t("VRAM que se deja libre para el sistema y la interfaz. La respetan el plan de Dynamic MoE, el modo router y DFlash en Auto. Automática deja un 8% de la tarjeta, entre 768 y 1536 MB.",
-                                "VRAM left free for the system and UI. The Dynamic MoE plan, router mode and DFlash in Auto keep it. Automatic leaves 8% of the card, between 768 and 1536 MB."))
+                    .infoTip(loc.t("VRAM que se deja libre para el sistema y la interfaz. La respetan el plan de Dynamic MoE, el modo router, DFlash en Auto y las capas en GPU en Auto. Automática deja un 8% de la tarjeta, entre 768 y 1536 MB.",
+                                "VRAM left free for the system and UI. The Dynamic MoE plan, router mode, DFlash in Auto and GPU layers in Auto keep it. Automatic leaves 8% of the card, between 768 and 1536 MB."))
                 HStack {
                     Text(loc.t("Umbral de aviso VRAM", "VRAM warning threshold"))
                         .settingsGlyph("exclamationmark.triangle")
