@@ -24,9 +24,19 @@ enum HubEndpoint {
 
     static var currentBase: URL? {
         let defaults = UserDefaults.standard
-        return base(choice: defaults.string(forKey: SettingsKeys.hubEndpoint),
-                    custom: defaults.string(forKey: SettingsKeys.hubEndpointCustom),
-                    environment: ProcessInfo.processInfo.environment)
+        if let base = base(choice: defaults.string(forKey: SettingsKeys.hubEndpoint),
+                           custom: defaults.string(forKey: SettingsKeys.hubEndpointCustom),
+                           environment: ProcessInfo.processInfo.environment) {
+            return base
+        }
+        // The download-source picker is the visible control, so a mirror chosen there also backs
+        // the links `canonical` writes back as huggingface.co. ModelScope has its own API and
+        // serves its own URLs, so it is not a stand-in for huggingface.co.
+        switch DownloadSource.current {
+        case .hfMirror: return hfMirrorURL
+        case .custom: return validBase(defaults.string(forKey: SettingsKeys.customMirrorURL))
+        case .huggingface, .modelScope: return nil
+        }
     }
 
     /// An http(s) address with a host and nothing after its path; anything else is ignored.
