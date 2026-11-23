@@ -1401,6 +1401,7 @@ final class ServerSettingsTests: XCTestCase {
 
     func testPlanSaysWhenAutoPickedTurbo4() throws {
         func plan(_ warnings: String) throws -> AutoMemoryPlan {
+        // swiftlint:disable:next line_length
             let json = #"{"plan_schema_version": 1, "product": {"mode": "PLAN_BOUNDED_DMOE", "mode_label_key": "plan.mode.x", "reason": "CURRENT_RAM_LIMIT", "warnings": [\#(warnings)], "limits": [], "limiting_resource": "HOST_RAM", "memory": {"physical_bytes": 1, "reclaimable_bytes": 1, "projected_rss_bytes": 1, "projected_vram_bytes": 1}, "dmoe": {"expert_bank_bytes": 1, "hot_bytes": 1, "warm_bytes": 1, "coverage": 1.07, "coverage_state": "CONSTRAINED"}, "runtime": {"context": 8192, "kv_type": "turbo4", "kv_bytes": 1, "ubatch": 1024, "ncmoe_layers": 0}}, "state": "DMOE_BOUNDED_HOST", "mode": "dmoe_bounded", "reason": "r", "fallback": "", "kv": "turbo4", "n_ctx": 8192, "ubatch": 1024, "ncmoe": 0, "reserve_mib": 975, "arena_mib": 1200, "min_arena_mib": 546, "projected_private_mib": 1, "projected_free_mib": 800, "vram_total_mib": 8192, "vram_free_mib": 7000, "host_required_mib": 1, "host_ram_mib": 40960, "host_available_mib": 1, "host_reserve_mib": 1, "bank_mib": 17000, "mlock": "required", "dispersion": "normal", "candidates": []}"#
             return try XCTUnwrap(AutoMemoryPlan.decode(Data(json.utf8)))
         }
