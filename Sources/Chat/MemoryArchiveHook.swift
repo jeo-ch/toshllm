@@ -229,8 +229,19 @@ actor MemoryArchiveHook {
         request.timeoutInterval = Self.attemptTimeout
         request.httpBody = body
 
+        // The receiver is configured by the user, but a redirect is its answer, not
+        // their choice: keep the body and the bearer token on the origin they named.
+        let guardrail = SameOriginRedirectGuard(url)
+        let session = URLSession(configuration: NetworkManager.makeConfiguration(),
+                                 delegate: guardrail, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+
         do {
-            let (_, response) = try await NetworkManager.session.data(for: request)
+            let (_, response) = try await session.data(for: request)
+            if let refusal = guardrail.refusal {
+                AppLog.chat.warning("memory archive hook refused a redirect to \(refusal, privacy: .public)")
+                return .retry
+            }
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             switch code {
             case 200..<300: return .delivered

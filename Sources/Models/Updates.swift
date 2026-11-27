@@ -112,6 +112,7 @@ final class UpdateChecker: ObservableObject {
         if Self.isVersion(remote, newerThan: AppInfo.version) {
             latestVersion = remote
             releaseURL = (obj["html_url"] as? String).flatMap(URL.init(string:))
+                .flatMap { Self.isReleaseAsset($0) ? $0 : nil }
             if let assets = obj["assets"] as? [[String: Any]] {
                 // A release carries both DMGs (AVX2 + no-AVX2, suffix "-noavx2").
                 // Each build stays on its own channel: pick the asset matching this
@@ -119,7 +120,8 @@ final class UpdateChecker: ObservableObject {
                 for asset in assets {
                     guard let name = asset["name"] as? String,
                           let urlString = asset["browser_download_url"] as? String,
-                          let url = URL(string: urlString) else { continue }
+                          let url = URL(string: urlString),
+                          Self.isReleaseAsset(url) else { continue }
                     if name.hasSuffix(".dmg"),
                        name.contains("-noavx2") == AppInfo.isNoAVX2 { dmgURL = url }
                     if name == "checksums.txt" { checksumsURL = url }
@@ -496,6 +498,14 @@ final class UpdateChecker: ObservableObject {
             .sorted { isVersion($0.0, newerThan: $1.0) }
         if !newer.isEmpty { return newer }
         return all.filter { $0.0 == current }
+    }
+
+    /// A release asset or page the updater may download from or open: https on
+    /// GitHub itself. The API reply is what names these URLs, so a reply that
+    /// points anywhere else is ignored rather than fetched or opened.
+    nonisolated static func isReleaseAsset(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https" else { return false }
+        return HostMatch.isHost(url, "github.com") || HostMatch.isHost(url, "githubusercontent.com")
     }
 
     /// Numeric per-component comparison (0.81.1 < 0.82 < 1.0).

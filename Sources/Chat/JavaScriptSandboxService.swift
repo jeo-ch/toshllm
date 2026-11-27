@@ -62,13 +62,24 @@ enum JavaScriptSandboxService {
         }
         return ToolExecutionResult(content: content, isError: error != nil)
     }
+
+    /// The harness is the only document the sandbox may show. A script that
+    /// navigated elsewhere would load code that still has the reply bridge, so
+    /// only the `about:` document `loadHTMLString` creates (or no URL at all) is
+    /// allowed after the first load.
+    static func isHarnessNavigation(_ url: URL?) -> Bool {
+        guard let url else { return true }
+        return url.scheme?.lowercased() == "about"
+    }
 }
 
 @MainActor
-private final class JavaScriptSandboxSession: NSObject, WKScriptMessageHandler {
+private final class JavaScriptSandboxSession: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     private var webView: WKWebView?
     private var continuation: CheckedContinuation<ToolExecutionResult, Never>?
     private var timeoutTask: Task<Void, Never>?
+    /// The harness load itself is allowed; every later navigation is judged.
+    private var loadedHarness = false
 
     func run(code: String, timeoutMS: Int) async -> ToolExecutionResult {
         await withCheckedContinuation { continuation in
@@ -82,6 +93,7 @@ private final class JavaScriptSandboxSession: NSObject, WKScriptMessageHandler {
             configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
 
             let webView = WKWebView(frame: .zero, configuration: configuration)
+            webView.navigationDelegate = self
             self.webView = webView
             webView.loadHTMLString(Self.harness(code: code), baseURL: nil)
 
@@ -108,6 +120,24 @@ private final class JavaScriptSandboxSession: NSObject, WKScriptMessageHandler {
         let result = body["result"].flatMap(Self.optionalString)
         let error = body["error"].flatMap(Self.optionalString)
         finish(JavaScriptSandboxService.formatReply(logs: logs, result: result, error: error))
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if !loadedHarness {
+            loadedHarness = true
+            decisionHandler(.allow)
+            return
+        }
+        decisionHandler(JavaScriptSandboxService.isHarnessNavigation(navigationAction.request.url)
+                        ? .allow : .cancel)
+    }
+
+    /// Nothing the script opens may become a second window with the same bridge.
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        nil
     }
 
     private static func optionalString(_ value: Any) -> String? {

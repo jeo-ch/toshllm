@@ -113,14 +113,14 @@ enum DownloadSource: String, CaseIterable, Identifiable {
     func matchesURL(_ url: URL) -> Bool {
         guard let host = url.host else { return false }
         switch self {
-        case .huggingface: return host == "huggingface.co" || host.contains("huggingface.co")
-        case .hfMirror: return host == "hf-mirror.com" || host.contains("hf-mirror.com")
-        case .modelScope: return host == "modelscope.cn" || host.contains("modelscope.cn")
+        case .huggingface: return HostMatch.isHost(host, "huggingface.co")
+        case .hfMirror: return HostMatch.isHost(host, "hf-mirror.com")
+        case .modelScope: return HostMatch.isHost(host, "modelscope.cn")
         case .custom:
             guard let customBase = UserDefaults.standard.string(forKey: SettingsKeys.customMirrorURL),
                   let customURL = URL(string: customBase),
                   let customHost = customURL.host else { return false }
-            return host == customHost || host.contains(customHost)
+            return HostMatch.isHost(host, customHost)
         }
     }
 

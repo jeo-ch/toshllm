@@ -247,7 +247,7 @@ struct LocalModelDetailsSheet: View {
             if let customRepository, !customRepository.isEmpty { return customRepository }
             guard let url else { return nil }
             let source = DownloadSource.current
-            guard source.matchesURL(url) || url.host?.contains("huggingface.co") == true else { return nil }
+            guard source.matchesURL(url) || HostMatch.isHost(url, "huggingface.co") else { return nil }
             if let index = resolveIndex, index >= 2 {
                 return components[(index - 2)...(index - 1)].joined(separator: "/")
             } else if components.count >= 2, source != .modelScope {

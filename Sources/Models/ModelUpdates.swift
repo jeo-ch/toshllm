@@ -24,7 +24,8 @@ enum HuggingFaceAPI {
         }
 
         let parts = url.path.split(separator: "/").map(String.init)
-        guard let resolve = parts.firstIndex(of: "resolve"), resolve >= 2, parts.count > resolve + 1 else { return nil }
+        guard !parts.contains(where: { $0 == "." || $0 == ".." }),
+              let resolve = parts.firstIndex(of: "resolve"), resolve >= 2, parts.count > resolve + 1 else { return nil }
         let repo = parts[0] + "/" + parts[1]
         let rev = parts[resolve + 1]
         let filePath = parts[(resolve + 2)...].joined(separator: "/")

@@ -699,9 +699,10 @@ final class ModelStore: ObservableObject {
     /// auto-fetch (components aren't vision models).
     func downloadImageComponent(urlString: String, fileName: String, formerFileNames: [String] = []) {
         guard let remote = URL(string: urlString.trimmingCharacters(in: .whitespaces)),
-              remote.scheme?.hasPrefix("http") == true else { return }
+              let scheme = remote.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return }
         let dir = imagenDirectory
-        let dest = dir.appendingPathComponent(fileName)
+        guard let fileName = DownloadName.safe(fileName),
+              let dest = DownloadName.destination(fileName, in: dir) else { return }
         let names = componentNames(fileName: fileName, remote: remote, former: formerFileNames)
         if fileIndex?.file(namedAny: names, preferredDirectory: dir) != nil { return }
         let key = fileName.precomposedStringWithCanonicalMapping.lowercased()
@@ -827,10 +828,17 @@ final class ModelStore: ObservableObject {
     func download(urlString: String, preferredName: String? = nil,
                   fetchVisionProjector: Bool = true) {
         guard let pasted = URL(string: urlString.trimmingCharacters(in: .whitespaces)),
-              pasted.scheme?.hasPrefix("http") == true else { return }
+              let scheme = pasted.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return }
         let remote = HubEndpoint.canonical(pasted)
-        let fileName = preferredName ?? remote.lastPathComponent
-        let dest = directory.appendingPathComponent(fileName)
+        // The name comes from the URL or from a caller. A name that is not one
+        // plain component (`..`, `%2e%2e` once decoded, an embedded separator)
+        // would put the file, and the staging file beside it, outside the folder.
+        guard let fileName = DownloadName.safe(preferredName ?? "")
+                ?? DownloadName.safe(remote.lastPathComponent),
+              let dest = DownloadName.destination(fileName, in: directory) else {
+            AppLog.models.error("refusing a download whose name is not a single path component")
+            return
+        }
         let item = DownloadItem(remote: remote, destination: dest)
         item.onFinish = { [weak self] in self?.refresh() }
         downloads.append(item)
@@ -869,6 +877,7 @@ final class ModelStore: ObservableObject {
         }
         guard let entries else { return }
         let projectors = entries.compactMap { $0["path"] as? String }
+            .compactMap(DownloadName.safeRelativePath)
             .filter { $0.lowercased().contains("mmproj") && $0.lowercased().hasSuffix(".gguf") }
         // Pick the best projector for Metal-on-AMD. The vision encoder runs partly
         // on CPU here, so precision barely matters: prefer the smallest sane one —
@@ -883,8 +892,8 @@ final class ModelStore: ObservableObject {
         // Save under a model-specific name so pairing is unambiguous and projectors
         // from different repos (all named e.g. mmproj-F16.gguf) never collide.
         let modelStem = modelURL.deletingPathExtension().lastPathComponent
-        let projName = "\(modelStem).mmproj.gguf"
-        let projDest = directory.appendingPathComponent(projName)
+        guard let projName = DownloadName.safe("\(modelStem).mmproj.gguf"),
+              let projDest = DownloadName.destination(projName, in: directory) else { return }
         guard !FileManager.default.fileExists(atPath: projDest.path),
               !downloads.contains(where: { $0.destination == projDest && $0.error == nil }) else { return }
         let downloadURLStr = source.downloadURL(repo: repo, file: proj, branch: branch)
@@ -944,9 +953,10 @@ final class ModelStore: ObservableObject {
 
     /// Download a DFlash draft under a model-specific name so pairing is unambiguous.
     func downloadDflashDraft(repo: String, file: String, modelStem: String) {
-        let name = "\(modelStem).dflash.gguf"
-        guard !FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).path),
-              !downloads.contains(where: { $0.destination.lastPathComponent == name && $0.error == nil }) else { return }
+        guard let name = DownloadName.safe("\(modelStem).dflash.gguf"),
+              let dest = DownloadName.destination(name, in: directory),
+              !FileManager.default.fileExists(atPath: dest.path),
+              !downloads.contains(where: { $0.destination == dest && $0.error == nil }) else { return }
         let source = DownloadSource.current
         let downloadURLStr = source.downloadURL(repo: repo, file: file)
         download(urlString: downloadURLStr, preferredName: name, fetchVisionProjector: false)

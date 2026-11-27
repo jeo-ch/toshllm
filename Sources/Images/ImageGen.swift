@@ -57,7 +57,7 @@ struct ImageGenComponent: Identifiable {
         self.formerFileNames = formerFileNames
 
         if let url = URL(string: urlString),
-           url.host?.contains("huggingface.co") == true {
+           HostMatch.isHost(url, "huggingface.co") {
             let parts = url.pathComponents
             if let resolveIdx = parts.firstIndex(of: "resolve"), resolveIdx >= 2, parts.count > resolveIdx + 2 {
                 self.repo = parts[resolveIdx - 2] + "/" + parts[resolveIdx - 1]

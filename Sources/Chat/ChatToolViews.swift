@@ -244,7 +244,9 @@ private struct SearchResultPanel: View {
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let rows = object["results"] as? [[String: Any]] else { return nil }
         let hits = rows.compactMap { row -> Hit? in
-            guard let link = row["url"] as? String, let url = URL(string: link) else { return nil }
+            guard let link = row["url"] as? String, let url = URL(string: link),
+                  ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+                  url.host != nil else { return nil }
             return Hit(title: (row["title"] as? String) ?? url.host ?? link, url: url,
                        snippet: (row["content"] as? String) ?? "")
         }
