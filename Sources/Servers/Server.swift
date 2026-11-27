@@ -460,12 +460,20 @@ struct ServerSettings {
         return manualFullGPU ? "all" : "auto"
     }
 
-    /// Under Auto the fit keeps free the same VRAM reserve as the memory plan.
+    /// Under Auto the fit keeps free the same VRAM reserve as the memory plan, except on a
+    /// discrete card, where the engine sizes the margin from the free VRAM the driver reports.
     var fitTargetArguments: [String] {
         guard nglArgument == "auto" else { return [] }
         let indices = selectedGPUIndices
-        let vramMB = ServerController.availableGPUs().filter { indices.contains($0.index) }.map(\.vramMB).max() ?? 0
-        return ["--fit-target", String(Self.effectiveVramReserveMB(vramReserveMB, vramMB: vramMB))]
+        let gpus = ServerController.availableGPUs().filter { indices.contains($0.index) }
+        let discrete = !Self.isAppleSilicon && !gpus.isEmpty && gpus.allSatisfy { !$0.isIntegrated }
+        return ["--fit-target", Self.fitTarget(reserveMB: vramReserveMB,
+                                               vramMB: gpus.map(\.vramMB).max() ?? 0, discrete: discrete)]
+    }
+
+    /// Unified memory has no engine calibration, so there `auto` would mean a fixed 1024 MiB.
+    nonisolated static func fitTarget(reserveMB: Int, vramMB: Int, discrete: Bool) -> String {
+        reserveMB == 0 && discrete ? "auto" : String(effectiveVramReserveMB(reserveMB, vramMB: vramMB))
     }
 
     /// llama-bench takes no `-ngl auto`, but fits with a target. The server's fit leaves the
@@ -584,8 +592,10 @@ struct ServerSettings {
         args += unauthenticatedToolsArguments(toolsEnabled: agentToolsEnabled || !sympyArguments.isEmpty || uiMcpProxy)
         if apiKeyEnabled { args += ["--api-key", Keychain.apiKey()] }
         args += Self.chatUIArgs
-        args += extraArgTokens.cli
-        return reassertingManagedOptions(args, extra: extraArgTokens.cli)
+        let extraCli = Self.splitExtraArgs(extraArgs).cli
+            + Self.routerPresetOptions(Self.extraArgs(forModel: modelPath)).rest
+        args += extraCli
+        return reassertingManagedOptions(args, extra: extraCli)
     }
 
     /// Same folder `ModelStore` scans (`~/models` or the custom override),
@@ -612,8 +622,7 @@ struct ServerSettings {
     }
 
     /// Builds the router's `--models-preset` INI: one `[alias]` section per model,
-    /// shared engine config plus per-path ncmoe/mmproj/MTP. `extraArgs` (free-form
-    /// CLI tokens) isn't representable generically here, so it's skipped.
+    /// shared engine config plus per-path ncmoe/mmproj/MTP and the model's own extra arguments.
     func routerPresetINI(modelPaths: [String], ncmoeByPath: [String: Int],
                          nglByPath: [String: Int] = [:]) -> String {
         // Same FA policy as `arguments`: force only for quantized KV.
@@ -696,23 +705,106 @@ struct ServerSettings {
                     lines.append("spec-draft-n-max = \(n)")
                 }
             }
+            let own = Self.routerPresetOptions(Self.extraArgs(forModel: path)).preset
+            let ownKeys = Set(own.map(\.key))
+            lines.removeAll { line in
+                guard let eq = line.range(of: " = ") else { return false }
+                return ownKeys.contains(String(line[..<eq.lowerBound]))
+            }
+            lines += own.map { "\($0.key) = \($0.value)" }
             sections.append(lines.joined(separator: "\n"))
         }
         return sections.joined(separator: "\n\n") + "\n"
+    }
+
+    /// Short and alternate names of the options a model's section takes, so its own argument replaces the app's line.
+    nonisolated static let routerOptionAliases: [String: String] = [
+        "c": "ctx-size", "ngl": "n-gpu-layers", "gpu-layers": "n-gpu-layers", "t": "threads", "fa": "flash-attn",
+        "ncmoe": "n-cpu-moe", "cmoe": "cpu-moe", "lm": "load-mode", "mm": "mmproj", "ctk": "cache-type-k",
+        "ctv": "cache-type-v", "cram": "cache-ram", "np": "parallel", "kvu": "kv-unified", "sm": "split-mode",
+        "ts": "tensor-split", "mg": "main-gpu", "dev": "device", "ub": "ubatch-size", "b": "batch-size",
+        "ot": "override-tensor", "fitt": "fit-target", "s": "seed", "temperature": "temp",
+        "n": "n-predict", "predict": "n-predict",
+        "md": "model-draft", "spec-draft-model": "model-draft",
+        "ngld": "gpu-layers-draft", "spec-draft-ngl": "gpu-layers-draft", "n-gpu-layers-draft": "gpu-layers-draft",
+        "ctkd": "cache-type-k-draft", "spec-draft-type-k": "cache-type-k-draft",
+        "ctvd": "cache-type-v-draft", "spec-draft-type-v": "cache-type-v-draft",
+    ]
+
+    /// Options a model's section can carry. The engine refuses the whole preset over a key it does not know,
+    /// so any other option stays on the router's command line, as before.
+    nonisolated static let routerPresetKeys: Set<String> = [
+        "ctx-size", "n-gpu-layers", "n-cpu-moe", "cpu-moe", "threads", "flash-attn", "load-mode", "fit-target",
+        "cache-type-k", "cache-type-v", "cache-ram", "cache-reuse", "kv-unified", "swa-full", "parallel",
+        "ubatch-size", "batch-size", "split-mode", "tensor-split", "main-gpu", "device", "override-tensor",
+        "mmproj", "mmproj-offload", "no-mmproj-offload", "image-max-tokens", "image-min-tokens",
+        "model-draft", "spec-type", "spec-draft-n-max", "spec-draft-n-min", "spec-draft-sampling",
+        "gpu-layers-draft", "cache-type-k-draft", "cache-type-v-draft",
+        "temp", "top-k", "top-p", "min-p", "repeat-penalty", "presence-penalty", "frequency-penalty", "seed",
+        "n-predict", "chat-template", "chat-template-file", "chat-template-kwargs", "jinja", "no-jinja",
+        "reasoning-format", "reasoning-budget", "rope-scaling", "rope-scale", "rope-freq-base", "yarn-orig-ctx",
+        "lora", "dynamic-moe",
+    ]
+
+    /// Options that take a comma-separated list, so repeating one adds to it instead of replacing it.
+    nonisolated static let routerListKeys: Set<String> = ["override-tensor", "lora"]
+
+    /// A model's own extra arguments split for the router: the options its preset section can carry, keyed
+    /// without dashes and `true` for a flag given alone, and the rest of the tokens as they were.
+    nonisolated static func routerPresetOptions(_ args: String) -> (preset: [(key: String, value: String)], rest: [String]) {
+        func isOption(_ token: String) -> Bool { token.count > 1 && token.hasPrefix("-") && Double(token) == nil }
+        let tokens = splitExtraArgs(args).cli
+        var preset: [(key: String, value: String)] = []
+        var rest: [String] = []
+        var i = 0
+        while i < tokens.count {
+            let token = tokens[i]
+            i += 1
+            guard isOption(token) else {
+                rest.append(token)
+                continue
+            }
+            var consumed = [token]
+            var name = String(token.drop { $0 == "-" })
+            var value = "true"
+            if let eq = name.firstIndex(of: "=") {
+                value = String(name[name.index(after: eq)...])
+                name = String(name[..<eq])
+            } else if i < tokens.count, !isOption(tokens[i]) {
+                value = tokens[i]
+                consumed.append(tokens[i])
+                i += 1
+            }
+            let key = routerOptionAliases[name] ?? name
+            // the preset reads a value only up to a ; or #
+            guard routerPresetKeys.contains(key), !value.contains(where: { $0 == ";" || $0 == "#" }) else {
+                rest += consumed
+                continue
+            }
+            if let k = preset.firstIndex(where: { $0.key == key }) {
+                preset[k].value = routerListKeys.contains(key) ? preset[k].value + "," + value : value
+            } else {
+                preset.append((key, value))
+            }
+        }
+        return (preset, rest)
     }
 
     /// Splits the Extra arguments field: `KEY=VALUE` with an UPPERCASE name becomes an
     /// env var, everything else a CLI argument. The uppercase rule is what keeps
     /// lowercase flag values containing `=` (`--override-kv key=str:foo`) out of the env.
     var extraArgTokens: (env: [String: String], cli: [String]) {
+        // The model's own arguments come last so they win over the shared field.
+        Self.splitExtraArgs(extraArgs + " " + Self.extraArgs(forModel: modelPath))
+    }
+
+    nonisolated static func splitExtraArgs(_ combined: String) -> (env: [String: String], cli: [String]) {
         func isEnvName(_ s: Substring) -> Bool {
             guard let first = s.first, first == "_" || (first.isLetter && first.isUppercase) else { return false }
             return s.allSatisfy { $0 == "_" || $0.isNumber || ($0.isLetter && $0.isUppercase) }
         }
         var env: [String: String] = [:]
         var cli: [String] = []
-        // The model's own arguments come last so they win over the shared field.
-        let combined = extraArgs + " " + Self.extraArgs(forModel: modelPath)
         for tok in ShellWords.split(combined) {
             if let eq = tok.firstIndex(of: "="), eq != tok.startIndex, isEnvName(tok[..<eq]) {
                 env[String(tok[..<eq])] = String(tok[tok.index(after: eq)...])
@@ -1068,7 +1160,7 @@ struct ServerSettings {
             ncmoe: int(SettingsKeys.ncmoe, 0),
             ctx: int(SettingsKeys.ctx, 16384),
             contextAutomatic: bool(SettingsKeys.contextAutomatic, false),
-            threads: int(SettingsKeys.threads, 6),
+            threads: int(SettingsKeys.threads, HardwareInfo.defaultThreads),
             flashAttn: d.string(forKey: SettingsKeys.flashAttn) ?? "auto",
             noMmap: bool(SettingsKeys.noMmap, true),
             jinja: bool(SettingsKeys.jinja, true),
@@ -1092,7 +1184,7 @@ struct ServerSettings {
             defaultReasoning: d.string(forKey: SettingsKeys.serverDefaultReasoning) ?? "model",
             // -1 is "same as the chat": the web chat and API clients get the in-app chat's limit
             defaultMaxTokens: int(SettingsKeys.serverDefaultMaxTokens, -1) < 0
-                ? int(SettingsKeys.chatMaxTokens, 2048) : int(SettingsKeys.serverDefaultMaxTokens, -1),
+                ? int(SettingsKeys.chatMaxTokens, ChatStore.defaultMaxTokens) : int(SettingsKeys.serverDefaultMaxTokens, -1),
             parallelSlots: int(SettingsKeys.parallelSlots, 1),
             separateKV: bool(SettingsKeys.separateKV, false),
             apiKeyEnabled: bool(SettingsKeys.apiKeyEnabled, false),
@@ -1439,21 +1531,23 @@ struct ServerSettings {
     /// above zero more of the draft is accepted, and at zero it is the same as taking the argmax.
     nonisolated static let mtpSamplingArgs = ["--spec-draft-sampling", "probabilistic"]
 
-    nonisolated static func mtpDraftPath(forModel modelPath: String) -> String? {
-        guard !modelPath.isEmpty, !GGUFFile.isDraft(modelPath) else { return nil }
+    /// Every head file that describes this model, sorted by name.
+    nonisolated static func mtpHeadCandidates(forModel modelPath: String) -> [String] {
+        guard !modelPath.isEmpty, !GGUFFile.isDraft(modelPath) else { return [] }
         let modelURL = URL(fileURLWithPath: modelPath)
         let dir = modelURL.deletingLastPathComponent()
         let modelStem = mtpStem(modelURL.lastPathComponent)
 
         var files: [URL] = ModelDirectoryListing.entries(in: dir)
-        for sub in ["MTP", "mtp"] {
-            let subDir = dir.appendingPathComponent(sub)
-            if ModelDirectoryListing.contains(sub, in: dir) {
-                files += ModelDirectoryListing.entries(in: subDir)
+        // the folder's real name only: on a case-insensitive volume "MTP" and "mtp" are the same files
+        for sub in files where sub.lastPathComponent.lowercased() == "mtp" {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: sub.path, isDirectory: &isDir), isDir.boolValue {
+                files += ModelDirectoryListing.entries(in: sub)
             }
         }
 
-        let candidates = files.filter { file in
+        return files.filter { file in
             guard file.pathExtension.lowercased() == "gguf", file.path != modelPath else { return false }
             let name = file.lastPathComponent.lowercased()
             let looksLikeHead = name.hasPrefix("mtp-") || name.contains(".mtp.")
@@ -1463,16 +1557,33 @@ struct ServerSettings {
             guard stem == modelStem || modelStem.hasPrefix(stem) || stem.hasPrefix(modelStem) else { return false }
             return mtpHeadMatches(head: file.path, model: modelPath)
         }
+        .map(\.path)
+        .sorted { URL(fileURLWithPath: $0).lastPathComponent < URL(fileURLWithPath: $1).lastPathComponent }
+    }
 
-        let exact = candidates.filter { mtpStem($0.lastPathComponent) == modelStem }
+    nonisolated static func mtpDraftPath(forModel modelPath: String) -> String? {
+        let candidates = mtpHeadCandidates(forModel: modelPath)
+        if let chosen = mtpChosenHead(forModel: modelPath), candidates.contains(chosen) { return chosen }
+        let modelStem = mtpStem(URL(fileURLWithPath: modelPath).lastPathComponent)
+        let exact = candidates.filter { mtpStem(URL(fileURLWithPath: $0).lastPathComponent) == modelStem }
         let pool = exact.isEmpty ? candidates : exact
         guard pool.count <= 1 else {
             // several heads describe this model and nothing says which build to draft with:
             // picking one silently would ship a head the user did not choose
-            AppLog.server.error("MTP: \(pool.count) heads match \(modelURL.lastPathComponent), none selected")
+            AppLog.server.error("MTP: \(pool.count) heads match \(URL(fileURLWithPath: modelPath).lastPathComponent), none selected")
             return nil
         }
-        return pool.first?.path
+        return pool.first
+    }
+
+    nonisolated static func mtpChosenHead(forModel path: String) -> String? {
+        (UserDefaults.standard.dictionary(forKey: SettingsKeys.mtpHeadByModel) as? [String: String])?[path]
+    }
+
+    nonisolated static func setMTPHead(_ head: String?, forModel path: String) {
+        var heads = UserDefaults.standard.dictionary(forKey: SettingsKeys.mtpHeadByModel) as? [String: String] ?? [:]
+        heads[path] = head
+        UserDefaults.standard.set(heads, forKey: SettingsKeys.mtpHeadByModel)
     }
 
     /// Draft width for this model on this card. Flash-Next verifies three tokens faster than
@@ -1503,6 +1614,11 @@ struct ServerSettings {
 
     nonisolated static func modelUsesMTP(at path: String) -> Bool {
         modelHasMTP(at: path) || mtpDraftPath(forModel: path) != nil
+    }
+
+    /// True when the model has a head to draft with, even one still waiting for the user to pick it.
+    nonisolated static func modelOffersMTP(at path: String) -> Bool {
+        modelHasMTP(at: path) || !mtpHeadCandidates(forModel: path).isEmpty
     }
 
     nonisolated static func mtpEnabled(forModel path: String) -> Bool {
@@ -2616,6 +2732,13 @@ final class ServerController: ObservableObject {
         if tail.contains("prism.hadamard") || tail.contains("Hadamard") {
             return "El modelo pide una rotación de Hadamard que este motor no admite: usa otra versión del GGUF / the model asks for a Hadamard rotation this engine does not support: use another build of the GGUF"
         }
+        // Both say what to do instead, so they must not fall through to "damaged file".
+        if tail.contains("stores a looped model") {
+            return "Este Inkling 2 usa el formato antiguo (Old_Support): descarga el GGUF de la raíz del repositorio o de Mainline_Support / this Inkling 2 file uses the old layout (Old_Support): download the GGUF from the repository root or Mainline_Support"
+        }
+        if tail.contains("error loading model: dmoe_unsupported_model") {
+            return "Dynamic MoE no admite este modelo: desactívalo en Ajustes / Dynamic MoE does not support this model: turn it off in Settings"
+        }
         if tail.contains("invalid magic") || tail.contains("failed to load model")
             || tail.contains("error loading model") {
             return "Modelo dañado o incompleto: vuelve a descargarlo / model file damaged or incomplete: re-download it"
@@ -2960,6 +3083,11 @@ final class ServerController: ObservableObject {
         pattern: #"draft acceptance = ([0-9]+\.[0-9]+)"#)
     private static let tokensPerSecond = try! NSRegularExpression(
         pattern: #"([0-9]+\.[0-9]+) tokens per second"#)
+
+    /// A line from the app in the engine's log, where users look when the engine stops.
+    func note(_ line: String) {
+        consume("\n[ToshLLM] \(line)\n")
+    }
 
     private func consume(_ text: String) {
         logBuffer.append(text)

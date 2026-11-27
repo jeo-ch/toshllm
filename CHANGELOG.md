@@ -3,6 +3,41 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.88.2] - 2026-11-26
+
+### Added
+
+- **Chat: a button reads an answer aloud with the Mac's own voices (#176).** It picks the best installed voice for the answer's language, leaves out the reasoning, code and link addresses, and stops when the chat it belongs to is left. Contributed by [andruwa13](https://github.com/andruwa13) in [#185](https://github.com/engeldlgado/toshllm/pull/185).
+- **LLMs: Inkling 2 models load and run (#174),** from files in the looped layout (the repository root or `Mainline_Support/` in Unsloth's repos). The automatic plan loads a file whole when it fits on the card, and otherwise moves the layers its passes don't repeat to the CPU first; experts stored in NVFP4 run on the CPU, since the card has no kernel for them. Dynamic MoE stays off for them, and a file in the old layout is named as such instead of looking damaged. Replies still end with a visible `<|end_message|>` (#183). Contributed by [eliasMan](https://github.com/eliasMan) in [#182](https://github.com/engeldlgado/toshllm/pull/182).
+
+### Improved
+
+- **LLMs on Polaris and Vega cards: the turbo KV cache rotates queries and attention output with the whole wave** instead of one thread per group. Contributed by [andruwa13](https://github.com/andruwa13) in [#171](https://github.com/engeldlgado/toshllm/pull/171).
+
+### Fixed
+
+- **MCP: importing a remote server's configuration keeps its headers (#189),** so a server that needs an `Authorization` header connects instead of failing with 401. Contributed by [andruwa13](https://github.com/andruwa13) in [#190](https://github.com/engeldlgado/toshllm/pull/190).
+- **LLMs on Polaris and Vega cards: a model with F8 or TQ weights no longer aborts while reading the prompt;** what those cards have no kernel for runs on the CPU. Contributed by [andruwa13](https://github.com/andruwa13) in [#173](https://github.com/engeldlgado/toshllm/pull/173).
+- **LLMs on Polaris and Vega cards: Dynamic MoE leaves room for the gate and up experts the card fuses (#187),** so the bounded mode no longer fails at start and mixed execution no longer turns itself off. Contributed by [andruwa13](https://github.com/andruwa13) in [#188](https://github.com/engeldlgado/toshllm/pull/188).
+- **LLMs: Dynamic MoE no longer crashes the engine when one layer's experts are in a format the card can't multiply in a batch, such as NVFP4;** that layer stays on the CPU. Models whose layers share their experts, like Inkling 2, now answer correctly with it, though the automatic plan keeps them on the classic split, which measured twice as fast.
+- **LLMs: GPU layers on Auto keeps the whole model on a discrete card again (#178).** It tries a smaller batch before moving layers to the CPU, and a vision projector that would push layers off the card loads on the CPU instead. Contributed by [andruwa13](https://github.com/andruwa13) in [#179](https://github.com/engeldlgado/toshllm/pull/179).
+- **LLMs: a long context no longer overfills a small discrete card while reading the prompt (#192).** When the faster way needs more memory than the card has free, the engine falls back to one that takes far less: Gemma 4 E4B at 64K context needs 786 MiB instead of 1785.
+- **Ukrainian: clearer wording for prompt processing, voice detection and multi-GPU settings.** Contributed by [andruwa13](https://github.com/andruwa13) in [#186](https://github.com/engeldlgado/toshllm/pull/186).
+
+## [0.88.1] - 2026-11-24
+
+### Improved
+
+- **LLMs: the engine uses one thread per physical core by default, like llama.cpp, instead of 6 (#180).** It matters most with experts on the CPU of a Mac with many cores. A count set in Settings is kept.
+- **LLMs: when several MTP head files fit a model, its MTP setting lists them to choose one (#180).** The app still never picks one for you, and Settings points to the model's card.
+- **LLMs: in the multi-model router, a model's own extra arguments apply to that model (#175).** `-c 65536` there sets its context instead of the size fitted to VRAM, without changing the other models.
+- **Chat: replies can be 8,192 tokens long by default instead of 2,048 (#180),** so a reasoning model at the medium level has room to answer after thinking. The setting warns when the reasoning budget can use the whole limit.
+
+### Fixed
+
+- **Chat: a tool call that writes a long file no longer stops the engine as if it had hung (#184).** The watchdog counted only text, and a tool call's arguments arrive without any; the server log now says which limit stopped it.
+- **LLMs: an MTP head kept in the `MTP` folder beside its model is used.** On a disk that ignores case the folder was read twice, so the head looked like two and none was chosen.
+
 ## [0.88.0] - 2026-11-18
 
 ### Added

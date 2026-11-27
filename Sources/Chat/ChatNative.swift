@@ -150,6 +150,11 @@ final class StreamBuffer: @unchecked Sendable {
         return !done && liveness.stalled(now: now)
     }
 
+    func stallReport(now: Date = Date()) -> String {
+        lock.lock(); defer { lock.unlock() }
+        return liveness.report(now: now)
+    }
+
     /// The latest snapshot if it changed since the last take (or the stream
     /// ended); nil when there is nothing new to render.
     func take() -> (reasoning: String, visible: String, speed: Double?, progress: Double?, done: Bool)? {
@@ -225,6 +230,9 @@ private final class ChatSaveJob: @unchecked Sendable {
 
 @MainActor
 final class ChatStore: ObservableObject {
+    /// Room for the medium reasoning budget and an answer after it.
+    nonisolated static let defaultMaxTokens = 8_192
+
     nonisolated static func reasoningBudget(for effort: String) -> Int? {
         switch effort {
         case "minimal": 128
@@ -251,9 +259,13 @@ final class ChatStore: ObservableObject {
         max(1, UserDefaults.standard.object(forKey: SettingsKeys.chatAgenticMaxTurns) as? Int ?? 10)
     }
 
-    @Published var conversations: [Conversation] = []
+    @Published var conversations: [Conversation] = [] {
+        didSet { stopReadingIfGone() }
+    }
     @Published var projects: [ChatProject] = []
-    @Published var currentID: UUID?
+    @Published var currentID: UUID? {
+        didSet { stopReadingIfGone() }
+    }
     @Published var generating = false {
         didSet { keepAwake = KeepAwake.update(keepAwake, active: generating, reason: "Writing an answer") }
     }
@@ -482,6 +494,13 @@ final class ChatStore: ObservableObject {
 
     var currentIndex: Int? { conversations.firstIndex { $0.id == currentID } }
     var current: Conversation? { currentIndex.map { conversations[$0] } }
+
+    /// A reply read aloud stops once it leaves the chat on screen, since its button goes with it.
+    private func stopReadingIfGone() {
+        guard let id = MessageSpeech.shared.speakingMessageID,
+              current?.messages.contains(where: { $0.id == id }) != true else { return }
+        MessageSpeech.shared.stop()
+    }
 
     func newConversation(in projectID: UUID? = nil) {
         // Reuse an existing empty conversation in the same scope instead of
@@ -953,6 +972,8 @@ final class ChatStore: ObservableObject {
                             dropLeadingSpace = accumulator.visible.isEmpty
                         }
                         if let progress = event.progress { buffer.writeProgress(progress) }
+                        // tool call arguments stream without text, and a long one outlasts the text limit
+                        if event.receivedToolCall { buffer.note() }
                         if event.receivedContent {
                             let now = Date()
                             if tFirst == nil { tFirst = now }
@@ -1816,7 +1837,7 @@ final class ChatStore: ObservableObject {
                 try? await Task.sleep(for: .seconds(5))
                 guard let self, !Task.isCancelled, self.generating else { return }
                 if stream.stalled() {
-                    self.handleStreamStall()
+                    self.handleStreamStall(reason: stream.stallReport())
                     return
                 }
             }
@@ -1825,11 +1846,12 @@ final class ChatStore: ObservableObject {
 
     /// The engine stopped producing tokens while alive: treat it as a driver
     /// deadlock, stop the engine to free its memory, and tell the user.
-    private func handleStreamStall() {
-        AppLog.chat.error("stream stalled; stopping engine")
+    private func handleStreamStall(reason: String) {
+        AppLog.chat.error("stream stalled, \(reason, privacy: .public); stopping engine")
         task?.cancel()
         task = nil
         watchdog = nil
+        ServerManager.shared.active.note("the chat stopped the engine: \(reason)")
         ServerManager.shared.active.stop()
         lastError = Self.stallMessage(moe: ServerSettings.modelIsMoE(
             at: UserDefaults.standard.string(forKey: SettingsKeys.modelPath) ?? ""))

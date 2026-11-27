@@ -36,19 +36,19 @@ hand.
 |---|---|---|
 | Spanish (Español) | `es` | Built-in (100%) |
 | English (English) | `en` | Built-in (100%) |
-| Italian (Italiano) | `it` | 98% (2016/2048) |
+| Italian (Italiano) | `it` | 98% (2021/2056) |
 | German (Deutsch) | `de` | not started |
 | French (Français) | `fr` | not started |
 | Portuguese (Português) | `pt` | not started |
-| Chinese (Simplified) (简体中文) | `zh` | 98% (2016/2048) |
-| Japanese (日本語) | `ja` | 98% (2016/2048) |
+| Chinese (Simplified) (简体中文) | `zh` | 98% (2021/2056) |
+| Japanese (日本語) | `ja` | 98% (2021/2056) |
 | Korean (한국어) | `ko` | not started |
-| Russian (Русский) | `ru` | 98% (2016/2048) |
+| Russian (Русский) | `ru` | 98% (2021/2056) |
 | Hindi (हिन्दी) | `hi` | not started |
 | Turkish (Türkçe) | `tr` | not started |
 | Dutch (Nederlands) | `nl` | not started |
 | Polish (Polski) | `pl` | not started |
-| Ukrainian (Українська) | `uk` | 98% (2016/2048) |
+| Ukrainian (Українська) | `uk` | 98% (2024/2056) |
 
 <!-- STATUS:END -->
 

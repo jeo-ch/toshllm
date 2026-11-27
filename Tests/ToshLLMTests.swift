@@ -1319,6 +1319,25 @@ final class ServerSettingsTests: XCTestCase {
         s = makeSettings()
         XCTAssertEqual(s.arguments[s.arguments.firstIndex(of: "-ngl")! + 1], "99")
         XCTAssertFalse(s.arguments.contains("--fit-target"))
+
+        // An Automatic reserve still passes --fit-target, so llama-bench fits too.
+        var autoRes = makeSettings()
+        autoRes.ngl = -1
+        autoRes.ncmoe = 0
+        autoRes.vramReserveMB = 0
+        let autoArgs = autoRes.arguments
+        let autoTarget = autoArgs[autoArgs.firstIndex(of: "--fit-target")! + 1]
+        XCTAssertTrue(autoTarget == "auto" || Int(autoTarget) != nil, autoTarget)
+        let autoBench = autoRes.benchmarkArguments
+        XCTAssertFalse(autoBench.contains("-ngl"))
+        XCTAssertEqual(autoBench[autoBench.firstIndex(of: "--fit-target")! + 1], autoTarget)
+    }
+
+    func testOnlyADiscreteCardLetsTheEngineSizeTheAutomaticReserve() {
+        XCTAssertEqual(ServerSettings.fitTarget(reserveMB: 0, vramMB: 12288, discrete: true), "auto")
+        // unified memory keeps the app's 8%, since the engine would fall back to a fixed 1024 MiB
+        XCTAssertEqual(ServerSettings.fitTarget(reserveMB: 0, vramMB: 12288, discrete: false), "983")
+        XCTAssertEqual(ServerSettings.fitTarget(reserveMB: 2048, vramMB: 12288, discrete: true), "2048")
     }
 
     func testBaseArguments() {
@@ -2068,6 +2087,33 @@ final class ServerSettingsTests: XCTestCase {
             .resolvingSymlinksInPath().path, canonicalDraft)
         XCTAssertEqual(args[args.firstIndex(of: "--spec-type")! + 1], "draft-mtp")
         XCTAssertEqual(args[args.firstIndex(of: "--spec-draft-sampling")! + 1], "probabilistic")
+    }
+
+    func testSeveralMTPHeadsWaitForTheUserToPickOne() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mtp-heads-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("MTP"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let base = dir.appendingPathComponent("Qwen3.8-Flash-Next-UD-Q4_K_XL.gguf")
+        let q4 = dir.appendingPathComponent("MTP/mtp-Qwen3.8-Flash-Next-Q4_K_M.gguf")
+        let q8 = dir.appendingPathComponent("MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf")
+        for url in [base, q4, q8] { try Data("gguf".utf8).write(to: url) }
+        defer { ServerSettings.setMTPHead(nil, forModel: base.path) }
+        func resolved(_ path: String?) -> String? { path.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path } }
+
+        XCTAssertEqual(ServerSettings.mtpHeadCandidates(forModel: base.path).count, 2)
+        XCTAssertNil(ServerSettings.mtpDraftPath(forModel: base.path), "no head is picked for the user")
+        XCTAssertFalse(ServerSettings.modelUsesMTP(at: base.path))
+        XCTAssertTrue(ServerSettings.modelOffersMTP(at: base.path), "the control still shows so the user can pick")
+
+        let chosen = try XCTUnwrap(ServerSettings.mtpHeadCandidates(forModel: base.path).first { $0.hasSuffix("Q8_0.gguf") })
+        ServerSettings.setMTPHead(chosen, forModel: base.path)
+        XCTAssertEqual(resolved(ServerSettings.mtpDraftPath(forModel: base.path)), resolved(q8.path))
+        XCTAssertTrue(ServerSettings.modelUsesMTP(at: base.path))
+
+        try FileManager.default.removeItem(at: q8)
+        XCTAssertEqual(resolved(ServerSettings.mtpDraftPath(forModel: base.path)), resolved(q4.path),
+                       "a chosen head that is gone falls back to the one left")
     }
 
     func testModelPublishDateReadsCreationAndBaseModel() {
@@ -3398,8 +3444,54 @@ final class RouterModeTests: XCTestCase {
         let ini = s.routerPresetINI(modelPaths: ["/models/dense-4b.gguf"], ncmoeByPath: [:])
         XCTAssertTrue(ini.contains("n-gpu-layers = auto"))
         XCTAssertTrue(ini.contains("fit-target = 1024"))
+        s.vramReserveMB = 0
+        let autoIni = s.routerPresetINI(modelPaths: ["/models/dense-4b.gguf"], ncmoeByPath: [:])
+        let autoLine = autoIni.split(separator: "\n").first { $0.hasPrefix("fit-target = ") }
+        let autoValue = autoLine.map { String($0.dropFirst("fit-target = ".count)) } ?? ""
+        XCTAssertTrue(autoValue == "auto" || Int(autoValue) != nil, autoIni)
         XCTAssertTrue(makeSettings().routerPresetINI(modelPaths: ["/models/dense-4b.gguf"], ncmoeByPath: [:])
             .contains("n-gpu-layers = 99"))
+    }
+
+    func testRouterPresetTakesEachModelsOwnArguments() {
+        let path = "/models/qwen3.5-9b-\(UUID().uuidString).gguf"
+        ServerSettings.setExtraArgs("-c 65536 --no-mmproj-offload --temp=0.6", forModel: path)
+        defer { ServerSettings.setExtraArgs("", forModel: path) }
+        let ini = makeSettings().routerPresetINI(modelPaths: [path, "/models/dense-4b.gguf"], ncmoeByPath: [:])
+        let own = ini.components(separatedBy: "\n\n").first { $0.contains(path) } ?? ""
+        XCTAssertEqual(own.components(separatedBy: "ctx-size = ").count - 1, 1, "the model's context replaces the fitted one")
+        XCTAssertTrue(own.contains("ctx-size = 65536"))
+        XCTAssertTrue(own.contains("no-mmproj-offload = true"))
+        XCTAssertTrue(own.contains("temp = 0.6"))
+        let other = ini.components(separatedBy: "\n\n").first { $0.contains("dense-4b") } ?? ""
+        XCTAssertTrue(other.contains("ctx-size = 8192"))
+    }
+
+    func testRouterOptionsReadFlagsValuesAndNegativeNumbers() {
+        let options = ServerSettings.routerPresetOptions(#"-ngl 20 --jinja --seed -1 GGML_X=1 -md "/a b/head.gguf""#)
+        XCTAssertEqual(options.preset.map { "\($0.key)=\($0.value)" },
+                       ["n-gpu-layers=20", "jinja=true", "seed=-1", "model-draft=/a b/head.gguf"])
+        XCTAssertEqual(options.rest, [], "an environment variable is not an option")
+    }
+
+    // the engine refuses the whole preset over one key it does not know
+    func testUnknownOptionsStayOffThePreset() {
+        let options = ServerSettings.routerPresetOptions("-ot a=CPU --made-up 3 -ot b=CPU --chat-template x#y")
+        XCTAssertEqual(options.preset.map { "\($0.key)=\($0.value)" }, ["override-tensor=a=CPU,b=CPU"])
+        XCTAssertEqual(options.rest, ["--made-up", "3", "--chat-template", "x#y"])
+    }
+
+    func testTheRouterCommandLineLeavesAModelsOwnArgumentsToItsSection() {
+        var s = makeSettings()
+        s.modelPath = "/models/selected-\(UUID().uuidString).gguf"
+        s.extraArgs = "--verbose"
+        ServerSettings.setExtraArgs("-c 65536 --made-up", forModel: s.modelPath)
+        defer { ServerSettings.setExtraArgs("", forModel: s.modelPath) }
+        let args = s.arguments
+        XCTAssertTrue(args.contains("--verbose"))
+        XCTAssertFalse(args.contains("-c"), "the selected model's context would reach every model")
+        XCTAssertTrue(args.contains("--made-up"), "what the preset can't carry keeps going where it went before")
+        XCTAssertFalse(s.routerPresetINI(modelPaths: [s.modelPath], ncmoeByPath: [:]).contains("made-up"))
     }
 
     func testRouterPresetAliasCollisionIsDisambiguated() {
@@ -3680,6 +3772,23 @@ extension ServerSettingsTests {
         let hint = ServerController.diagnose(log, exitCode: 1)
         XCTAssertTrue(hint.contains("por capas"), hint)
         XCTAssertTrue(hint.contains("by layers"), hint)
+    }
+
+    @MainActor func testDiagnoseSendsAnOldInklingFileToTheSupportedLayout() {
+        let log = """
+        llama_model_load: error loading model: error loading model hyperparameters: inkling2: this file stores a looped model (num_loops = 3) in a layout that is not supported
+        llama_model_load_from_file_impl: failed to load model
+        """
+        let hint = ServerController.diagnose(log, exitCode: 1)
+        XCTAssertTrue(hint.contains("Mainline_Support"), hint)
+        XCTAssertFalse(hint.contains("re-download"), hint)
+    }
+
+    @MainActor func testDiagnoseNamesDynamicMoEWhenItRefusesTheModel() {
+        let log = "llama_model_load: error loading model: DMOE_UNSUPPORTED_MODEL: looped layers share their experts\nfailed to load model"
+        let hint = ServerController.diagnose(log, exitCode: 1)
+        XCTAssertTrue(hint.contains("turn it off"), hint)
+        XCTAssertFalse(hint.contains("re-download"), hint)
     }
 }
 

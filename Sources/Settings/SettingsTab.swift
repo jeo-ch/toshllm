@@ -31,7 +31,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.ncmoe) private var ncmoe = 0
     @AppStorage(SettingsKeys.ctx) private var ctx = 16384
     @AppStorage(SettingsKeys.contextAutomatic) private var contextAutomatic = false
-    @AppStorage(SettingsKeys.threads) private var threads = 6
+    @AppStorage(SettingsKeys.threads) private var threads = HardwareInfo.defaultThreads
     @AppStorage(SettingsKeys.flashAttn) private var flashAttn = "auto"
     @AppStorage(SettingsKeys.noMmap) private var noMmap = true
     @AppStorage(SettingsKeys.jinja) private var jinja = true
@@ -949,8 +949,8 @@ struct SettingsView: View {
                             : loc.t("Reserva de VRAM: %@ MB", "VRAM reserve: %@ MB", "\(vramReserve)"),
                         value: $vramReserve, in: 0...4096, step: 256)
                     .settingsGlyph("gauge.with.needle")
-                    .infoTip(loc.t("VRAM que se deja libre para el sistema y la interfaz. La respetan el plan de Dynamic MoE, el modo router, DFlash en Auto y las capas en GPU en Auto. Automática deja un 8% de la tarjeta, entre 768 y 1536 MB.",
-                                "VRAM left free for the system and UI. The Dynamic MoE plan, router mode, DFlash in Auto and GPU layers in Auto keep it. Automatic leaves 8% of the card, between 768 and 1536 MB."))
+                    .infoTip(loc.t("VRAM que se deja libre para el sistema y la interfaz. La respetan el plan de Dynamic MoE, el modo router, DFlash en Auto y las capas en GPU en Auto. Automática deja un 8% de la tarjeta (768–1536 MB) en Dynamic MoE/router y un 4% (320–768 MB sobre la VRAM libre real del driver) al ajustar capas densas en GPU dedicada.",
+                                "VRAM left free for the system and UI. The Dynamic MoE plan, router mode, DFlash in Auto and GPU layers in Auto keep it. Automatic leaves 8% of the card (768–1536 MB) for Dynamic MoE/router, and 4% (320–768 MB above the driver's real free VRAM) when auto-fitting dense layers on a discrete GPU."))
                 HStack {
                     Text(loc.t("Umbral de aviso VRAM", "VRAM warning threshold"))
                         .settingsGlyph("exclamationmark.triangle")
@@ -1209,6 +1209,13 @@ struct SettingsView: View {
                         .foregroundStyle(.green)
                         .infoTip(loc.t("MTP se activa automáticamente cuando el GGUF trae el cabezal, tanto en modelos densos como MoE.",
                                     "MTP turns on automatically whenever the GGUF includes the head, for both dense and MoE models."))
+                } else if !modelPath.isEmpty && ServerSettings.modelOffersMTP(at: modelPath) {
+                    Label(loc.t("Varios cabezales MTP: elige uno en la ficha del modelo", "Several MTP heads: choose one on the model's card"),
+                          systemImage: "hare")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .infoTip(loc.t("Hay más de un archivo de cabezal para este modelo y la app no elige por ti. Elígelo en Modelos o en la página del servidor.",
+                                    "More than one head file fits this model and the app does not pick for you. Choose it in Models or on the server page."))
                 }
                 if engineSelection.wrappedValue != "custom" {
                     Toggle(loc.t("Prefetch de expertos MoE (prompt)", "MoE expert prefetch (prompt)"), isOn: $prefetchExperts)

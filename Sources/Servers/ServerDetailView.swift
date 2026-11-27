@@ -404,7 +404,7 @@ private struct ServerConfigurationWorkspace: View {
     @AppStorage(SettingsKeys.autoKVMode) private var globalAutoKVMode = "auto"
     @AppStorage(SettingsKeys.ncmoe) private var globalNcmoe = 0
     @AppStorage(SettingsKeys.ngl) private var globalNgl = 99
-    @AppStorage(SettingsKeys.threads) private var globalThreads = 6
+    @AppStorage(SettingsKeys.threads) private var globalThreads = HardwareInfo.defaultThreads
     @AppStorage(SettingsKeys.dynamicMoeEnabled) private var globalDynamicMoe = false
     @AppStorage(SettingsKeys.loadVision) private var globalVision = true
     @AppStorage(SettingsKeys.flashAttn) private var globalFlashAttention = "auto"
@@ -504,8 +504,8 @@ private struct ServerConfigurationWorkspace: View {
                 ServerSettingRow(icon: "square.stack.3d.up", title: loc.t("Modelos simultáneos", "Models loaded at once")) {
                     Stepper("\(routerMax(settings).wrappedValue)", value: routerMax(settings), in: 1...4).fixedSize()
                 }
-                Label(loc.t("El router baja el contexto de cada modelo si no cabe en la VRAM; el valor pedido es el máximo y el registro de arranque muestra el aplicado.",
-                            "The router lowers each model's context if it doesn't fit VRAM; the requested value is the ceiling and the launch log shows the applied value."),
+                Label(loc.t("El router baja el contexto de cada modelo si no cabe en la VRAM; el valor pedido es el máximo y el registro de arranque muestra el aplicado. Para fijarlo, pon -c en los argumentos extra de ese modelo, en Modelos.",
+                            "The router lowers each model's context if it doesn't fit VRAM; the requested value is the ceiling and the launch log shows the applied value. To set it, put -c in that model's extra arguments, in Models."),
                       systemImage: "info.circle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -663,7 +663,7 @@ private struct ServerConfigurationWorkspace: View {
                                     "Type of the KV cache values (-ctv). Without the AMD Flash Attention kernel, quantizing them moves attention to the CPU and generation slows a lot."))
                 }
             }
-            if showAdvanced && facts.usesMTP {
+            if showAdvanced && facts.offersMTP {
                 Divider()
                 ServerSettingRow(icon: "hare.fill", title: "MTP",
                                  detail: loc.t("Predicción de múltiples tokens", "Multi-token prediction")) {
@@ -678,7 +678,7 @@ private struct ServerConfigurationWorkspace: View {
                         .environmentObject(server)
                 }
             }
-            if showAdvanced && !facts.supportsVision && !facts.usesMTP && !facts.hasDflashDraft {
+            if showAdvanced && !facts.supportsVision && !facts.offersMTP && !facts.hasDflashDraft {
                 Label(loc.t("Este modelo no declara aceleradores opcionales.", "This model does not declare optional accelerators."),
                       systemImage: "info.circle")
                     .font(.caption).foregroundStyle(.secondary).padding(.vertical, 9)
